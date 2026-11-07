@@ -14,6 +14,7 @@ nodex-ir.workspace = true
 nodex-core.workspace = true
 nodex-lang-api.workspace = true
 nodex-lang-csharp.workspace = true
+nodex-lang-typescript.workspace = true
 nodex-trace.workspace = true
 ts-rs.workspace = true
 anyhow.workspace = true

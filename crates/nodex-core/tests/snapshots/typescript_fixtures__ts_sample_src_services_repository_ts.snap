@@ -1,0 +1,16 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/services/repository.InMemoryOrderRepository.all
+Entry — when all() is called
+Yield — produce every value of this.orders.values()
+== src/services/repository.InMemoryOrderRepository.find
+Entry — when find(id) is called
+Return — return this.orders.get(id)
+== src/services/repository.InMemoryOrderRepository.add
+Entry — when add(order) is called
+Call — this.orders.set(order.id, order)
+== src/services/repository.InMemoryOrderRepository.replace
+Entry — when replace(order) is called
+Call — this.orders.set(order.id, order)

@@ -1,0 +1,202 @@
+# TypeScript and JavaScript flavors. Modifiers (public, private, readonly, ...) and
+# decorators (attr:Name) are emitted as-is; the frontend shows unknown flavors as plain badges.
+
+# --- Modules -------------------------------------------------------------------------------
+
+[javascript]
+label = "JavaScript"
+explain = "Plain JavaScript: no type annotations. Nodex reads it with the same rules as TypeScript."
+
+[declarations]
+label = "declarations"
+explain = "A .d.ts file: it only describes types of code that lives elsewhere. Nothing in it runs."
+
+[barrel]
+label = "barrel"
+explain = "A module that only re-exports other modules (export * from ...), so importers can use one path."
+
+[commonjs]
+label = "CommonJS"
+explain = "Uses require() and module.exports, the module system Node used before import/export."
+
+[export]
+label = "exported"
+explain = "Other modules can import this."
+
+[default-export]
+label = "default export"
+explain = "The module's default export: importers choose the name (import Anything from ...)."
+
+# --- Types ---------------------------------------------------------------------------------
+
+[type-only]
+label = "type only"
+explain = "Exists only while compiling. TypeScript erases it; at run time there is nothing to call or create."
+
+[declare]
+label = "declared"
+explain = "Declared without an implementation (declare): the code that provides it lives elsewhere, often in JavaScript."
+
+[overloaded]
+label = "overloaded"
+explain = "Has several signatures for different argument types; one implementation handles them all."
+
+[parameter-property]
+label = "from constructor"
+explain = "A field declared by a constructor parameter (constructor(private repo: Repo)): the argument is stored in it."
+
+[accessor]
+label = "auto-accessor"
+explain = "accessor field: TypeScript generates a getter and a setter around a private slot."
+
+[settable]
+label = "settable"
+explain = "Has a set accessor: assigning to it runs code."
+
+[optional]
+label = "optional"
+explain = "May be missing (undefined)."
+
+[satisfies]
+label = "satisfies"
+explain = "Checked against a type while compiling without changing the value's own type. Does nothing at run time."
+
+[non-null]
+label = "non-null assertion"
+explain = "The author asserts the value is not null or undefined (x!). Nothing is checked at run time."
+
+# --- Functions -----------------------------------------------------------------------------
+
+[generator]
+label = "generator"
+explain = "Produces a sequence of values one at a time (function*). Each yield pauses it until the next value is asked for."
+
+[arrow]
+label = "arrow function"
+explain = "An arrow function (=>): it uses the this of the place where it is written."
+
+[bound]
+label = "bound"
+explain = "A field holding an arrow function: this always refers to the instance, even when passed as a callback."
+
+[this-binding]
+label = "own this"
+explain = "A function (not an arrow) that uses this: its value depends on how it is called."
+
+[prototype]
+label = "prototype method"
+explain = "Added to a constructor's prototype: every object it creates shares this method (pre-class JavaScript)."
+
+[base-constructor]
+label = "base constructor"
+explain = "super(...): runs the parent class's constructor."
+
+[delegate]
+label = "delegates"
+explain = "yield*: produces every value of another sequence before continuing."
+
+# --- Statements ----------------------------------------------------------------------------
+
+[var]
+label = "var"
+explain = "Declared with var: visible in the whole function (hoisted), not only in its block."
+
+[keys]
+label = "property names"
+explain = "for ... in: walks the names of an object's properties (including inherited ones), not its values."
+
+[fallthrough]
+label = "falls through"
+explain = "This case has no break: after it runs, execution continues into the next case."
+
+[short-circuit]
+label = "short-circuit"
+explain = "a && b(), a || b(): the right side runs only depending on the left side."
+
+[value]
+label = "value"
+explain = "An expression evaluated for its value (or for nothing): no assignment and no call."
+
+[with]
+label = "with"
+explain = "with (obj): names inside the block may refer to obj's properties. Forbidden in strict mode."
+
+[debugger]
+label = "debugger"
+explain = "debugger: pauses here when a debugger is attached; otherwise does nothing."
+
+[class]
+label = "class"
+explain = "A class declared inside a function."
+
+[enum]
+label = "enum"
+explain = "An enum declared inside a function."
+
+# --- Expressions ---------------------------------------------------------------------------
+
+[truthiness]
+label = "truthiness"
+explain = "Tests a value as true/false: 0, \"\", null, undefined, NaN and false count as false; everything else as true."
+
+[loose-equality]
+label = "loose =="
+explain = "== and != convert types before comparing (0 == \"\" is true). === and !== do not."
+
+[fallback]
+label = "fallback"
+explain = "Uses the right side only when the left is null or undefined (??, ??=)."
+
+[array-pipeline]
+label = "array pipeline"
+explain = "A chain of array operations (filter, map, reduce, ...): each stage receives the previous one's result."
+
+[promise]
+label = "promise chain"
+explain = "A chain of .then/.catch/.finally: each callback runs later, when the previous step settles."
+
+[jsx]
+label = "JSX"
+explain = "An element written as markup (<Button ... />): it creates a description of UI for React (or another library)."
+
+[dynamic-import]
+label = "dynamic import"
+explain = "import(...): loads a module at run time and returns a promise for it."
+
+[tagged-template]
+label = "tagged template"
+explain = "A function called with a template literal (tag`...`): it receives the text parts and the values."
+
+[class-expression]
+label = "class value"
+explain = "A class created as a value (class { ... }), for example by a mixin."
+
+[typeof]
+label = "typeof"
+explain = "Checks the run-time type name (\"string\", \"number\", \"object\", ...). TypeScript narrows the type after it."
+
+[instanceof]
+label = "instanceof"
+explain = "Checks whether the object was created by a class (or one derived from it)."
+
+[in]
+label = "in"
+explain = "Checks whether an object has a property with this name."
+
+# --- Events and timers ---------------------------------------------------------------------
+
+[once]
+label = "once"
+explain = "The handler runs only the first time; then it is removed."
+
+[handler-property]
+label = "handler property"
+explain = "Assigning to an on... property (button.onclick = f) replaces the single handler."
+
+[repeating]
+label = "repeating"
+explain = "setInterval: runs again and again until cleared."
+
+[destructure]
+label = "unpacks"
+explain = "Takes several values out of an object or array at once."

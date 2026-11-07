@@ -126,3 +126,40 @@ fn roslyn_sidecar_handles_unity_without_the_engine() {
         && e.kind == StructEdgeKind::Calls));
     assert!(graph.edges.iter().any(|e| e.from == "Game.PlayerController" && e.to == "ext:MonoBehaviour"));
 }
+
+/// `pnpm --dir sidecars/node/nodex-ts install`, then `cargo test -- --ignored`.
+#[test]
+#[ignore = "needs Node.js and an installed nodex-ts sidecar"]
+fn typescript_sidecar_resolves_the_sample() {
+    use nodex_lang_typescript::TypeScriptFrontend;
+    let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(TypeScriptFrontend)];
+    let mut project = Project::open(&fixtures().join("ts/Sample"), frontends).expect("fixture opens");
+    let mut provider = TypeScriptFrontend.semantic(project.root()).expect("TypeScript has a provider").expect("sidecar starts");
+    let facts = provider.analyze().expect("analysis succeeds");
+    assert!(facts.source.contains("tsconfig.json"), "{}", facts.source);
+    project.apply_semantic(nodex_ir::Language::Typescript, facts);
+
+    let graph = project.structure();
+    let has = |from: &str, to: &str, kind: StructEdgeKind| graph.edges.iter().any(|e| e.from == from && e.to == to && e.kind == kind);
+    // Calls resolve through imports, barrels and arrow functions bound to constants.
+    assert!(has("src/main.main", "src/services/orderService.OrderService.totalForCustomer", StructEdgeKind::Calls));
+    assert!(has("src/services/orderService.OrderService.ship", "src/util/timing.sleep", StructEdgeKind::Calls));
+    assert!(has("src/services/orderService.OrderService.ship", "src/services/orderService.fail", StructEdgeKind::Calls));
+    assert!(has("src/services/orderService.OrderService.ship", "src/domain/order.Order.withStatus", StructEdgeKind::Calls));
+    assert!(has("src/main.main", "src/domain/order.Order", StructEdgeKind::Instantiates));
+    assert!(has("src/domain/shapes.Circle", "src/domain/shapes.Shape", StructEdgeKind::Inherits));
+    assert!(has("src/domain/shapes.Shape", "src/domain/order.Entity", StructEdgeKind::Implements));
+
+    // Inferred types reach the pins; array stages are confirmed as standard operations.
+    let main = project.flow("src/main.main").unwrap();
+    let repo = main.nodes.iter().find(|n| n.label.starts_with("repository =")).unwrap();
+    let pin = repo.outputs.iter().find(|p| p.id == "var:repository").unwrap();
+    assert_eq!(pin.ty.as_deref(), Some("InMemoryOrderRepository"));
+    let call = main.nodes.iter().find(|n| n.label.contains("totalForCustomer")).unwrap();
+    assert!(call.calls.iter().any(|c| c.symbol.as_deref() == Some("src/services/orderService.OrderService.totalForCustomer")));
+    let pipeline = project.flow("src/services/orderService.OrderService.totalForCustomerPipeline").unwrap();
+    let ret = pipeline.nodes.iter().find(|n| n.concept == Concept::Return).unwrap();
+    let stage = find_expr(ret.expr.as_ref().unwrap(), &|e| e.label.starts_with("filter")).unwrap();
+    assert!(!stage.flavors.iter().any(|f| f == "custom-stage"), "{:?}", stage.flavors);
+    assert!(stage.target.as_deref().is_some_and(|t| t.starts_with("Array.filter")), "{:?}", stage.target);
+}

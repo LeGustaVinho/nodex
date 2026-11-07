@@ -34,7 +34,12 @@ export function flavorInfo(catalog: Catalog | undefined, flavor: string, languag
   if (flavor.startsWith("extends:"))
     return { label: `extends ${flavor.slice(8)}`, explain: "A member added to an existing type from outside it; it is called as if it belonged to that type." };
   if (flavor.startsWith("label:"))
-    return { label: `label ${flavor.slice(6)}`, explain: "A jump target: `goto` statements can continue here." };
+    return { label: `label ${flavor.slice(6)}`, explain: "A named statement: `break`/`continue` (and `goto` in C#) can target it by name." };
+  if (flavor.startsWith("discriminated:"))
+    return {
+      label: `by ${flavor.slice(14)}`,
+      explain: `A union whose variants are told apart by the \`${flavor.slice(14)}\` property; a switch on it narrows the type in each case.`,
+    };
   return undefined;
 }
 

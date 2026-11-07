@@ -68,3 +68,55 @@ async fn runs_the_sample_and_records_its_execution() {
     assert!(calls.spans.iter().any(|s| s.flow == ship));
     assert!(calls.end > calls.start);
 }
+
+/// Same scenario for the TypeScript sample: needs Node.js and
+/// `pnpm --dir sidecars/node/nodex-ts install`, then `cargo test -p nodex-server --test run -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs Node.js and an installed nodex-ts sidecar"]
+async fn runs_the_typescript_sample_and_records_its_execution() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ts/Sample");
+    let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(nodex_lang_typescript::TypeScriptFrontend)];
+    let project = Project::open(&root, frontends).unwrap();
+    let state = AppState::new(project, "t".into(), 7440, Vec::new());
+    let mut events = state.events.subscribe();
+
+    runner::start(&state).expect("run starts");
+    let mut output = Vec::new();
+    let mut final_state = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    while final_state.is_none() {
+        let event = tokio::time::timeout_at(deadline, events.recv()).await.expect("run finishes in time").expect("event");
+        match event {
+            ServerEvent::RunOutput { lines } => output.extend(lines.into_iter().map(|l| l.text)),
+            ServerEvent::RunStatus(s) if matches!(s.state, RunState::Exited | RunState::Failed) => final_state = Some(s),
+            _ => {}
+        }
+    }
+    let status = final_state.unwrap();
+    assert_eq!(status.state, RunState::Exited, "{status:?}\n{}", output.join("\n"));
+    assert_eq!(status.exit_code, Some(0));
+    assert!(output.iter().any(|l| l == "Total: 195"), "{}", output.join("\n"));
+
+    let snapshot = state.run.snapshot().trace.expect("trace recorded");
+    let total = "src/services/orderService.OrderService.totalForCustomer";
+    assert_eq!(snapshot.calls.get(total), Some(&1), "{:?}", snapshot.calls);
+    let counts = &snapshot.counts[total];
+    assert!(counts.values().any(|&c| c == 3), "the loop body ran for each order: {counts:?}");
+    assert_eq!(snapshot.vars[total].get("total").map(String::as_str), Some("195"));
+
+    // Generators and async functions resume: they are called once, resumed several times.
+    let describe = "src/services/orderService.OrderService.describeAll";
+    assert_eq!(snapshot.calls.get(describe), Some(&1), "{:?}", snapshot.calls);
+    let ship = "src/services/orderService.OrderService.ship";
+    assert_eq!(snapshot.calls.get(ship), Some(&2));
+    assert!(snapshot.vars[ship].get("order").is_some_and(|v| v.contains("Order {")), "{:?}", snapshot.vars[ship]);
+    // ship(2) throws: the throw statement is marked.
+    let throws = &snapshot.throws[ship];
+    assert_eq!(throws.values().sum::<u64>(), 1, "{throws:?}");
+    let (node, _) = throws.iter().next().unwrap();
+    assert!(snapshot.values[ship][node].contains("Error: Only paid orders can ship"), "{:?}", snapshot.values[ship]);
+
+    let calls = state.run.recorder().unwrap().lock().unwrap().calls(10_000);
+    assert!(calls.spans.iter().any(|s| s.flow == total && s.depth > 0 && !s.open));
+    assert!(calls.spans.iter().any(|s| s.flow == ship && s.resumed), "async continuation spans");
+}

@@ -42,15 +42,32 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
     let mut edges: BTreeSet<(String, String, StructEdgeKind)> = BTreeSet::new();
     let mut external: BTreeMap<String, Symbol> = BTreeMap::new();
 
-    // 2. Imports between namespaces.
+    // 2. Imports between namespaces/modules, and from modules to packages.
+    let modules = ModuleIndex::new(&symbols);
+    let declared: BTreeSet<&str> = packages.iter().map(|(_, p)| p.name.as_str()).collect();
     for file in files {
         for imp in &file.imports {
             let from = format!("ns:{}", imp.from_scope);
-            let to = format!("ns:{}", imp.target);
+            let to = match imp.target.strip_prefix("pkg:") {
+                Some(spec) => {
+                    let name = package_name(spec);
+                    match modules.resolve(&symbols, &format!("ns:{spec}")).filter(|_| !declared.contains(name.as_str())).or_else(|| {
+                        if declared.contains(name.as_str()) { None } else { modules.alias(spec) }
+                    }) {
+                        Some(module) => module,
+                        None => {
+                            let id = format!("pkg:{name}");
+                            external.entry(id.clone()).or_insert_with(|| external_symbol(&id, SymbolKind::Package, &name, file.language));
+                            id
+                        }
+                    }
+                }
+                None => modules.resolve(&symbols, &format!("ns:{}", imp.target)).unwrap_or_else(|| format!("ns:{}", imp.target)),
+            };
             if from == to {
                 continue;
             }
-            if !symbols.contains_key(&to) {
+            if !symbols.contains_key(&to) && !to.starts_with("pkg:") {
                 external.entry(to.clone()).or_insert_with(|| external_symbol(&to, SymbolKind::Namespace, &imp.target, file.language));
             }
             if !symbols.contains_key(&from) {
@@ -142,15 +159,93 @@ fn external_symbol(id: &str, kind: SymbolKind, name: &str, language: Language) -
     }
 }
 
-/// The namespace containing `id`, following parents.
+/// The namespace (or module) containing `id`, following parents.
 fn namespace_of(symbols: &BTreeMap<String, Symbol>, id: &str) -> Option<String> {
     let mut cur = symbols.get(id)?;
     loop {
-        if cur.kind == SymbolKind::Namespace {
+        if matches!(cur.kind, SymbolKind::Namespace | SymbolKind::Module) {
             return Some(cur.qualified_name.clone());
         }
         cur = symbols.get(cur.parent.as_ref()?)?;
     }
+}
+
+/// Module lookup for file-based languages (TypeScript): `ns:src/models` may name
+/// `src/models/index`, and path aliases (`@/models/order`) end like a project module.
+struct ModuleIndex {
+    /// Module paths (without `ns:`), shortest first.
+    paths: Vec<String>,
+}
+
+impl ModuleIndex {
+    fn new(symbols: &BTreeMap<String, Symbol>) -> Self {
+        let mut paths: Vec<String> = symbols
+            .values()
+            .filter(|s| s.kind == SymbolKind::Module)
+            .filter_map(|s| s.id.strip_prefix("ns:").map(str::to_owned))
+            .collect();
+        paths.sort_by_key(|p| (p.len(), p.clone()));
+        Self { paths }
+    }
+
+    /// `id` itself, or its `/index` module.
+    fn resolve(&self, symbols: &BTreeMap<String, Symbol>, id: &str) -> Option<String> {
+        if symbols.contains_key(id) {
+            return Some(id.to_owned());
+        }
+        let index = format!("{id}/index");
+        symbols.contains_key(&index).then_some(index)
+    }
+
+    /// A non-relative specifier that is not a declared package: `@/x/y`, `~/x/y`, `#x/y`, or a
+    /// `baseUrl`-relative `services/orders`. Resolved to the shortest module path ending with it.
+    fn alias(&self, spec: &str) -> Option<String> {
+        if self.paths.is_empty() {
+            return None;
+        }
+        let tail = spec
+            .strip_prefix("@/")
+            .or_else(|| spec.strip_prefix("~/"))
+            .or_else(|| spec.strip_prefix('#'))
+            .unwrap_or(spec);
+        if tail.is_empty() || !tail.contains('/') && !spec.starts_with(['@', '~', '#']) {
+            // A bare single word (`react`, `fs`) is a package, not a path.
+            return None;
+        }
+        for candidate in [tail.to_owned(), format!("{tail}/index")] {
+            if let Some(p) = self.paths.iter().find(|p| *p == &candidate || p.ends_with(&format!("/{candidate}"))) {
+                return Some(format!("ns:{p}"));
+            }
+        }
+        None
+    }
+}
+
+/// Node built-in modules, shown as `node:<name>` packages.
+const NODE_BUILTINS: &[&str] = &[
+    "assert", "async_hooks", "buffer", "child_process", "cluster", "crypto", "dgram", "dns", "events", "fs",
+    "http", "http2", "https", "module", "net", "os", "path", "perf_hooks", "process", "querystring", "readline",
+    "stream", "string_decoder", "timers", "tls", "tty", "url", "util", "v8", "vm", "worker_threads", "zlib",
+];
+
+/// The package an import specifier belongs to: `@scope/pkg/sub` → `@scope/pkg`, `lodash/fp` →
+/// `lodash`, `fs/promises` → `node:fs`.
+pub fn package_name(spec: &str) -> String {
+    if let Some(rest) = spec.strip_prefix("node:") {
+        return format!("node:{}", rest.split('/').next().unwrap_or(rest));
+    }
+    let mut parts = spec.split('/');
+    let first = parts.next().unwrap_or(spec);
+    if first.starts_with('@') {
+        return match parts.next() {
+            Some(second) => format!("{first}/{second}"),
+            None => first.to_owned(),
+        };
+    }
+    if NODE_BUILTINS.contains(&first) {
+        return format!("node:{first}");
+    }
+    first.to_owned()
 }
 
 /// Type lookup by simple name.

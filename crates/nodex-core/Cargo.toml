@@ -18,4 +18,5 @@ walkdir.workspace = true
 
 [dev-dependencies]
 nodex-lang-csharp.workspace = true
+nodex-lang-typescript.workspace = true
 insta.workspace = true

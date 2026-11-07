@@ -3,8 +3,10 @@ import type { Symbol } from "../gen/Symbol";
 import type { SymbolKind } from "../gen/SymbolKind";
 import { type GEdge, type GGraph, type GNode } from "./model";
 
-const TYPE_KINDS: SymbolKind[] = ["Class", "Struct", "Interface", "Trait", "Enum", "Union", "Record", "Delegate"];
+const TYPE_KINDS: SymbolKind[] = ["Class", "Struct", "Interface", "Trait", "Enum", "Union", "Record", "Delegate", "TypeAlias"];
 export const isTypeKind = (k: SymbolKind) => TYPE_KINDS.includes(k);
+/** Containers of declarations: namespaces (C#, TypeScript `namespace`) and file modules (TypeScript, Rust). */
+export const isScopeKind = (k: SymbolKind) => k === "Namespace" || k === "Module";
 
 /** Indexes over a structure graph, shared by views. */
 export class StructureIndex {
@@ -30,13 +32,18 @@ export class StructureIndex {
 
   namespaceOf(id: string): string | null {
     let cur = this.byId.get(id);
-    while (cur && cur.kind !== "Namespace") cur = cur.parent ? this.byId.get(cur.parent) : undefined;
+    while (cur && !isScopeKind(cur.kind)) cur = cur.parent ? this.byId.get(cur.parent) : undefined;
     return cur ? cur.qualified_name : null;
   }
 
   /** Members (non-type children) of a type, in declaration order. */
   members(typeId: string): Symbol[] {
     return (this.children.get(typeId) ?? []).filter((s) => !isTypeKind(s.kind));
+  }
+
+  /** Functions and variables declared directly in a scope (TypeScript modules and namespaces). */
+  freeMembers(scopeId: string): Symbol[] {
+    return (this.children.get(scopeId) ?? []).filter((s) => !isTypeKind(s.kind) && !isScopeKind(s.kind));
   }
 
   /** Types declared in a namespace, including nested types. */
@@ -48,6 +55,8 @@ export class StructureIndex {
 export interface NamespaceData {
   symbol: Symbol;
   types: number;
+  /** Free functions (module-level code). */
+  functions: number;
   external: boolean;
 }
 
@@ -57,12 +66,15 @@ export function architectureGraph(index: StructureIndex): GGraph {
   const edges: GEdge[] = [];
   const included = new Set<string>();
   for (const s of index.graph.symbols) {
-    if (s.kind !== "Namespace" && s.kind !== "Package") continue;
-    const types = s.kind === "Namespace" ? index.typesIn(s.qualified_name).length : 0;
+    if (!isScopeKind(s.kind) && s.kind !== "Package") continue;
+    // Namespaces nested in a module (TypeScript `namespace X {}`) stay inside their module.
+    if (s.kind === "Namespace" && s.parent && index.byId.get(s.parent)?.kind === "Module") continue;
+    const types = isScopeKind(s.kind) ? index.typesIn(s.qualified_name).length : 0;
+    const functions = s.kind === "Module" ? index.freeMembers(s.id).filter((m) => m.kind === "Function").length : 0;
     nodes.push({
       id: s.id,
       type: "namespace",
-      data: { symbol: s, types, external: s.external } satisfies NamespaceData,
+      data: { symbol: s, types, functions, external: s.external } satisfies NamespaceData,
       width: 220,
       height: s.external ? 48 : 64,
       ports: [],

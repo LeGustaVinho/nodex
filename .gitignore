@@ -7,3 +7,4 @@ bin/
 obj/
 *.tsbuildinfo
 CLAUDE.md
+/sidecars/node/*/dist

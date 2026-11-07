@@ -1,0 +1,77 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/services/orderService.OrderService.constructor
+Entry — when a new OrderService is created
+Call — super()
+== src/services/orderService.OrderService.totalForCustomer
+Entry — when totalForCustomer(customer) is called
+Var — total = 0
+Loop.ForEach — for each order in this.repository.all()
+  body:
+    Branch — if order.customer !== customer
+      true:
+        Continue — skip to the next iteration
+      false:
+    Branch — if order.status === OrderStatus.Cancelled
+      true:
+        Break — leave the loop
+      false:
+    Assign — add order.amount to total
+Return — return total
+== src/services/orderService.OrderService.totalForCustomerPipeline
+Entry — when totalForCustomerPipeline(customer) is called
+Return — return [...this.repository.all()] → filter((o) => o.customer === customer) → map((o) => o.amoun…
+== src/services/orderService.OrderService.describeAll
+Entry — when describeAll() is called
+Loop.Range — repeat: start let i = 0; while i < 3; step i++
+  body:
+    Var — order = this.repository.find(i + 1)
+    Var — declare label
+    Match — match order?.status
+      case:
+        Assign — set label to "paid"
+      case:
+        Assign — set label to "waiting"
+      case:
+        Assign — set label to "missing"
+      case:
+        Assign — set label to "other"
+    Yield — produce `#${i + 1}: ${label}`
+== src/services/orderService.OrderService.ship
+Entry — when ship(id) is called
+Var — order = this.repository.find(id) ?? fail(`Order ${id} not found`)
+Branch — if order.status !== OrderStatus.Paid
+  true:
+    Throw — fail with new Error("Only paid orders can ship")
+  false:
+Wait — wait 10 ms
+Var — shipped = order.withStatus(OrderStatus.Shipped)
+Call — this.repository.replace(shipped)
+Emit — raise 'shipped' on this with shipped
+== src/services/orderService.OrderService.describe
+Entry — when describe(event) is called
+Match — match event.kind
+  case:
+    Return — return `order ${event.id} created`
+  case:
+    Return — return `order ${event.id} shipped at ${event.at.toISOString()}`
+  case:
+    Return — return `order ${event.id} cancelled: ${event.reason}`
+== src/services/orderService.OrderService.countPending
+Entry — when countPending() is called
+Var — count = 0
+Var — all = [...this.repository.all()]
+Var — index = 0
+Loop.While — while index < all.length
+  body:
+    Branch — if all[index].status === OrderStatus.Pending
+      true:
+        Assign — increase count by 1
+      false:
+    Assign — increase index by 1
+Return — return count
+== src/services/orderService.fail
+Entry — when fail(message) is called
+Throw — fail with new Error(message)

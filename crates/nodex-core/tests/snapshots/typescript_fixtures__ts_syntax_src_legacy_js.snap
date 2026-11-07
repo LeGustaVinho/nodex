@@ -1,0 +1,30 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/legacy.Counter
+Entry — when Counter(start) is called
+Branch — if !(this instanceof Counter)
+  true:
+    Return — return new Counter(start)
+  false:
+SetMember — set this.value to start || 0
+== src/legacy.Counter.increment
+Entry — when increment() is called
+SetMember — increase this.value by 1
+Return — return this
+== src/legacy.sum
+Entry — when sum() is called
+Var — total = 0
+Loop.Range — repeat: start var i = 0; while i < arguments.length; step i++
+  body:
+    Assign — add arguments[i] to total
+Return — return total
+== src/legacy.(module)
+Entry — when the module is loaded
+Var — EventEmitter = require("events")
+Var — helpers = require("./modules/defaults.js")
+Lambda — define function Counter.increment()
+Var — instance = (function () { … })()
+SetMember — export helpers as exports.extra
+SetMember — export { Counter: Counter, sum: sum, instance: instance, EventEmitter: EventEmitter } as module…

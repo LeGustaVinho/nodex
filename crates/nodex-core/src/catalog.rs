@@ -10,6 +10,7 @@ const CONCEPTS: &str = include_str!("../../../catalog/concepts.toml");
 const FLAVORS: &[(&str, &str)] = &[
     ("common", include_str!("../../../catalog/flavors/common.toml")),
     ("csharp", include_str!("../../../catalog/flavors/csharp.toml")),
+    ("typescript", include_str!("../../../catalog/flavors/typescript.toml")),
 ];
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]

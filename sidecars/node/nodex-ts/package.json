@@ -1,0 +1,20 @@
+{
+  "name": "nodex-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript semantics and trace instrumentation sidecar for Nodex",
+  "type": "module",
+  "bin": {
+    "nodex-ts": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "prepare": "tsc -p ."
+  },
+  "dependencies": {
+    "typescript": "~6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}

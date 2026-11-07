@@ -17,7 +17,8 @@ use crate::{link, semantic};
 /// Directories never scanned (build output, dependencies, engine caches, VCS).
 pub const IGNORED_DIRS: &[&str] = &[
     ".git", ".hg", ".svn", ".vs", ".idea", ".vscode", ".nodex", "bin", "obj", "node_modules", "target",
-    "dist", "build", "Library", "Temp", "Logs", "UserSettings", "MemoryCaptures",
+    "dist", "build", "out", "coverage", ".next", ".turbo", ".svelte-kit", "Library", "Temp", "Logs", "UserSettings",
+    "MemoryCaptures",
 ];
 
 /// Files larger than this are skipped (generated code, minified bundles).
@@ -319,6 +320,11 @@ impl Project {
 
     pub fn file_ir(&self, rel: &str) -> Option<&FileIr> {
         self.files.get(rel).map(|f| &f.ir)
+    }
+
+    /// Every lowered file, by project-relative path.
+    pub fn files(&self) -> impl Iterator<Item = (&str, &FileIr)> {
+        self.files.iter().map(|(rel, f)| (rel.as_str(), &f.ir))
     }
 
     /// Reads a project file. Only files the project tracks can be read.

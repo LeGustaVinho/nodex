@@ -2,12 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { api } from "../api";
 import type { Symbol } from "../gen/Symbol";
-import { isTypeKind } from "../graph/structureGraph";
+import { isScopeKind, isTypeKind } from "../graph/structureGraph";
 import { useUi } from "../store";
 import { useStructure } from "../views/Views";
 
 const ICON: Record<string, string> = {
   Namespace: "{}",
+  Module: "▤",
+  TypeAlias: "τ",
   Class: "C",
   Struct: "S",
   Interface: "I",
@@ -36,7 +38,7 @@ export function Sidebar() {
   const namespaces = useMemo(() => {
     if (!index) return [];
     return index.graph.symbols
-      .filter((s) => s.kind === "Namespace" && !s.external)
+      .filter((s) => isScopeKind(s.kind) && !s.external)
       .sort((a, b) => a.qualified_name.localeCompare(b.qualified_name));
   }, [index]);
 
@@ -48,7 +50,7 @@ export function Sidebar() {
   const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }));
 
   const clickSymbol = (s: Symbol) => {
-    if (s.kind === "Namespace") {
+    if (isScopeKind(s.kind)) {
       ui.setNamespace(s.qualified_name);
       ui.setView("types");
       ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
@@ -111,8 +113,11 @@ export function Sidebar() {
       <input className="search" placeholder="Search types and members…" value={query} onChange={(e) => setQuery(e.target.value)} />
       <div className="tree">
         {namespaces.map((ns) => {
-          const types = index.typesIn(ns.qualified_name).filter((t) => !t.parent || index.byId.get(t.parent)?.kind === "Namespace");
-          if (q && !types.some(typeVisible)) return null;
+          const types = index
+            .typesIn(ns.qualified_name)
+            .filter((t) => !t.parent || isScopeKind(index.byId.get(t.parent)?.kind ?? "Class"));
+          const free = index.freeMembers(ns.id);
+          if (q && !types.some(typeVisible) && !free.some(matches) && !matches(ns)) return null;
           return (
             <div key={ns.id}>
               <TreeRow
@@ -123,7 +128,12 @@ export function Sidebar() {
                 active={ui.namespace === ns.qualified_name && ui.view === "types"}
                 onClick={() => clickSymbol(ns)}
               />
-              {isOpen(ns.id) && types.map((t) => renderType(t, 1))}
+              {isOpen(ns.id) && (
+                <>
+                  {free.length > 0 && renderMembers(ns, 1)}
+                  {types.map((t) => renderType(t, 1))}
+                </>
+              )}
             </div>
           );
         })}
@@ -157,7 +167,9 @@ function TreeRow(props: { symbol: Symbol; depth: number; caret?: string; onCaret
       </span>
       <button className="row-main" onClick={onClick} title={[symbol.signature ?? symbol.qualified_name, symbol.doc].filter(Boolean).join("\n\n")}>
         <span className={`sym-icon sym-${symbol.kind.toLowerCase()}`}>{ICON[symbol.kind] ?? "·"}</span>
-        <span className="sym-name">{symbol.kind === "Namespace" ? symbol.qualified_name : symbol.name}</span>
+        <span className="sym-name">
+          {symbol.kind === "Namespace" ? symbol.qualified_name : symbol.kind === "Module" ? (symbol.origins[0]?.file ?? symbol.name) : symbol.name}
+        </span>
         {symbol.has_flow && <span className="sym-flow">▶</span>}
       </button>
     </div>

@@ -1,0 +1,136 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/statements.statements
+Entry — when statements(xs, o, x) is called
+Loop.Range — repeat: start let i = 0, j = 1; while i < xs.length; step i++, j--
+  body:
+    Assign — add i * j to x
+Loop.ForEach — for each n in xs
+  body:
+    Assign — add n to x
+Loop.ForEach — for each [k, v] in Object.entries(o)
+  body:
+    Call — console.log(k, v)
+Loop.ForEach — for each property name key in o
+  body:
+    Branch — if !Object.hasOwn(o, key)
+      true:
+        Continue — skip to the next iteration
+      false:
+Loop.Infinite — repeat forever
+  body:
+    Break — leave the loop
+Loop.Infinite — repeat forever
+  body:
+    Loop.ForEach — for each n in xs
+      body:
+        Branch — if n > 3
+          true:
+            Break — leave outer
+          false:
+        Branch — if n < 0
+          true:
+            Continue — continue with the next iteration of outer
+          false:
+Loop.While — repeat, then check x > 0
+  body:
+    Assign — decrease x by 1
+Match — match o.kind
+  case:
+    Assign — set x to 1
+  case:
+    Assign — set x to 2
+  case:
+    Assign — set x to 3
+    Break — leave the loop
+  case:
+    Assign — set x to 4
+Try — try; handle errors below
+  try:
+    Throw — fail with new Error("boom")
+  catch:
+    Branch — if e instanceof Error
+      true:
+        Call — console.log(e.message)
+      false:
+  finally:
+    Call — done()
+Try — try; handle errors below
+  try:
+    Assign — set x to JSON.parse("1")
+  catch:
+    Assign — set x to 0
+Var — r = open(), disposed at the end of the block
+Var — q = openAsync(), disposed at the end of the block
+Call — void r
+Call — void q
+Destructure — unpack { a, b: [c, d] = [1, 2], ...rest } from o
+Destructure — set [a, c] to [c, a]
+Destructure — set { a } to o
+Var — hoisted = 1
+Assign — if x is null or undefined, set it to 2
+Assign — if x is falsy, set it to 3
+Assign — if x is truthy, set it to 4
+Assign — add 1 to x
+Assign — raise x to the power 2
+SetMember — set o.p.q to 4
+Assign — set xs[0] to 5
+Assign — increase x by 1
+Assign — decrease x by 1
+Branch — if x > 100
+  true:
+    Break — leave label
+  false:
+Assign — set x to 100
+Branch — if !o
+  true:
+    Return — return 0
+  false:
+    Branch — if o == null
+      true:
+        Return — return 1
+      false:
+        Branch — if typeof o === "string"
+          true:
+            Return — return 2
+          false:
+Call — pause in the debugger
+Return — return a + c + d + hoisted + Object.keys(rest).length
+== src/statements.guards
+Entry — when guards(value) is called
+Return — return typeof value === "string"
+== src/statements.assertIsDefined
+Entry — when assertIsDefined(value) is called
+Branch — if value === undefined || value === null
+  true:
+    Throw — fail with new Error("not defined")
+  false:
+== src/statements.timers
+Entry — when timers() is called
+Spawn — after 100 ms, run () => console.log("later")
+Var — handle = setInterval(() => console.log("tick"), 1000)
+Call — clearInterval(handle)
+Spawn — soon, run () => {}
+== src/statements.waits
+Entry — when waits(ms) is called
+Wait — wait ms
+Wait — wait ms
+== src/statements.sleep
+Entry — when sleep(ms) is called
+Return — return new Promise<void>((r) => setTimeout(r, ms))
+== src/statements.nested.helper
+Entry — when local function helper(n) is called
+Return — return n * 2
+== src/statements.nested.square
+Entry — when local function square(n) is called
+Return — return n * n
+== src/statements.nested
+Entry — when nested() is called
+Lambda — define function helper(n)
+Lambda — define function square(n)
+Var — inline = (n: number) => n + 1
+Var — define class Local
+Var — define enum Mode
+Return — return helper(square(inline(new Local().value + Mode.On)))

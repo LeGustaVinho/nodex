@@ -3,4 +3,4 @@
 /**
  * What a symbol in the structure graph represents.
  */
-export type SymbolKind = "Package" | "Module" | "Namespace" | "Class" | "Struct" | "Interface" | "Trait" | "Enum" | "Union" | "Record" | "Delegate" | "Function" | "Method" | "Constructor" | "Property" | "Field" | "Event" | "EnumMember";
+export type SymbolKind = "Package" | "Module" | "Namespace" | "Class" | "Struct" | "Interface" | "Trait" | "Enum" | "Union" | "Record" | "Delegate" | "TypeAlias" | "Function" | "Method" | "Constructor" | "Property" | "Field" | "Event" | "EnumMember";

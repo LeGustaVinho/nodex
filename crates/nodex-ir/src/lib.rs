@@ -71,6 +71,8 @@ pub enum SymbolKind {
     Union,
     Record,
     Delegate,
+    /// A named type expression (TypeScript `type X = ...`); exists only at compile time.
+    TypeAlias,
     Function,
     Method,
     Constructor,
@@ -93,6 +95,7 @@ impl SymbolKind {
                 | SymbolKind::Union
                 | SymbolKind::Record
                 | SymbolKind::Delegate
+                | SymbolKind::TypeAlias
         )
     }
 

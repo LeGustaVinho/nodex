@@ -3,6 +3,7 @@ import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor/editor/editor.api";
 import "monaco-editor/languages/definitions/csharp/register";
 import "monaco-editor/languages/definitions/typescript/register";
+import "monaco-editor/languages/definitions/javascript/register";
 import "monaco-editor/languages/definitions/rust/register";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 

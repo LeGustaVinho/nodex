@@ -8,6 +8,8 @@
 //! spans and stable ids, so a frontend only writes the CST → concept mapping.
 
 pub mod kit;
+pub mod sidecar;
+pub mod syntax;
 
 use std::path::{Path, PathBuf};
 

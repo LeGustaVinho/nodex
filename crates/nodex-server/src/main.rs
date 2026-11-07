@@ -37,7 +37,7 @@ enum Command {
 
 /// Every language frontend compiled into this binary.
 fn frontends() -> Vec<Arc<dyn LanguageFrontend>> {
-    vec![Arc::new(nodex_lang_csharp::CSharpFrontend)]
+    vec![Arc::new(nodex_lang_csharp::CSharpFrontend), Arc::new(nodex_lang_typescript::TypeScriptFrontend)]
 }
 
 #[tokio::main]

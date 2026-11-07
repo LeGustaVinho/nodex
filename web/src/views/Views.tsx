@@ -31,7 +31,7 @@ export function ArchitectureView() {
       }}
       onNodeDoubleClick={(n) => {
         const s = index?.byId.get(n.id);
-        if (s && s.kind === "Namespace" && !s.external) {
+        if (s && (s.kind === "Namespace" || s.kind === "Module") && !s.external) {
           setNamespace(s.qualified_name);
           setView("types");
         }

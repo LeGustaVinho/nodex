@@ -1,0 +1,12 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/domain/order.Order.constructor
+Entry — when a new Order is created
+== src/domain/order.Order.isLarge.get
+Entry — when isLarge is read
+Return — return this.amount >= 100
+== src/domain/order.Order.withStatus
+Entry — when withStatus(status) is called
+Return — return new Order(this.id, this.customer, this.amount, status)

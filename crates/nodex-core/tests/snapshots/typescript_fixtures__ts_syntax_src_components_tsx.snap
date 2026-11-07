@@ -1,0 +1,22 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/components.Button
+Entry — when Button(label, onClick, children) is called
+Return — return <button className="btn" onClick={onClick} disabled={!onClick}> {label} {children} </butt…
+== src/components.App.handleClick
+Entry — when local function handleClick() is called
+Call — setCount((c) => c + 1)
+== src/components.App
+Entry — when App(items) is called
+Destructure — unpack [count, setCount] from useState(0)
+Destructure — unpack [query, setQuery] from useState("")
+Call — useEffect(() => { … }, [count])
+Lambda — define function handleClick()
+Var — visible = items → filter((i) => i.includes(query)) → map((i) => <li key={i}>{i}</li>)
+Branch — if items.length === 0
+  true:
+    Return — return <p>No items</p>
+  false:
+Return — return <> <input value={query} onChange={(e) => setQuery(e.target.value)} /> <Button label={`Cl…

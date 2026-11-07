@@ -761,6 +761,7 @@ dependencies = [
  "nodex-ir",
  "nodex-lang-api",
  "nodex-lang-csharp",
+ "nodex-lang-typescript",
  "rayon",
  "serde",
  "serde_json",
@@ -784,6 +785,8 @@ name = "nodex-lang-api"
 version = "0.1.0"
 dependencies = [
  "nodex-ir",
+ "serde_json",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -796,6 +799,18 @@ dependencies = [
  "serde_json",
  "tree-sitter",
  "tree-sitter-c-sharp",
+]
+
+[[package]]
+name = "nodex-lang-typescript"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "nodex-ir",
+ "nodex-lang-api",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-typescript",
 ]
 
 [[package]]
@@ -812,6 +827,7 @@ dependencies = [
  "nodex-ir",
  "nodex-lang-api",
  "nodex-lang-csharp",
+ "nodex-lang-typescript",
  "nodex-trace",
  "notify",
  "open",
@@ -1584,6 +1600,16 @@ name = "tree-sitter-language"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0af592be68c579aa78a16846bd19422978c3c52e438523d45ff5d1bff1f9d4a"
+
+[[package]]
+name = "tree-sitter-typescript"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "ts-rs"

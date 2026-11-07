@@ -1,0 +1,58 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/expressions.expressions.asyncArrow
+Entry — when local function asyncArrow(n) is called
+Await — wait for Promise.resolve(n)
+Return — return n
+== src/expressions.expressions.gen
+Entry — when local function gen() is called
+Yield — produce 1
+== src/expressions.expressions.fn
+Entry — when local function fn() is called
+Return — return this.x
+== src/expressions.expressions
+Entry — when expressions(users, user, emitter, key) is called
+Var — t = `hello ${user?.name} and ${users.length + 1}`
+Var — city = user?.address?.city ?? "unknown"
+Var — zip = user!.address!.zip
+Var — first = users?.[0]?.tags?.at(0)
+Var — asserted = user as unknown as Record<string, unknown>
+Var — checked = { a: 1 } satisfies Record<string, number>
+Var — frozen = ["a", "b"] as const
+Var — kind = typeof user === "object" ? user instanceof Object : key in (user ?? {})
+Var — total = users → filter((u) => u.tags.length > 0) → map((u) => u.tags.length) → reduce((a, b) =>…
+Var — names = users → map((u) => u.name) → join(", ")
+Var — loose = (key as unknown) == 0 || key != undefined
+Var — strict = key === "x" && key !== "y"
+Var — math = ((1 + 2) * 3) / 4 - (5 % 2) ** 2
+Var — bits = (1 << 2) | ((8 >> 1) & ~0) ^ (16 >>> 2)
+Var — obj = { key, [key]: 1, ...user, method() { … }, get g() { … }, set g(v: number) { … } }
+Var — arr = [1, ...frozen, , 3]
+Lambda — define function fn()
+Lambda — define function gen()
+Lambda — define function asyncArrow(n)
+Var — instance = new Map<string, number>([["a", 1]])
+Var — cls = class Named {}
+Var — re = /ab+c/gi
+Var — big = 10n ** 3n
+Var — nothing = void 0
+Var — neg = -t.length
+Var — not = !user
+Var — seq = users.pop(), users.length
+Var — tagged = String.raw`a\nb${t}`
+Var — meta = import.meta.url
+Var — generic = Array.of<number>
+Await — lazy = wait for import("./modules/index.js")
+Call — delete (obj as Record<string, unknown>)[key]
+Subscribe — on emitter 'change', run (value: number) => console.log(value)
+Subscribe — on emitter 'close', run () => {}
+Subscribe — stop listening to 'change' on emitter
+Emit — raise 'change' on emitter with 1
+Subscribe — stop listening to 'change' on emitter
+Var — promise = fetch(key) → then((r) => r.json()) → then((data) => data.items) → catch(() => []) → f…
+Call — if user, console.log(user.name)
+Call — unless user, console.log("no user")
+Call — if user is missing, console.log("null user")
+Return — return [t, city, zip, first, asserted, checked, kind, total, names, loose, strict, math, bits, …

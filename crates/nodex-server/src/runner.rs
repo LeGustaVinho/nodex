@@ -3,6 +3,8 @@
 //! 1. The language's `TraceInstrumenter` builds and instruments into `<project>/.nodex/run`.
 //! 2. A loopback TCP listener with a fresh token receives the program's trace events.
 //! 3. The program runs with `NODEX_TRACE`/`NODEX_TRACE_TOKEN`; its output is forwarded.
+//!    Runtimes that cannot flush on an abrupt exit (Node.js `process.exit`) write the rest to
+//!    `NODEX_TRACE_TAIL/<pid>.bin`, replayed after the program ends.
 //! 4. A `Recorder` aggregates events; changes go out as `trace-frame` events ~20 times a second.
 
 use std::collections::VecDeque;
@@ -200,6 +202,8 @@ async fn run(
     // 1. Build and instrument (blocking).
     let log_tx = out.clone();
     let out_dir = root.join(".nodex").join("run");
+    let tail_dir = out_dir.join("tail");
+    let _ = std::fs::remove_dir_all(&tail_dir);
     let prep_root = root.clone();
     let command = tokio::task::spawn_blocking(move || {
         instrumenter.prepare(&prep_root, &out_dir, &mut |l| {
@@ -233,6 +237,7 @@ async fn run(
         .current_dir(&command.cwd)
         .env("NODEX_TRACE", endpoint.to_string())
         .env("NODEX_TRACE_TOKEN", &trace_token)
+        .env("NODEX_TRACE_TAIL", &tail_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -286,6 +291,7 @@ async fn run(
     let _ = stop_ticker.send(());
     let _ = ticker.await;
     intake.abort();
+    replay_tails(&tail_dir, &recorder, &out);
     send_frame(state, &recorder);
     let code = status.code();
     let _ = out.send(line("nodex", format!("■ exited with code {}", code.map_or("?".into(), |c| c.to_string()))));
@@ -294,6 +300,28 @@ async fn run(
     }
     set_status(state, RunStatus { state: RunState::Exited, detail: command.description, exit_code: code });
     Ok(())
+}
+
+/// Feeds the frames a program wrote to its tail file when it ended abruptly.
+fn replay_tails(dir: &std::path::Path, recorder: &Arc<Mutex<Recorder>>, out: &mpsc::UnboundedSender<OutputLine>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+        let mut decoder = Decoder::default();
+        match decoder.feed(&bytes) {
+            Ok(records) => {
+                if let Ok(mut r) = recorder.lock() {
+                    let replayed = r.replay_tail(&records);
+                    if replayed > 0 {
+                        let _ = out.send(line("nodex", format!("recovered {replayed} trace events written at exit")));
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = out.send(line("nodex", format!("trace tail corrupt: {}", e.0)));
+            }
+        }
+    }
 }
 
 fn send_frame(state: &AppState, recorder: &Arc<Mutex<Recorder>>) {

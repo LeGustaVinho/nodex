@@ -1,0 +1,7 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/modules/a.helper
+Entry — when helper() is called
+Return — return "a"

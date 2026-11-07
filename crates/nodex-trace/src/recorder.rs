@@ -180,6 +180,8 @@ pub struct Recorder {
     timeline: Vec<Entry>,
     events: u64,
     dropped: u64,
+    /// Highest frame number received per process (see [`RecordKind::Sequence`]).
+    sequences: HashMap<i32, i32>,
 }
 
 impl Recorder {
@@ -208,7 +210,29 @@ impl Recorder {
             timeline: Vec::new(),
             events: 0,
             dropped: 0,
+            sequences: HashMap::new(),
         }
+    }
+
+    /// The highest frame number received from process `pid` (0 when none).
+    pub fn last_sequence(&self, pid: i32) -> i32 {
+        self.sequences.get(&pid).copied().unwrap_or(0)
+    }
+
+    /// Records the frames of a crash tail file that did not already arrive over the socket.
+    pub fn replay_tail(&mut self, records: &[Record]) -> usize {
+        let mut skip = false;
+        let mut replayed = 0;
+        for r in records {
+            if r.kind == RecordKind::Sequence {
+                skip = r.arg <= self.last_sequence(r.thread);
+            }
+            if !skip {
+                self.record(r);
+                replayed += 1;
+            }
+        }
+        replayed
     }
 
     fn intern(&mut self, loc: Option<Location>) -> Resolved {
@@ -248,6 +272,11 @@ impl Recorder {
     }
 
     pub fn record(&mut self, r: &Record) {
+        if r.kind == RecordKind::Sequence {
+            let last = self.sequences.entry(r.thread).or_default();
+            *last = (*last).max(r.arg);
+            return;
+        }
         self.events += 1;
         if r.kind != RecordKind::Dropped {
             self.first_micros.get_or_insert(r.micros);
@@ -351,7 +380,7 @@ impl Recorder {
                 }
             }
             RecordKind::Dropped => self.dropped += r.arg.max(0) as u64,
-            RecordKind::Unknown(_) => {}
+            RecordKind::Sequence | RecordKind::Unknown(_) => {}
         }
     }
 
@@ -616,6 +645,24 @@ mod tests {
 
     fn rec(kind: RecordKind, arg: i32, text: Option<&str>) -> Record {
         Record { kind, thread: 1, micros: 0, method: 1, arg, text: text.map(str::to_owned) }
+    }
+
+    #[test]
+    fn tail_replay_skips_frames_already_received() {
+        let mut r = setup();
+        let seq = |pid: i32, n: i32| Record { kind: RecordKind::Sequence, thread: pid, micros: 0, method: 0, arg: n, text: None };
+        // Frame 1 arrived over the socket.
+        r.record(&seq(42, 1));
+        r.record(&rec(RecordKind::Enter, 0, None));
+        r.record(&rec(RecordKind::Step, 1, None));
+        assert_eq!(r.last_sequence(42), 1);
+        // The tail holds frame 1 again (its write was not confirmed) and frame 2.
+        let tail = vec![seq(42, 1), rec(RecordKind::Step, 1, None), seq(42, 2), rec(RecordKind::Step, 1, None), rec(RecordKind::Step, 2, None)];
+        assert_eq!(r.replay_tail(&tail), 3, "frame 2 only (its sequence record and two steps)");
+        let frame = r.take_frame();
+        assert_eq!(frame.counts["S.M(int)"]["a"], 2, "frame 1 is not counted twice");
+        assert_eq!(frame.counts["S.M(int)"]["b"], 1);
+        assert_eq!(frame.events, 4, "sequence records are not events");
     }
 
     #[test]

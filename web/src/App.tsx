@@ -11,7 +11,7 @@ import { TimelineView } from "./views/Timeline";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 
 const VIEWS: { id: View; label: string; hint: string }[] = [
-  { id: "architecture", label: "Architecture", hint: "Namespaces, packages and their dependencies" },
+  { id: "architecture", label: "Architecture", hint: "Namespaces, modules, packages and their dependencies" },
   { id: "types", label: "Types", hint: "Classes, interfaces and how they relate" },
   { id: "calls", label: "Calls", hint: "Who calls a function, and what it calls" },
   { id: "timeline", label: "Timeline", hint: "Every function call of the last run, over time" },

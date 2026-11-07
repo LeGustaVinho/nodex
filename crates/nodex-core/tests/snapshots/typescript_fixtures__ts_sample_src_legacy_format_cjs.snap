@@ -1,0 +1,15 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/legacy/format.money
+Entry — when money(amount) is called
+Branch — if typeof amount !== "number"
+  true:
+    Return — return "?"
+  false:
+Return — return util.format("$%s", amount.toFixed(2))
+== src/legacy/format.(module)
+Entry — when the module is loaded
+Var — util = require("node:util")
+SetMember — export { money } as module.exports

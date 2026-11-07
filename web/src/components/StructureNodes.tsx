@@ -24,20 +24,29 @@ const TYPE_LABEL: Partial<Record<SymbolKind, string>> = {
   Union: "union",
   Record: "record",
   Delegate: "delegate",
+  TypeAlias: "type",
 };
 
 /** Flavors worth showing on a type card header. */
-const CARD_FLAVORS = new Set(["abstract", "sealed", "static", "partial", "generic", "value-type", "unity:MonoBehaviour", "unity:ScriptableObject"]);
+const CARD_FLAVORS = new Set([
+  "abstract", "sealed", "static", "partial", "generic", "value-type", "unity:MonoBehaviour", "unity:ScriptableObject",
+  "type-only", "declare", "export", "default-export",
+]);
 
 function NamespaceNodeImpl({ data, selected }: NodeProps) {
-  const { symbol, types, external } = data as unknown as NamespaceData;
+  const { symbol, types, functions, external } = data as unknown as NamespaceData;
   const isPackage = symbol.kind === "Package";
+  const isModule = symbol.kind === "Module";
   return (
     <div className={`ns ${external ? "external" : ""} ${isPackage ? "package" : ""} ${selected ? "selected" : ""}`}>
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <div className="ns-kind">{isPackage ? "package" : external ? "external namespace" : "namespace"}</div>
+      <div className="ns-kind">{isPackage ? "package" : external ? (isModule ? "external module" : "external namespace") : isModule ? "module" : "namespace"}</div>
       <div className="ns-name">{symbol.qualified_name}</div>
-      {!external && <div className="ns-meta">{types} types</div>}
+      {!external && (
+        <div className="ns-meta">
+          {types} types{functions > 0 ? ` · ${functions} functions` : ""}
+        </div>
+      )}
       {isPackage && symbol.signature && <div className="ns-meta">{symbol.signature}</div>}
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </div>

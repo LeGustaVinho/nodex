@@ -1,0 +1,8 @@
+{
+  "name": "nodex-ts-syntax",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "^19.0.0"
+  }
+}

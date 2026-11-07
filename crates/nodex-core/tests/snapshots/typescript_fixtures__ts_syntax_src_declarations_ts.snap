@@ -1,0 +1,64 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/declarations.sealed
+Entry — when sealed(target, context) is called
+Call — void target
+Call — void context
+== src/declarations.logged
+Entry — when logged(_target, context) is called
+Return — return function (this: unknown, ...args: unknown[]) { … }
+== src/declarations.Base.static
+Entry — when class Base is defined
+SetMember — set Base.count to 1
+== src/declarations.Base.constructor
+Entry — when a new Base is created
+SetMember — increase Base.count by 1
+== src/declarations.Base.secret.get
+Entry — when secret is read
+Return — return this.#secret
+== src/declarations.Base.secret.set
+Entry — when secret is assigned
+SetMember — set this.#secret to v
+== src/declarations.Base.#privateHelper
+Entry — when #privateHelper() is called
+Return — return this.#secret * 2
+== src/declarations.Base.describe
+Entry — when describe() is called
+Return — return `${this.name}: ${this.area()}`
+== src/declarations.Base.create
+Entry — when create(name) is called
+Return — return new this(name)
+== src/declarations.Square.area
+Entry — when area() is called
+Return — return (this.value ?? 0) ** 2
+== src/declarations.Square.describe
+Entry — when describe() is called
+Return — return super.describe() + "!"
+== src/declarations.Square.onResize
+Entry — when onResize(factor) is called
+SetMember — set this.value to (this.value ?? 0) * factor
+== src/declarations.Timestamped
+Entry — when Timestamped(B) is called
+Return — return class extends B { timestamp = Date.now(); }
+== src/declarations.overload
+Entry — when overload(value) is called
+Return — return value
+== src/declarations.counter
+Entry — when counter(limit) is called
+Loop.Range — repeat: start let i = 0; while i < limit; step i++
+  body:
+    Yield — produce i
+== src/declarations.ticks
+Entry — when ticks() is called
+Yield — produce 1
+== src/declarations.arrow
+Entry — when arrow(items) is called
+Return — return items[0]
+== src/declarations.Geometry.scale
+Entry — when scale(v) is called
+Return — return v * unit
+== src/declarations.default.run
+Entry — when run() is called
+Return — return path.join(helper(), defaultExport, String(fs))

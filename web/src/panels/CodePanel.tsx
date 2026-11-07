@@ -10,7 +10,18 @@ import { useStructure } from "../views/Views";
 
 type Editor = Parameters<OnMount>[0];
 
-const LANGUAGE_BY_EXT: Record<string, string> = { cs: "csharp", ts: "typescript", tsx: "typescript", rs: "rust" };
+const LANGUAGE_BY_EXT: Record<string, string> = {
+  cs: "csharp",
+  ts: "typescript",
+  tsx: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  rs: "rust",
+};
 
 /** True if the 1-based (line, col) position lies inside the span. */
 function contains(span: Span, line: number, col: number): boolean {

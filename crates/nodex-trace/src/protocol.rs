@@ -20,6 +20,9 @@ pub enum RecordKind {
     /// An exception was thrown on the thread (`method` is 0: it belongs to the current statement).
     Throw,
     Dropped,
+    /// First record of a frame: `thread` is the process id, `arg` the frame number. Lets Nodex
+    /// skip frames it already received when it reads a crash tail file.
+    Sequence,
     Unknown(u8),
 }
 
@@ -34,6 +37,7 @@ impl From<u8> for RecordKind {
             6 => Self::Arg,
             7 => Self::Throw,
             9 => Self::Dropped,
+            10 => Self::Sequence,
             other => Self::Unknown(other),
         }
     }
@@ -115,6 +119,7 @@ pub fn encode_frame(records: &[Record]) -> Vec<u8> {
             RecordKind::Arg => 6,
             RecordKind::Throw => 7,
             RecordKind::Dropped => 9,
+            RecordKind::Sequence => 10,
             RecordKind::Unknown(k) => k,
         };
         payload.push(kind);
