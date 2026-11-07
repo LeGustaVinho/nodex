@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nodex-sample",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/csharp/Sample", "--no-browser", "--port", "7420", "--dev-origin", "http://localhost:5173"],
+      "port": 7420,
+      "url": "http://127.0.0.1:7420"
+    },
+    {
+      "name": "nodex-unity",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/unity", "--no-browser", "--port", "7430"],
+      "port": 7430,
+      "url": "http://127.0.0.1:7430"
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "web", "dev"],
+      "port": 5173
+    }
+  ]
+}

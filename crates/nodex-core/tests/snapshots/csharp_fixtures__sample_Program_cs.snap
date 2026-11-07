@@ -1,0 +1,22 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Sample.Program.Main(string[])
+Entry — when Main(args) is called
+Var — repository = new InMemoryOrderRepository()
+Var — service = new OrderService(repository)
+Subscribe — on service.OrderShipped, run order => Console.WriteLine($"Shipped {order.Id}")
+Call — repository.Add(new Order(1, "alice", 120m, OrderStatus.Paid))
+Call — repository.Add(new Order(2, "bob", 40m, OrderStatus.Pending))
+Call — repository.Add(new Order(3, "alice", 75m, OrderStatus.Paid))
+Var — total = service.TotalForCustomer("alice")
+Call — Console.WriteLine($"Total: {total}")
+Loop.ForEach — for each label in service.DescribeAll()
+  body:
+    Call — Console.WriteLine(label)
+Try — try; handle errors below
+  try:
+    Await — wait for service.ShipAsync(2)
+  catch:
+    Call — Console.WriteLine($"Could not ship: {ex.Message}")

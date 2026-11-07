@@ -1,0 +1,32 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Game.PlayerController.Awake()
+EventEntry — Unity calls Awake when the object is created
+SetMember — set body to GetComponent<Rigidbody>()
+== Game.PlayerController.Update()
+EventEntry — Unity calls Update every frame
+Var — horizontal = Input.GetAxis("Horizontal")
+Call — transform.Translate(Vector3.right * horizontal * speed * Time.deltaTime)
+Branch — if Input.GetKeyDown(KeyCode.Space) && _jumps < 2
+  true:
+    Call — body.AddForce(Vector3.up * 5f, ForceMode.Impulse)
+    Assign — increase _jumps by 1
+  false:
+== Game.PlayerController.OnCollisionEnter(Collision)
+EventEntry — Unity calls OnCollisionEnter when a collision starts
+Branch — if collision.gameObject.CompareTag("Ground")
+  true:
+    SetMember — set _jumps to 0
+    Spawn — start coroutine Flash
+  false:
+== Game.PlayerController.Flash()
+Entry — when Flash() is called
+Var — renderer = GetComponent<Renderer>()
+Loop.Range — repeat: start int i = 0; while i < 3; step i++
+  body:
+    SetMember — set renderer.enabled to false
+    Wait — wait 0.1 seconds
+    SetMember — set renderer.enabled to true
+    Wait — wait 0.1 seconds

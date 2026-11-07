@@ -1,0 +1,78 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Sample.Services.InMemoryOrderRepository.All()
+Entry — when All() is called
+Return — return _orders.Values
+== Sample.Services.InMemoryOrderRepository.Find(int)
+Entry — when Find(id) is called
+Return — return _orders.TryGetValue(id, out var order) ? order : null
+== Sample.Services.InMemoryOrderRepository.Add(Order)
+Entry — when Add(order) is called
+CriticalSection — lock _gate: one thread at a time
+  body:
+    Assign — set _orders[order.Id] to order
+== Sample.Services.InMemoryOrderRepository.Replace(Order)
+Entry — when Replace(order) is called
+Assign — set _orders[order.Id] to order
+== Sample.Services.OrderService..ctor(IOrderRepository)
+Entry — when a new OrderService is created
+SetMember — set _repository to repository ?? throw new ArgumentNullException(nameof(repository))
+== Sample.Services.OrderService.TotalForCustomer(string)
+Entry — when TotalForCustomer(customer) is called
+Var — total = 0
+Loop.ForEach — for each order in _repository.All()
+  body:
+    Branch — if order.Customer != customer
+      true:
+        Continue — skip to the next iteration
+      false:
+    Branch — if order.Status == OrderStatus.Cancelled
+      true:
+        Break — leave the loop
+      false:
+    Assign — add order.Amount to total
+Return — return total
+== Sample.Services.OrderService.TotalForCustomerLinq(string)
+Entry — when TotalForCustomerLinq(customer) is called
+Return — return _repository.All() → Where(o => o.Customer == customer) → Select(o => o.Amount) → Sum()
+== Sample.Services.OrderService.DescribeAll()
+Entry — when DescribeAll() is called
+Loop.Range — repeat: start int i = 0; while i < 3; step i++
+  body:
+    Var — order = _repository.Find(i + 1)
+    Var — label = match order?.Status (4 cases)
+    Yield — produce $"#{i + 1}: {label}"
+== Sample.Services.OrderService.ShipAsync(int)
+Entry — when ShipAsync(id) is called
+Var — order = _repository.Find(id) ?? throw new InvalidOperationException($"Order {id} not found")
+Branch — if order.Status != OrderStatus.Paid
+  true:
+    Throw — fail with new InvalidOperationException("Only paid orders can ship")
+  false:
+Await — wait for Task.Delay(10)
+Var — shipped = order.WithStatus(OrderStatus.Shipped)
+Call — _repository.Replace(shipped)
+Emit — raise OrderShipped(shipped)
+== Sample.Services.OrderService.CountPending()
+Entry — when CountPending() is called
+Var — count = 0
+Scope — use var scope = new AuditScope("count"), then dispose it
+  body:
+    Var — all = _repository.All().ToList()
+    Var — index = 0
+    Loop.While — while index < all.Count
+      body:
+        Branch — if all[index].Status is OrderStatus.Pending
+          true:
+            Assign — increase count by 1
+          false:
+        Assign — increase index by 1
+Return — return count
+== Sample.Services.AuditScope..ctor(string)
+Entry — when a new AuditScope is created
+SetMember — set _name to name
+== Sample.Services.AuditScope.Dispose()
+Entry — when Dispose() is called
+Call — Console.WriteLine($"audit: {_name}")

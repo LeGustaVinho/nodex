@@ -1,0 +1,21 @@
+[package]
+name = "nodex-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Project model, linker, concept catalog and canonical forms for Nodex"
+
+[dependencies]
+nodex-ir.workspace = true
+nodex-lang-api.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+ts-rs.workspace = true
+rayon.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+nodex-lang-csharp.workspace = true
+insta.workspace = true

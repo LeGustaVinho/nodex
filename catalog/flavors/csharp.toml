@@ -1,0 +1,54 @@
+# C# and Unity flavors. Modifiers (public, private, sealed, ...) and attributes (attr:Name)
+# are emitted as-is; the frontend shows unknown flavors as plain badges.
+
+["unity:message"]
+label = "Unity message"
+explain = "Unity calls this method by name at a specific moment of the object's life (for example every frame). No code in the project calls it."
+
+["unity:coroutine"]
+label = "coroutine"
+explain = "A Unity coroutine: a routine that can pause (Delay nodes) and resume on later frames, started with StartCoroutine."
+
+["unity:inspector"]
+label = "Inspector"
+explain = "Shown and editable in the Unity Inspector; its value usually comes from the scene or prefab, not from code."
+
+["unity:component-lookup"]
+label = "component lookup"
+explain = "Finds another component on a GameObject at runtime. The dependency is not visible in the type's fields."
+
+["unity:dynamic-message"]
+label = "dynamic call"
+explain = "Calls a method by its name as text at runtime. The target cannot be known from the code alone."
+
+["unity:MonoBehaviour"]
+label = "MonoBehaviour"
+explain = "A Unity component attached to a GameObject. Unity creates it and calls its message methods."
+
+["unity:ScriptableObject"]
+label = "ScriptableObject"
+explain = "A Unity data asset stored in the project, shared by many objects."
+
+[positional]
+label = "positional"
+explain = "Declared in the record's header; C# generates the property, constructor parameter and deconstruction."
+
+[indexer]
+label = "indexer"
+explain = "Lets objects of this type be accessed with brackets, like obj[key]."
+
+[partial]
+label = "partial"
+explain = "The declaration is split across several files; Nodex merges them."
+
+[sealed]
+label = "sealed"
+explain = "No other type may inherit from it."
+
+[readonly]
+label = "read-only"
+explain = "Can only be set during construction."
+
+[synthesized]
+label = "generated"
+explain = "Created by the compiler; it does not appear in the source."

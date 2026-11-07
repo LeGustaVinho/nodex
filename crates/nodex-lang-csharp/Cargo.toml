@@ -1,0 +1,16 @@
+[package]
+name = "nodex-lang-csharp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C# language frontend for Nodex (tree-sitter lowering to the Nodex IR)"
+
+[dependencies]
+nodex-ir.workspace = true
+nodex-lang-api.workspace = true
+tree-sitter.workspace = true
+tree-sitter-c-sharp.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

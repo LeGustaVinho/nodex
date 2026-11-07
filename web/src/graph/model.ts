@@ -1,0 +1,48 @@
+/**
+ * A renderer-neutral graph model. Views build a `GGraph`, ELK lays it out, and the canvas maps
+ * it to React Flow. Keeping this layer pure makes the transforms unit-testable.
+ */
+
+export type Side = "WEST" | "EAST";
+
+export interface GPort {
+  id: string;
+  side: Side;
+}
+
+export interface GNode<D = unknown> {
+  id: string;
+  type: string;
+  data: D;
+  width: number;
+  height: number;
+  ports: GPort[];
+  /** Space reserved in the layout (when larger than the node itself); the node sits at `offsetX`. */
+  box?: { width: number; height: number; offsetX: number };
+  /** Nodes placed relative to another node instead of by the layout engine. */
+  attach?: { to: string; dx: number; dy: number };
+}
+
+export interface GEdge<D = unknown> {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  /** Visual kind: exec, data, expr, inherits, implements, uses, imports, ... */
+  kind: string;
+  /** Edges excluded from layout are drawn but do not influence positions. */
+  layout: boolean;
+  data?: D;
+}
+
+export interface GGraph {
+  nodes: GNode[];
+  edges: GEdge[];
+  direction: "RIGHT" | "DOWN";
+}
+
+/** Rough text width-based line count, used to estimate node heights before rendering. */
+export function lines(text: string, charsPerLine: number): number {
+  return Math.max(1, Math.ceil(text.length / charsPerLine));
+}

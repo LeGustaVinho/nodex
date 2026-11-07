@@ -1,0 +1,26 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Sample.Domain.Order.IsLarge
+Entry — when IsLarge is read
+Return — return Amount >= 100m
+== Sample.Domain.Order.WithStatus(OrderStatus)
+Entry — when WithStatus(status) is called
+Return — return this with { Status = status }
+== Sample.Domain.Shape.Describe()
+Entry — when Describe() is called
+Return — return $"{GetType().Name} with area {Area():0.00}"
+== Sample.Domain.Circle..ctor(double)
+Entry — when a new Circle is created
+Branch — if radius <= 0
+  true:
+    Throw — fail with new ArgumentOutOfRangeException(nameof(radius))
+  false:
+SetMember — set _radius to radius
+== Sample.Domain.Circle.Area()
+Entry — when Area() is called
+Return — return Math.PI * _radius * _radius
+== Sample.Domain.Rectangle.Area()
+Entry — when Area() is called
+Return — return Width * Height

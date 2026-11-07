@@ -1,0 +1,9 @@
+[package]
+name = "nodex-lang-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Extension contract (LanguageFrontend) and lowering kit for Nodex languages"
+
+[dependencies]
+nodex-ir.workspace = true

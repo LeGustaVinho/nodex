@@ -1,0 +1,9 @@
+Entry
+Var
+Loop.ForEach
+  body:
+    Branch
+      true:
+        Assign
+      false:
+Return

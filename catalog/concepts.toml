@@ -1,0 +1,324 @@
+# Nodex concept catalog — the single source of truth for how universal concepts look and read.
+#
+# Consumed by: nodex-core (validation, /api/catalog), the web frontend (colors, shapes, explain panel)
+# and the Obsidian reference note "Concept Catalog".
+#
+# Fields:
+#   title    — header text on the node
+#   category — key in [categories]; decides the header color
+#   shape    — "event" | "statement" | "branch" | "loop" | "scope" | "terminal" | "latent" | "pure" | "opaque"
+#   explain  — plain-language explanation for a reader who does not know the source language
+
+[categories.entry]
+title = "Entry & exit"
+color = "#c0392b"
+
+[categories.control]
+title = "Control flow"
+color = "#7f8c8d"
+
+[categories.loop]
+title = "Loops"
+color = "#d35400"
+
+[categories.scope]
+title = "Scopes & errors"
+color = "#8e44ad"
+
+[categories.async]
+title = "Asynchrony"
+color = "#16a085"
+
+[categories.event]
+title = "Events"
+color = "#c2185b"
+
+[categories.data]
+title = "Data"
+color = "#2471a3"
+
+[categories.call]
+title = "Calls"
+color = "#1e8449"
+
+[categories.escape]
+title = "Unmapped code"
+color = "#566573"
+
+# --- Entry and exit -------------------------------------------------------------------------
+
+[concepts.Entry]
+title = "Start"
+category = "entry"
+shape = "event"
+explain = "Where this function begins. Its data pins are the parameters the caller passes in."
+
+[concepts.EventEntry]
+title = "Event"
+category = "entry"
+shape = "event"
+explain = "An entry point the engine or framework calls by itself (for example every frame). Nothing in your code calls it directly."
+
+[concepts.Return]
+title = "Return"
+category = "entry"
+shape = "terminal"
+explain = "Ends the function and hands a value (if any) back to the caller. Nothing after it in the same path runs."
+
+[concepts.Throw]
+title = "Fail"
+category = "entry"
+shape = "terminal"
+explain = "Stops normal execution and reports an error. The nearest enclosing Try handles it; otherwise the error travels up to the caller."
+
+[concepts.PropagateError]
+title = "Pass error up"
+category = "entry"
+shape = "branch"
+explain = "If the value is an error (or empty), return it to the caller immediately; otherwise continue with the unwrapped value."
+
+# --- Control --------------------------------------------------------------------------------
+
+[concepts.Branch]
+title = "If"
+category = "control"
+shape = "branch"
+explain = "Checks a condition and runs either the True path or the False path. When the chosen path finishes, execution continues from Then."
+
+[concepts.Match]
+title = "Match"
+category = "control"
+shape = "branch"
+explain = "Compares a value against several cases and runs the first one that fits. When that case finishes, execution continues from Then."
+
+[concepts."Loop.While"]
+title = "While"
+category = "loop"
+shape = "loop"
+explain = "Repeats the loop body as long as the condition is true. Completed runs once the condition becomes false (or a Break leaves the loop)."
+
+[concepts."Loop.Range"]
+title = "Repeat"
+category = "loop"
+shape = "loop"
+explain = "A counting loop: sets up a counter, repeats the body while the condition holds, and advances the counter after each round."
+
+[concepts."Loop.ForEach"]
+title = "For Each"
+category = "loop"
+shape = "loop"
+explain = "Runs the loop body once for every item in a collection. The item pin holds the current element. Completed runs after the last item."
+
+[concepts."Loop.Infinite"]
+title = "Forever"
+category = "loop"
+shape = "loop"
+explain = "Repeats the body with no built-in end. Only a Break, Return or Fail inside the body stops it."
+
+[concepts.Break]
+title = "Break"
+category = "control"
+shape = "terminal"
+explain = "Leaves the nearest loop immediately; execution continues at the loop's Completed pin."
+
+[concepts.Continue]
+title = "Next"
+category = "control"
+shape = "terminal"
+explain = "Skips the rest of this round of the loop and starts the next round."
+
+[concepts.Jump]
+title = "Jump"
+category = "control"
+shape = "terminal"
+explain = "Transfers execution to a labeled place in the same function (goto). Rare and usually avoided."
+
+# --- Scopes ---------------------------------------------------------------------------------
+
+[concepts.Try]
+title = "Try"
+category = "scope"
+shape = "scope"
+explain = "Runs the Try path; if an error happens there, the matching Catch path runs instead. Finally always runs at the end, error or not."
+
+[concepts.Scope]
+title = "Scope"
+category = "scope"
+shape = "scope"
+explain = "Runs the body with a resource or special rule in effect, and cleans up automatically when the body ends (for example closing a file)."
+
+[concepts.CriticalSection]
+title = "Lock"
+category = "scope"
+shape = "scope"
+explain = "Only one thread at a time may run the body. Other threads wait until it is free."
+
+# --- Asynchrony -----------------------------------------------------------------------------
+
+[concepts.Await]
+title = "Wait for"
+category = "async"
+shape = "latent"
+explain = "Starts an operation that finishes later (a network call, a timer) and pauses this function until it completes, without blocking the program."
+
+[concepts.Yield]
+title = "Produce"
+category = "async"
+shape = "latent"
+explain = "Hands one value to whoever is iterating this function, then pauses here until the next value is requested."
+
+[concepts.Wait]
+title = "Delay"
+category = "async"
+shape = "latent"
+explain = "Pauses this routine for some time or until a condition holds, while the rest of the program keeps running."
+
+[concepts.Spawn]
+title = "Start in background"
+category = "async"
+shape = "statement"
+explain = "Starts another routine that runs on its own. This path continues immediately without waiting for it."
+
+# --- Events ---------------------------------------------------------------------------------
+
+[concepts.Subscribe]
+title = "Subscribe"
+category = "event"
+shape = "statement"
+explain = "Registers a handler to run whenever an event happens later. Nothing runs now; the handler is remembered."
+
+[concepts.Emit]
+title = "Raise event"
+category = "event"
+shape = "statement"
+explain = "Notifies every handler registered for this event, one after another."
+
+# --- Data -----------------------------------------------------------------------------------
+
+[concepts.Literal]
+title = "Value"
+category = "data"
+shape = "pure"
+explain = "A fixed value written directly in the code."
+
+[concepts.Var]
+title = "New variable"
+category = "data"
+shape = "statement"
+explain = "Creates a named value. Later nodes that use it are connected by a data wire."
+
+[concepts.Assign]
+title = "Set"
+category = "data"
+shape = "statement"
+explain = "Changes the value stored in an existing variable."
+
+[concepts.Call]
+title = "Call"
+category = "call"
+shape = "statement"
+explain = "Runs another function and waits for it to finish before continuing."
+
+[concepts.Construct]
+title = "Create"
+category = "call"
+shape = "statement"
+explain = "Creates a new object of a type, running its constructor."
+
+[concepts.GetMember]
+title = "Get"
+category = "data"
+shape = "pure"
+explain = "Reads a field or property of an object."
+
+[concepts.SetMember]
+title = "Set field"
+category = "data"
+shape = "statement"
+explain = "Changes a field or property of an object."
+
+[concepts.Index]
+title = "Element"
+category = "data"
+shape = "pure"
+explain = "Reads one element of a collection by position or key."
+
+[concepts.BinaryOp]
+title = "Operator"
+category = "data"
+shape = "pure"
+explain = "Combines two values (math, comparison, logic)."
+
+[concepts.UnaryOp]
+title = "Operator"
+category = "data"
+shape = "pure"
+explain = "Transforms one value (negation, logical not, increment)."
+
+[concepts.Choose]
+title = "Choose"
+category = "data"
+shape = "pure"
+explain = "Picks one of two values depending on a condition, without changing the execution path."
+
+[concepts.Convert]
+title = "Convert"
+category = "data"
+shape = "pure"
+explain = "Treats a value as another type, converting it if needed."
+
+[concepts.TypeCheck]
+title = "Is type?"
+category = "data"
+shape = "pure"
+explain = "Checks whether a value has a given type or shape; produces true or false."
+
+[concepts.SafeAccess]
+title = "If present"
+category = "data"
+shape = "pure"
+explain = "Reads a member only if the value exists; if it is empty (null), the whole expression is empty instead of failing."
+
+[concepts.Fallback]
+title = "Fallback"
+category = "data"
+shape = "pure"
+explain = "Uses the left value, or the right value when the left one is empty (null)."
+
+[concepts.Compose]
+title = "Compose"
+category = "data"
+shape = "pure"
+explain = "Builds a new value from parts: a text with embedded values, a list, a tuple."
+
+[concepts.Destructure]
+title = "Unpack"
+category = "data"
+shape = "statement"
+explain = "Splits a composite value into several variables at once."
+
+[concepts.Lambda]
+title = "Function value"
+category = "call"
+shape = "pure"
+explain = "A small function written inline and passed around as a value. It runs later, when someone calls it."
+
+[concepts.Pipeline]
+title = "Pipeline"
+category = "call"
+shape = "pure"
+explain = "Processes a sequence step by step: each stage (filter, transform, sum) takes the previous stage's output."
+
+# --- Escape hatches -------------------------------------------------------------------------
+
+[concepts.Opaque]
+title = "Code"
+category = "escape"
+shape = "opaque"
+explain = "Code Nodex does not map to a concept yet. It is shown as written so nothing is hidden."
+
+[concepts.Macro]
+title = "Macro"
+category = "escape"
+shape = "opaque"
+explain = "Code generated at compile time from a template. Expand it to see what it produces."

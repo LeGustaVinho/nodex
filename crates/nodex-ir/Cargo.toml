@@ -1,0 +1,12 @@
+[package]
+name = "nodex-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Language-agnostic intermediate representation for Nodex"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+blake3.workspace = true

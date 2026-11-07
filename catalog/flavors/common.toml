@@ -1,0 +1,150 @@
+# Flavors shared by several languages. A flavor never changes a node's shape; it adds a badge
+# and an explanation. Keys match the strings emitted by language frontends.
+
+[async]
+label = "async"
+explain = "Runs asynchronously: it can pause at Wait for nodes without blocking the program."
+
+[static]
+label = "static"
+explain = "Belongs to the type itself, not to one object of the type."
+
+[iterator]
+label = "generator"
+explain = "Produces a sequence of values lazily, one Produce node at a time."
+
+[extension]
+label = "extension"
+explain = "Adds a method to an existing type from outside it. Called as if it were a member of that type."
+
+[override]
+label = "override"
+explain = "Replaces the behavior inherited from a base type."
+
+[virtual]
+label = "virtual"
+explain = "Derived types may replace this behavior."
+
+[abstract]
+label = "abstract"
+explain = "Declared without a body; derived types or implementers must provide one."
+
+[getter]
+label = "getter"
+explain = "Runs when the property is read."
+
+[setter]
+label = "setter"
+explain = "Runs when the property is assigned; the new value arrives in the value pin."
+
+[computed]
+label = "computed"
+explain = "Looks like a stored field but runs code each time it is read."
+
+[safe-access]
+label = "if present"
+explain = "Skips the operation when the target is empty (null) instead of failing."
+
+[linq]
+label = "pipeline"
+explain = "A chain of sequence operations (filter, map, aggregate)."
+
+[unreachable]
+label = "unreachable"
+explain = "No execution path reaches this node: something before it always returns, fails or leaves the loop."
+
+[dispose]
+label = "cleanup"
+explain = "The resource is released automatically when the scope ends."
+
+[dispose-at-end]
+label = "cleanup at end"
+explain = "The resource is released automatically when the enclosing block ends."
+
+[post-check]
+label = "check after"
+explain = "The body runs once before the condition is checked for the first time."
+
+[index]
+label = "element"
+explain = "Writes one element of a collection by position or key."
+
+[implicit-this]
+label = "field"
+explain = "Writes a field of the current object."
+
+[unsubscribe]
+label = "unsubscribe"
+explain = "Removes a previously registered handler."
+
+[const]
+label = "constant"
+explain = "The value can never change after it is set."
+
+[generic]
+label = "generic"
+explain = "Works with several types, chosen by the caller."
+
+[value-type]
+label = "value"
+explain = "Copied when assigned or passed, instead of shared by reference."
+
+[top-level]
+label = "program"
+explain = "Statements written directly in the file, run when the program starts."
+
+[local-function]
+label = "local function"
+explain = "A helper function declared inside another function and visible only there."
+
+[yield-break]
+label = "end of sequence"
+explain = "Stops producing values; the consumer's loop ends."
+
+[out-declaration]
+label = "out variable"
+explain = "A variable declared inline that the called function fills in."
+
+[copy-with]
+label = "copy"
+explain = "Creates a modified copy, leaving the original unchanged."
+
+[interpolation]
+label = "template"
+explain = "Text with embedded values."
+
+[stage]
+label = "stage"
+explain = "One step of a pipeline."
+
+[custom-stage]
+label = "custom stage"
+explain = "A pipeline step implemented by project code, not by the standard library."
+
+[target]
+label = "target"
+explain = "The object the method is called on."
+
+[arm]
+label = "case"
+explain = "One case of a match: the pattern, then the value it produces."
+
+[query-syntax]
+label = "query"
+explain = "A pipeline written with SQL-like keywords (from, where, select)."
+
+[unchecked]
+label = "unchecked"
+explain = "Arithmetic overflow is not detected inside this region."
+
+[checked]
+label = "checked"
+explain = "Arithmetic overflow raises an error inside this region."
+
+[unsafe]
+label = "unsafe"
+explain = "The compiler's memory-safety guarantees are relaxed inside this region."
+
+[fixed]
+label = "pinned"
+explain = "Memory is pinned so the garbage collector does not move it while the body runs."
