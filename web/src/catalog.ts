@@ -5,6 +5,7 @@ import type { Concept } from "./gen/Concept";
 import type { ConceptInfo } from "./gen/ConceptInfo";
 import type { FlavorInfo } from "./gen/FlavorInfo";
 import type { Language } from "./gen/Language";
+import type { OperationInfo } from "./gen/OperationInfo";
 
 export function useCatalog(): Catalog | undefined {
   return useQuery({ queryKey: ["catalog"], queryFn: api.catalog, staleTime: Infinity }).data;
@@ -19,6 +20,16 @@ export function conceptInfo(catalog: Catalog | undefined, concept: Concept): Con
 export function conceptColor(catalog: Catalog | undefined, concept: Concept): string {
   const info = conceptInfo(catalog, concept);
   return catalog?.categories[info.category]?.color ?? "#566573";
+}
+
+/** The shared operation an expression performs (`catalog/operations.toml`). */
+export function operationInfo(catalog: Catalog | undefined, op: string | null | undefined): OperationInfo | undefined {
+  return op ? catalog?.operations[op] : undefined;
+}
+
+/** Node color of an operation: its family's color. */
+export function operationColor(catalog: Catalog | undefined, op: OperationInfo): string {
+  return catalog?.families[op.family]?.color ?? "#2e9e5b";
 }
 
 /** Looks a flavor up in the language table first, then in the shared table. */
@@ -67,7 +78,7 @@ export function typeColor(ty: string | null | undefined): string {
   if (t === "bool" || t === "boolean") return "#e74c3c";
   if (/^(u?int|u?long|u?short|s?byte|i\d+|u\d+|usize|isize|number|bigint)$/.test(t)) return "#2ecc71";
   if (/^(float|double|decimal|f32|f64)$/.test(t)) return "#a3e635";
-  if (t === "string" || t === "str" || t === "&str" || t === "char") return "#f06292";
+  if (t === "string" || t === "str" || t === "&str" || t === "char" || t === "text") return "#f06292";
   if (/(list|array|ienumerable|vec|\[\])/.test(t)) return "#ffb74d";
   return "#5dade2";
 }

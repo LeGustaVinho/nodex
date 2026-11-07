@@ -27,7 +27,7 @@ export interface SemanticTarget {
 
 export interface SemanticRef {
   site: ByteRange;
-  kind: "call" | "construct" | "base";
+  kind: "call" | "construct" | "base" | "compatible";
   target: SemanticTarget;
 }
 
@@ -154,7 +154,98 @@ export function collectFacts(project: ProjectHost, cache: FactsCache = new Map()
   }
   const messages = [...project.messages];
   if (unresolved > 0) messages.push(`${unresolved} calls could not be resolved`);
+  refs.push(...compatibility(project, offsetsOf, messages));
   return { source: project.describe(), refs, locals, messages };
+}
+
+/** Pairs of project classes and interfaces checked at most, so huge projects stay fast. */
+const MAX_COMPATIBILITY_PAIRS = 200_000;
+
+/**
+ * Structural typing: a class that has every member of a project interface without declaring
+ * `implements` still fits it. Reported for interfaces with at least two required members and
+ * no type parameters (generic interfaces would need type arguments to compare).
+ */
+function compatibility(project: ProjectHost, offsetsOf: (sf: ts.SourceFile) => ByteOffset, messages: string[]): SemanticRef[] {
+  const byProgram = new Map<ts.Program, { classes: ts.ClassDeclaration[]; interfaces: Map<ts.Symbol, ts.InterfaceDeclaration> }>();
+  for (const { file: sf, program } of project.sourceFiles()) {
+    let group = byProgram.get(program);
+    if (!group) {
+      group = { classes: [], interfaces: new Map() };
+      byProgram.set(program, group);
+    }
+    const checker = program.getTypeChecker();
+    const visit = (n: ts.Node) => {
+      if (ts.isClassDeclaration(n) && n.name) group!.classes.push(n);
+      if (ts.isInterfaceDeclaration(n) && !n.typeParameters?.length && hasRequiredMember(n)) {
+        const sym = checker.getSymbolAtLocation(n.name);
+        if (sym && !group!.interfaces.has(sym)) group!.interfaces.set(sym, n);
+      }
+      if (ts.isModuleDeclaration(n) || ts.isModuleBlock(n) || ts.isSourceFile(n)) ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+
+  const out: SemanticRef[] = [];
+  for (const [program, { classes, interfaces }] of byProgram) {
+    if (classes.length * interfaces.size > MAX_COMPATIBILITY_PAIRS) {
+      messages.push(`structural compatibility skipped: ${classes.length} classes × ${interfaces.size} interfaces`);
+      continue;
+    }
+    const checker = program.getTypeChecker();
+    for (const cls of classes) {
+      const sym = checker.getSymbolAtLocation(cls.name!);
+      if (!sym) continue;
+      const instance = checker.getDeclaredTypeOfSymbol(sym);
+      const declared = declaredContracts(cls, checker);
+      const sf = cls.getSourceFile();
+      const file = project.relative(sf.fileName);
+      if (!file) continue;
+      const o = offsetsOf(sf);
+      for (const [ifaceSym, iface] of interfaces) {
+        if (declared.has(ifaceSym)) continue;
+        let fits = false;
+        try {
+          fits = checker.isTypeAssignableTo(instance, checker.getDeclaredTypeOfSymbol(ifaceSym));
+        } catch {
+          fits = false;
+        }
+        if (!fits) continue;
+        out.push({
+          site: { file, start: o(cls.name!.getStart(sf)), end: o(cls.name!.getEnd()) },
+          kind: "compatible",
+          target: { ...describe(iface, iface.name.text, checker, program, project, offsetsOf), kind: "type" },
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** At least two required members: with fewer, unrelated classes fit by coincidence (`reset()`). */
+function hasRequiredMember(iface: ts.InterfaceDeclaration): boolean {
+  return iface.members.filter((m) => (ts.isPropertySignature(m) || ts.isMethodSignature(m)) && !m.questionToken).length >= 2;
+}
+
+/** Interfaces a class already declares, through `implements`, base classes and interface `extends`. */
+function declaredContracts(cls: ts.ClassLikeDeclaration, checker: ts.TypeChecker): Set<ts.Symbol> {
+  const out = new Set<ts.Symbol>();
+  const seen = new Set<ts.Node>();
+  const visit = (decl: ts.Declaration) => {
+    if (seen.has(decl)) return;
+    seen.add(decl);
+    const clauses = (ts.isClassLike(decl) || ts.isInterfaceDeclaration(decl)) ? decl.heritageClauses ?? [] : [];
+    for (const clause of clauses) {
+      for (const t of clause.types) {
+        const target = resolveAlias(checker.getSymbolAtLocation(t.expression), checker);
+        if (!target) continue;
+        out.add(target);
+        for (const d of target.declarations ?? []) visit(d);
+      }
+    }
+  };
+  visit(cls);
+  return out;
 }
 
 function isRequire(node: ts.CallExpression): boolean {

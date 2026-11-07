@@ -11,6 +11,7 @@ use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, truncate};
 use tree_sitter::Node;
 
 use crate::expr::{ExprLowering, PipelineKind, reads, unparen};
+use crate::frameworks::{self, Frameworks};
 use crate::structure::{BodyJob, BodyKind};
 use crate::syntax::{Src, children, first_child_of_kind, is_function_value, is_statement, named_children, parameters, pattern_names, string_value};
 
@@ -28,6 +29,11 @@ struct Lowering<'a, 'f> {
     /// Functions that have their own Blueprint, by start byte.
     functions: &'f HashMap<usize, SymbolId>,
     label_max: usize,
+    fw: Frameworks,
+    /// React state setters declared in this body (`const [n, setN] = useState(0)` → `setN`).
+    setters: Vec<String>,
+    /// The body is a React component: its returned JSX is what it renders.
+    component: bool,
 }
 
 const ENTRY_FLAVORS: &[&str] = &[
@@ -40,8 +46,18 @@ const SUBSCRIBE: &[&str] = &["on", "once", "addListener", "addEventListener", "p
 const UNSUBSCRIBE: &[&str] = &["off", "removeListener", "removeEventListener", "removeAllListeners"];
 const EMIT: &[&str] = &["emit", "dispatchEvent"];
 
-pub fn lower_body(src: Src, job: &BodyJob, functions: &HashMap<usize, SymbolId>) -> Lowered {
-    let mut l = Lowering { src, b: FlowBuilder::new(job.symbol.clone()), ex: ExprLowering::new(src), functions, label_max: 96 };
+pub fn lower_body(src: Src, job: &BodyJob, functions: &HashMap<usize, SymbolId>, fw: Frameworks) -> Lowered {
+    let mut l = Lowering {
+        src,
+        b: FlowBuilder::new(job.symbol.clone()),
+        ex: ExprLowering { functions: functions.clone(), ..ExprLowering::new(src) },
+        functions,
+        label_max: 96,
+        fw,
+        setters: Vec::new(),
+        component: job.flavors.iter().any(|f| f == "react:component")
+            || (job.name == "render" && job.flavors.iter().any(|f| f == "react:lifecycle")),
+    };
 
     let params: Vec<&str> = job.params.iter().map(|(n, _)| n.as_str()).collect();
     let label = match job.kind {
@@ -50,7 +66,11 @@ pub fn lower_body(src: Src, job: &BodyJob, functions: &HashMap<usize, SymbolId>)
         BodyKind::Setter => format!("when {} is assigned", job.name.trim_end_matches(".set")),
         BodyKind::StaticBlock => format!("when class {} is defined", job.name),
         BodyKind::TopLevel => "when the module is loaded".to_owned(),
+        BodyKind::LocalFunction if job.flavors.iter().any(|f| f == "callback") => {
+            nodex_lang_api::kit::callback_entry_label(&job.name, &params)
+        }
         BodyKind::LocalFunction => format!("when local function {}({}) is called", job.name, params.join(", ")),
+        BodyKind::Function if job.flavors.iter().any(|f| f == "iife") => "when the module runs it, right where it is written".to_owned(),
         BodyKind::Function | BodyKind::Method => format!("when {}({}) is called", job.name, params.join(", ")),
     };
     let entry_span = if job.kind == BodyKind::TopLevel {
@@ -59,7 +79,13 @@ pub fn lower_body(src: Src, job: &BodyJob, functions: &HashMap<usize, SymbolId>)
         src.header_span(job.decl, Some(job.body))
     };
     let flavors = job.flavors.iter().filter(|f| ENTRY_FLAVORS.contains(&f.as_str()) || f.starts_with("attr:")).cloned();
-    let entry = l.b.add(NodeSpec::new(Concept::Entry, label, job.signature.clone(), entry_span).flavors(flavors));
+    // A framework calls this body (lifecycle, render, registered callback): an event entry.
+    let (concept, label) = match &job.event {
+        Some(event) => (Concept::EventEntry, event.clone()),
+        None => (Concept::Entry, label),
+    };
+    let flavors = flavors.chain(job.flavors.iter().filter(|f| f.contains(':') && !f.starts_with("attr:")).cloned());
+    let entry = l.b.add(NodeSpec::new(concept, label, job.signature.clone(), entry_span).flavors(flavors));
     let start = l.b.exec_out(&entry, "out", "");
     for (name, ty) in &job.params {
         if !name.is_empty() {
@@ -164,7 +190,7 @@ impl Lowering<'_, '_> {
                 self.b.pop_scope();
                 end
             }
-            "empty_statement" | "comment" | "import_statement" | "interface_declaration" | "type_alias_declaration"
+            "empty_statement" | "comment" | "import_statement" | "import_alias" | "interface_declaration" | "type_alias_declaration"
             | "ambient_declaration" | "function_signature" => cur,
             "expression_statement" => match named_children(s).into_iter().next() {
                 Some(e) if matches!(e.kind(), "string" | "internal_module" | "module") => cur,
@@ -318,6 +344,59 @@ impl Lowering<'_, '_> {
                 continue;
             }
 
+            // `const server = app.listen(3000, () => { … })`: a registration whose result is kept.
+            if let Some(v) = bare.filter(|v| v.kind() == "call_expression")
+                && let Some((label, flavor, target)) = self.registration_value(v)
+            {
+                let names_text = src.norm(name_node);
+                let mut spec = NodeSpec::new(Concept::Var, self.label(format!("{names_text} = {label}")), src.norm(code_node), src.span(code_node))
+                    .flavors(flavors.clone())
+                    .flavor(flavor)
+                    .expr(Some(self.ex.lower(v)));
+                if let Some(t) = target {
+                    spec = spec.call(t);
+                }
+                let id = self.place(spec, &cur);
+                self.read_all(&id, value);
+                let mut names = Vec::new();
+                pattern_names(src, name_node, &mut names);
+                for n in names {
+                    self.b.define(&id, &n, None);
+                }
+                cur = Some(self.b.exec_out(&id, "out", ""));
+                continue;
+            }
+
+            // `const [n, setN] = useState(0)`, `const q = ref('')`, `const http = inject(HttpClient)`.
+            let mut names = Vec::new();
+            pattern_names(src, name_node, &mut names);
+            if let Some(v) = bare
+                && let Some((label, flavor)) = frameworks::declaration(src, self.fw, &names, v)
+            {
+                if flavor == "react:state"
+                    && let Some(setter) = names.get(1)
+                {
+                    self.setters.push(setter.clone());
+                }
+                let mut spec = NodeSpec::new(Concept::Var, self.label(label), src.norm(code_node), src.span(code_node))
+                    .flavors(flavors.clone())
+                    .flavor(flavor)
+                    .expr(value.map(|v| self.ex.lower(v)));
+                // `useCallback(() => { … })`: the function has its own Blueprint.
+                if let Some(inner) = v.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next()).map(unparen)
+                    && let Some(id) = self.functions.get(&inner.start_byte())
+                {
+                    spec = spec.call(CallTarget { symbol: Some(id.clone()), display: names.join(", "), external: false });
+                }
+                let id = self.place(spec, &cur);
+                self.read_all(&id, value);
+                for n in &names {
+                    self.b.define(&id, n, None);
+                }
+                cur = Some(self.b.exec_out(&id, "out", ""));
+                continue;
+            }
+
             if name_node.kind() != "identifier" {
                 let mut names = Vec::new();
                 pattern_names(src, name_node, &mut names);
@@ -342,6 +421,11 @@ impl Lowering<'_, '_> {
 
             let name = src.norm(name_node);
             let mut fl = flavors.clone();
+            if ty.as_deref() == Some("never") {
+                let label = format!("check while compiling that every case of {} was handled", value.map(|v| self.ex.natural(v)).unwrap_or_default());
+                cur = self.simple(code_node, Concept::TypeCheck, label, value, vec!["exhaustive-check".into()], cur);
+                continue;
+            }
             let (concept, label) = match bare {
                 Some(v) if v.kind() == "await_expression" => {
                     let inner = named_children(v).into_iter().next().unwrap_or(v);
@@ -351,6 +435,7 @@ impl Lowering<'_, '_> {
                     match self.ex.pipeline(v).map(|p| p.kind) {
                         Some(PipelineKind::Array) => fl.push("array-pipeline".into()),
                         Some(PipelineKind::Promise) => fl.push("promise".into()),
+                        Some(PipelineKind::Rx) => fl.push("rx-pipeline".into()),
                         None => {}
                     }
                     if v.kind() == "call_expression" && v.child_by_field_name("function").is_some_and(|f| src.text(f) == "require") {
@@ -414,6 +499,11 @@ impl Lowering<'_, '_> {
                 let flavors = if delegate { vec!["delegate".to_owned()] } else { Vec::new() };
                 self.simple(s, Concept::Yield, label, value, flavors, cur)
             }
+            "new_expression" if self.fw.node && e.child_by_field_name("constructor").is_some_and(|c| src.norm(c).ends_with("Worker")) => {
+                let script = e.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next()).map(|a| self.ex.natural(a)).unwrap_or_default();
+                let label = format!("run {script} on another thread (worker)");
+                self.simple(s, Concept::Spawn, label, Some(e), vec!["node:worker".into()], cur)
+            }
             "new_expression" => {
                 let label = format!("create {}", self.ex.natural(e));
                 self.simple(s, Concept::Construct, label, Some(e), Vec::new(), cur)
@@ -439,9 +529,23 @@ impl Lowering<'_, '_> {
                 };
                 self.simple(s, Concept::Call, label, Some(e), vec!["short-circuit".into()], cur)
             }
+            // `kind satisfies never;`: the compiler checks every case was handled before here.
+            "satisfies_expression" if src.text(e).trim_end().ends_with("never") => {
+                let value = named_children(e).into_iter().next();
+                let label = format!("check while compiling that every case of {} was handled", value.map(|v| self.ex.natural(v)).unwrap_or_default());
+                self.simple(s, Concept::TypeCheck, label, Some(e), vec!["exhaustive-check".into()], cur)
+            }
             "ternary_expression" => {
                 let label = format!("choose: {}", self.ex.natural(e));
                 self.simple(s, Concept::Call, label, Some(e), vec!["short-circuit".into()], cur)
+            }
+            "unary_expression"
+                if named_children(e).into_iter().last().map(unparen).is_some_and(|c| {
+                    c.kind() == "call_expression" && c.child_by_field_name("function").is_some_and(|f| f.kind() == "parenthesized_expression")
+                }) =>
+            {
+                let call = named_children(e).into_iter().last().map(unparen).unwrap_or(e);
+                self.call(s, call, cur)
             }
             "unary_expression" => {
                 let label = self.ex.natural(e);
@@ -515,6 +619,26 @@ impl Lowering<'_, '_> {
         {
             let name = src.norm(l).replace(".prototype.", ".");
             return self.define_function(s, r, &name, cur);
+        }
+
+        // `this.subscription = source$.subscribe(v => { … })`.
+        if op == "="
+            && let Some(r) = right.map(unparen).filter(|r| r.kind() == "call_expression")
+            && let Some((label, flavor, target)) = self.registration_value(r)
+        {
+            let concept = if left.is_some_and(|l| l.kind() == "identifier") { Concept::Assign } else { Concept::SetMember };
+            let mut spec = NodeSpec::new(concept, self.label(format!("set {left_text} to: {label}")), src.norm(s), src.span(s))
+                .flavor(flavor)
+                .expr(Some(self.ex.lower(e)));
+            if let Some(t) = target {
+                spec = spec.call(t);
+            }
+            let id = self.place(spec, &cur);
+            self.read_all(&id, right);
+            if let Some(l) = left.filter(|l| l.kind() == "identifier") {
+                self.b.write(&id, &src.norm(l));
+            }
+            return Some(self.b.exec_out(&id, "out", ""));
         }
 
         let mut flavors = Vec::new();
@@ -595,6 +719,50 @@ impl Lowering<'_, '_> {
         let target_text = target.map(|t| self.ex.natural(t)).unwrap_or_default();
         let event = args.first().map(|a| if a.kind() == "string" { format!("'{}'", string_value(src, *a)) } else { self.ex.natural(*a) });
 
+        // A callback handed to a framework or an event source.
+        if let Some(reg) = frameworks::registration(src, self.fw, e) {
+            let callback = self.functions.get(&reg.callback.start_byte()).cloned();
+            let run = if callback.is_some() { format!("run {}", reg.name) } else { format!("run {}", self.ex.natural(reg.callback)) };
+            let label = reg.statement.replace("run …", &run);
+            let mut spec = NodeSpec::new(Concept::Subscribe, self.label(label), src.header(s, Some(reg.callback)), src.span(s))
+                .flavor(reg.flavor)
+                .expr(Some(self.ex.lower(e)));
+            if method == "once" {
+                spec = spec.flavor("once");
+            }
+            if let Some(id) = callback {
+                spec = spec.call(CallTarget { symbol: Some(id), display: reg.name.clone(), external: false });
+            }
+            let id = self.place(spec, &cur);
+            for a in args.iter().filter(|a| a.id() != reg.callback.id()) {
+                self.read_all(&id, Some(*a));
+            }
+            return Some(self.b.exec_out(&id, "out", ""));
+        }
+        // `process.exit(1)`, `readFileSync(…)`, `spawn('git', …)`.
+        if let Some((concept, label, flavor)) = frameworks::node_call(src, self.fw, e) {
+            return self.simple(s, concept, label, Some(e), vec![flavor.into()], cur);
+        }
+        // React state changes: `setCount(c => c + 1)`, `this.setState({ … })`.
+        let setter = target.is_none() && (self.setters.contains(&method) || self.fw.react && frameworks::is_setter_name(&method));
+        if setter || (method == "setState" && target_text == "this") {
+            let label = format!("change state with {}{} (React renders again)", if target.is_some() { "this.setState" } else { &method }, src.norm(e.child_by_field_name("arguments").unwrap_or(e)));
+            return self.simple(s, Concept::Call, self.label(label), Some(e), vec!["react:set-state".into()], cur);
+        }
+        // Vue: `emit('save', item)`, `this.$emit('save', item)`.
+        if self.fw.vue && (method == "emit" && target.is_none() || method == "$emit") && args.first().is_some_and(|a| a.kind() == "string") {
+            let rest: Vec<String> = args.iter().skip(1).map(|a| self.ex.natural(*a)).collect();
+            let with = if rest.is_empty() { String::new() } else { format!(" with {}", rest.join(", ")) };
+            let label = format!("raise {} to the parent component{with}", event.clone().unwrap_or_default());
+            return self.simple(s, Concept::Emit, label, Some(e), vec!["vue:emit".into()], cur);
+        }
+        // `this.saved.emit(hero)` (Angular outputs, RxJS subjects): the value is the event.
+        if target.is_some() && method == "emit" && args.len() == 1 && args[0].kind() != "string" {
+            let label = format!("send {} through {target_text}", self.ex.natural(args[0]));
+            let flavors = if self.fw.angular { vec!["angular:output".to_owned()] } else { Vec::new() };
+            return self.simple(s, Concept::Emit, label, Some(e), flavors, cur);
+        }
+
         if target.is_some() && args.len() >= 2 && SUBSCRIBE.contains(&method.as_str()) {
             let handler = self.ex.natural(args[1]);
             let label = format!("on {target_text} {}, run {handler}", event.unwrap_or_default());
@@ -623,15 +791,36 @@ impl Lowering<'_, '_> {
             return self.simple(s, Concept::Spawn, self.label(label), Some(e), flavors, cur);
         }
 
+        // `(async () => { … })()` with its own Blueprint.
+        if let Some(callee) = func.filter(|f| f.kind() == "parenthesized_expression").map(unparen)
+            && let Some(id) = self.functions.get(&callee.start_byte())
+        {
+            let spec = NodeSpec::new(Concept::Call, "run the function written here", src.header(s, callee.child_by_field_name("body")), src.span(s))
+                .flavor("iife")
+                .call(CallTarget { symbol: Some(id.clone()), display: "(immediately run)".into(), external: false });
+            let node = self.place(spec, &cur);
+            return Some(self.b.exec_out(&node, "out", ""));
+        }
+
         let mut flavors = Vec::new();
         if let Some(p) = self.ex.pipeline(e) {
             flavors.push(match p.kind {
                 PipelineKind::Array => "array-pipeline".to_owned(),
                 PipelineKind::Promise => "promise".to_owned(),
+                PipelineKind::Rx => "rx-pipeline".to_owned(),
             });
         }
         let label = self.ex.natural(e);
         self.simple(s, Concept::Call, label, Some(e), flavors, cur)
+    }
+
+    /// A registration used as a value: its statement label, flavor and the callback's Blueprint.
+    fn registration_value(&mut self, call: Node) -> Option<(String, &'static str, Option<CallTarget>)> {
+        let reg = frameworks::registration(self.src, self.fw, call)?;
+        let callback = self.functions.get(&reg.callback.start_byte()).cloned();
+        let run = if callback.is_some() { format!("run {}", reg.name) } else { format!("run {}", self.ex.natural(reg.callback)) };
+        let target = callback.map(|id| CallTarget { symbol: Some(id), display: reg.name.clone(), external: false });
+        Some((reg.statement.replace("run …", &run), reg.flavor, target))
     }
 
     /// `await sleep(100)`, `await new Promise(r => setTimeout(r, 100))`: a pause.
@@ -670,10 +859,17 @@ impl Lowering<'_, '_> {
                     flavors.push("async".to_owned());
                 }
                 if let Some(p) = self.ex.pipeline(bare) {
-                    flavors.push(if p.kind == PipelineKind::Array { "array-pipeline".into() } else { "promise".into() });
+                    flavors.push(match p.kind {
+                        PipelineKind::Array => "array-pipeline".into(),
+                        PipelineKind::Promise => "promise".into(),
+                        PipelineKind::Rx => "rx-pipeline".into(),
+                    });
                 }
                 if matches!(bare.kind(), "jsx_element" | "jsx_self_closing_element") {
                     flavors.push("jsx".to_owned());
+                    if self.component {
+                        return self.simple(s, Concept::Return, format!("show {}", self.ex.natural(e)), Some(e), flavors, cur);
+                    }
                 }
                 format!("return {}", self.ex.natural(e))
             }
@@ -841,6 +1037,14 @@ impl Lowering<'_, '_> {
         }
         if tokens.iter().any(|t| t == "var") {
             flavors.push("var".to_owned());
+        }
+        // `for (using r of rs)` / `for (await using r of rs)`: each item is disposed after its turn.
+        let header = src.header(s, body);
+        if crate::syntax::has_word(&header, "using") && left.is_some_and(|l| !crate::syntax::has_word(&src.norm(l), "using")) {
+            flavors.push("dispose-at-end".to_owned());
+            if header.contains("await using") {
+                flavors.push("async".to_owned());
+            }
         }
         let left_text = left.map(|l| src.norm(l)).unwrap_or_default();
         let right_text = right.map(|r| self.ex.natural(r)).unwrap_or_default();

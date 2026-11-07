@@ -1,0 +1,16 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/react/Clock.Clock.componentDidMount
+EventEntry — React calls componentDidMount after the component is first added to the page
+SetMember — set this.timer to setInterval(() => this.tick(), 1000)
+== src/react/Clock.Clock.componentWillUnmount
+EventEntry — React calls componentWillUnmount right before the component is removed
+Call — clearInterval(this.timer)
+== src/react/Clock.Clock.tick
+Entry — when tick() is called
+Call — change state with this.setState({ now: new Date() }) (React renders again)
+== src/react/Clock.Clock.render
+EventEntry — React calls render every time the component renders
+Return — show <time> {this.props.label} {this.state.now.toLocaleTimeString()} </time>

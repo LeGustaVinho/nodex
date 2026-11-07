@@ -2,6 +2,8 @@
 source: crates/nodex-core/tests/typescript_fixtures.rs
 expression: outline_file(ir)
 ---
+== src/expressions.expressions.on 'close'
+EventEntry — when emitter raises 'close'
 == src/expressions.expressions.asyncArrow
 Entry — when local function asyncArrow(n) is called
 Await — wait for Promise.resolve(n)
@@ -47,7 +49,7 @@ Var — generic = Array.of<number>
 Await — lazy = wait for import("./modules/index.js")
 Call — delete (obj as Record<string, unknown>)[key]
 Subscribe — on emitter 'change', run (value: number) => console.log(value)
-Subscribe — on emitter 'close', run () => {}
+Subscribe — on emitter 'close', run on 'close'
 Subscribe — stop listening to 'change' on emitter
 Emit — raise 'change' on emitter with 1
 Subscribe — stop listening to 'change' on emitter

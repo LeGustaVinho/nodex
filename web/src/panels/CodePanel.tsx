@@ -20,6 +20,7 @@ const LANGUAGE_BY_EXT: Record<string, string> = {
   jsx: "javascript",
   mjs: "javascript",
   cjs: "javascript",
+  vue: "html",
   rs: "rust",
 };
 

@@ -2,6 +2,7 @@
 
 use nodex_ir::{Concept, Expr};
 use nodex_lang_api::kit::truncate;
+use nodex_lang_api::ops::{self, Equality};
 use tree_sitter::Node;
 
 use crate::syntax::{Src, bare_type_name, children, first_child_of_kind, named_children};
@@ -42,6 +43,8 @@ fn is_linq_stage(_src: Src, name: &str, invocation: Node) -> bool {
 pub struct ExprLowering<'a> {
     pub src: Src<'a>,
     pub instantiated: Vec<String>,
+    /// Lambdas with a Blueprint of their own, by start byte (`Expr::symbol` of the `Lambda`).
+    pub functions: std::collections::HashMap<usize, nodex_ir::SymbolId>,
 }
 
 /// A method-chain pipeline: `source.Where(..).Select(..).Sum()`.
@@ -53,7 +56,7 @@ pub struct Pipeline<'t> {
 
 impl<'a> ExprLowering<'a> {
     pub fn new(src: Src<'a>) -> Self {
-        Self { src, instantiated: Vec::new() }
+        Self { src, instantiated: Vec::new(), functions: Default::default() }
     }
 
     /// Detects a LINQ-style pipeline rooted at `node`.
@@ -126,6 +129,9 @@ impl<'a> ExprLowering<'a> {
             children,
             symbol: None,
             target: None,
+            op: None,
+            ty: None,
+            params: Vec::new(),
         };
         let text = || truncate(&src.norm(node), 40);
 
@@ -143,6 +149,9 @@ impl<'a> ExprLowering<'a> {
                             children: args,
                             symbol: None,
                             target: None,
+                            op: None,
+                            ty: None,
+                            params: Vec::new(),
                         };
                         if !is_linq_stage(src, name, *inv) {
                             stage.flavors.push("custom-stage".into());
@@ -222,7 +231,8 @@ impl<'a> ExprLowering<'a> {
                     "is" => Concept::TypeCheck,
                     _ => Concept::BinaryOp,
                 };
-                mk(concept, op_label(&op).to_owned(), kids)
+                let e = mk(concept, op_label(&op).to_owned(), kids);
+                if concept == Concept::BinaryOp { ops::operator(e, &op, Equality::Strict) } else { e }
             }
             "is_pattern_expression" => {
                 let pattern = node.child_by_field_name("pattern").map(|p| src.norm(p)).unwrap_or_default();
@@ -279,7 +289,11 @@ impl<'a> ExprLowering<'a> {
             "prefix_unary_expression" | "postfix_unary_expression" => {
                 let op = children(node).into_iter().find(|c| !c.is_named()).map(|c| src.norm(c)).unwrap_or_default();
                 let kids = named_children(node).into_iter().map(|c| self.lower(c)).collect();
-                mk(Concept::UnaryOp, op_label(&op).to_owned(), kids)
+                let mut e = ops::operator(mk(Concept::UnaryOp, op_label(&op).to_owned(), kids), &op, Equality::Strict);
+                if matches!(op.as_str(), "++" | "--") {
+                    e.flavors.push(if node.kind() == "prefix_unary_expression" { "prefix" } else { "postfix" }.into());
+                }
+                e
             }
             "assignment_expression" => {
                 let op = node.child_by_field_name("operator").map(|o| src.norm(o)).unwrap_or_else(|| "=".into());
@@ -288,7 +302,8 @@ impl<'a> ExprLowering<'a> {
                     .filter_map(|f| node.child_by_field_name(f))
                     .map(|c| self.lower(c))
                     .collect();
-                mk(Concept::Assign, op, kids)
+                let e = mk(Concept::Assign, op.clone(), kids);
+                ops::compound_assign(e, &op, Equality::Strict)
             }
             "conditional_expression" => {
                 let kids = ["condition", "consequence", "alternative"]
@@ -336,12 +351,15 @@ impl<'a> ExprLowering<'a> {
                     .collect();
                 let mut e = mk(Concept::Compose, "text with values".into(), kids);
                 e.flavors.push("interpolation".into());
+                e.ty = Some("text".into());
                 e
             }
             "string_literal" | "verbatim_string_literal" | "raw_string_literal" | "integer_literal"
             | "real_literal" | "boolean_literal" | "null_literal" | "character_literal"
             | "typeof_expression" | "default_expression" | "sizeof_expression" => {
-                mk(Concept::Literal, text(), Vec::new())
+                let mut e = mk(Concept::Literal, text(), Vec::new());
+                e.ty = ops::literal_type(&e.label).map(str::to_owned);
+                e
             }
             "identifier" | "this" | "base" | "this_expression" | "base_expression" | "generic_name"
             | "qualified_name" | "predefined_type" | "alias_qualified_name" | "member_binding_expression_name" => {
@@ -381,6 +399,8 @@ impl<'a> ExprLowering<'a> {
                     _ => Vec::new(),
                 };
                 let mut e = mk(Concept::Lambda, truncate(&format!("({}) => …", params.trim_matches(['(', ')'])), 40), kids);
+                e.params = ops::param_names(&params);
+                e.symbol = self.functions.get(&node.start_byte()).cloned();
                 if children(node).iter().any(|c| src.text(*c) == "async") {
                     e.flavors.push("async".into());
                 }
@@ -415,6 +435,9 @@ impl<'a> ExprLowering<'a> {
                             children: arm_kids,
                             symbol: None,
                             target: None,
+                            op: None,
+                            ty: None,
+                            params: Vec::new(),
                         });
                     } else {
                         kids.push(self.lower(c));
@@ -433,6 +456,9 @@ impl<'a> ExprLowering<'a> {
                         children: Vec::new(),
                         symbol: None,
                         target: None,
+                        op: None,
+                        ty: None,
+                        params: Vec::new(),
                     })
                     .collect();
                 let mut e = mk(Concept::Pipeline, "pipeline".into(), kids);

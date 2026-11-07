@@ -2,11 +2,14 @@
 source: crates/nodex-core/tests/typescript_fixtures.rs
 expression: outline_file(ir)
 ---
+== src/main.main.on 'shipped'
+EventEntry — when service raises 'shipped'
+Call — console.log(`Shipped ${order.id}`)
 == src/main.main
 Entry — when main() is called
 Var — repository = new InMemoryOrderRepository()
 Var — service = new OrderService(repository)
-Subscribe — on service 'shipped', run (order: Order) => console.log(`Shipped ${order.id}`)
+Subscribe — on service 'shipped', run on 'shipped'
 Call — repository.add(new Order(1, "alice", 120, OrderStatus.Paid))
 Call — repository.add(new Order(2, "bob", 40, OrderStatus.Pending))
 Call — repository.add(new Order(3, "alice", 75, OrderStatus.Paid))
@@ -21,6 +24,10 @@ Try — try; handle errors below
     Await — wait for service.ship(2)
   catch:
     Call — console.log(`Could not ship: ${(err as Error).message}`)
+== src/main.(module).catch callback
+Entry — when catch calls this function with (err)
+Call — console.error(err)
+SetMember — set process.exitCode to 1
 == src/main.(module)
 Entry — when the module is loaded
 Call — main() → catch((err) => { … })

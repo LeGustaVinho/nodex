@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 
-use nodex_ir::{Concept, FlowGraph};
+use nodex_ir::{Concept, Expr, FlowGraph};
 
 /// Renders the exec structure with concepts only.
 pub fn canonical(flow: &FlowGraph) -> String {
@@ -18,6 +18,48 @@ pub fn canonical(flow: &FlowGraph) -> String {
 /// Renders the exec structure with natural-language labels (handy for debugging and snapshots).
 pub fn outline(flow: &FlowGraph) -> String {
     render(flow, true)
+}
+
+/// Renders the operations of each statement, in exec order: `Var add(multiply())`. Only
+/// recognized operations appear (nested ones inside their parent), so two languages that write
+/// the same logic produce the same text.
+pub fn operations(flow: &FlowGraph) -> String {
+    let mut out = String::new();
+    let mut seen = HashSet::new();
+    let mut order = Vec::new();
+    for entry in flow.nodes.iter().filter(|n| matches!(n.concept, Concept::Entry | Concept::EventEntry)) {
+        exec_order(flow, &entry.id, &mut seen, &mut order);
+    }
+    for id in order {
+        let Some(node) = flow.node(&id) else { continue };
+        let forms = node.expr.as_ref().map(op_forms).unwrap_or_default();
+        if !forms.is_empty() {
+            let _ = writeln!(out, "{} {}", node.concept.key(), forms.join(" "));
+        }
+    }
+    out
+}
+
+fn op_forms(e: &Expr) -> Vec<String> {
+    let inner: Vec<String> = e.children.iter().flat_map(op_forms).collect();
+    match &e.op {
+        Some(op) => vec![format!("{op}({})", inner.join(", "))],
+        None => inner,
+    }
+}
+
+fn exec_order(flow: &FlowGraph, start: &str, seen: &mut HashSet<String>, out: &mut Vec<String>) {
+    let mut current = Some(start.to_owned());
+    while let Some(id) = current.take() {
+        if !seen.insert(id.clone()) {
+            return;
+        }
+        out.push(id.clone());
+        for edge in flow.exec_out(&id).filter(|e| e.from_pin != "out") {
+            exec_order(flow, &edge.to, seen, out);
+        }
+        current = flow.exec_out(&id).find(|e| e.from_pin == "out").map(|e| e.to.clone());
+    }
 }
 
 fn render(flow: &FlowGraph, labels: bool) -> String {

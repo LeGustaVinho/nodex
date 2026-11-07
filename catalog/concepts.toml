@@ -315,6 +315,12 @@ category = "call"
 shape = "pure"
 explain = "Processes a sequence step by step: each stage (filter, transform, sum) takes the previous stage's output."
 
+[concepts.Operation]
+title = "Operation"
+category = "data"
+shape = "pure"
+explain = "An operation every language has (add, compare, upper case, maximum, parse a number...). The same node is drawn whatever the language; the inspector shows how each language writes it."
+
 # --- Escape hatches -------------------------------------------------------------------------
 
 [concepts.Opaque]

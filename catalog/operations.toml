@@ -1,0 +1,1643 @@
+# Nodex operation catalog — operations every language has, drawn as the same node everywhere.
+#
+# Consumed by: nodex-core (recognition of library calls, validation, /api/catalog), the web
+# frontend (titles, symbols, pins, colors, "in other languages") and the Obsidian reference note
+# "Operation Catalog". Operators (`+`, `>=`, `&&`) are recognized by each language frontend, which
+# sets `Expr::op` to the key; library calls are recognized by the patterns below.
+#
+# Fields:
+#   title   — node title                         symbol — short symbol shown in the header
+#   family  — key in [families] (color)          pure   — false: stays on the execution chain
+#   inputs  — "Name:type" pins, in argument order (the receiver first for methods)
+#   output  — "Name:type", or "" when it returns nothing
+#   explain — plain language
+#   cs / ts / rs — how it is written in C#, TypeScript and Rust (shown in the inspector)
+#   calls_cs / calls_ts / calls_rs — call patterns that mean this operation:
+#       "Math.Max()"   call on that receiver (or a target named so)
+#       "*.ToUpper()"  method call on any receiver (the receiver is the first input)
+#       "*.Length"     property read on any receiver
+#       "parseInt()"   free function
+# Types: number, text, bool, list, map, any, time.
+
+[families.math]
+title = "Math"
+color = "#2e9e5b"
+
+[families.compare]
+title = "Comparison"
+color = "#d4a017"
+
+[families.logic]
+title = "Logic"
+color = "#c0504d"
+
+[families.bits]
+title = "Bits"
+color = "#7d6e9e"
+
+[families.text]
+title = "Text"
+color = "#d6658f"
+
+[families.list]
+title = "Collections"
+color = "#e08a2c"
+
+[families.convert]
+title = "Conversion"
+color = "#3a8fb7"
+
+[families.time]
+title = "Time"
+color = "#5aa0a0"
+
+[families.io]
+title = "Input / output"
+color = "#8a6d3b"
+
+[families.object]
+title = "Objects"
+color = "#5d7fa3"
+
+[families.async]
+title = "Asynchrony"
+color = "#16a085"
+
+[families.error]
+title = "Errors"
+color = "#a93226"
+
+# =============================================================================================
+# Math — operators
+# =============================================================================================
+
+[operations.add]
+title = "Add"
+symbol = "+"
+family = "math"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "A plus B."
+cs = "a + b"
+ts = "a + b"
+rs = "a + b"
+
+[operations.subtract]
+title = "Subtract"
+symbol = "−"
+family = "math"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "A minus B."
+cs = "a - b"
+ts = "a - b"
+rs = "a - b"
+
+[operations.multiply]
+title = "Multiply"
+symbol = "×"
+family = "math"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "A times B."
+cs = "a * b"
+ts = "a * b"
+rs = "a * b"
+
+[operations.divide]
+title = "Divide"
+symbol = "÷"
+family = "math"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "A divided by B. With two integers, C# and Rust drop the fraction (7 / 2 = 3); TypeScript keeps it (3.5)."
+cs = "a / b"
+ts = "a / b"
+rs = "a / b"
+
+[operations.remainder]
+title = "Remainder"
+symbol = "%"
+family = "math"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "What is left after dividing A by B (7 % 3 = 1). Often used to test even/odd."
+cs = "a % b"
+ts = "a % b"
+rs = "a % b"
+
+[operations.power]
+title = "Power"
+symbol = "^"
+family = "math"
+pure = true
+inputs = ["Base:number", "Exponent:number"]
+output = "Result:number"
+explain = "Base raised to Exponent (2 ^ 3 = 8)."
+cs = "Math.Pow(a, b)"
+ts = "a ** b, Math.pow(a, b)"
+rs = "a.powf(b), a.pow(b)"
+calls_cs = ["Math.Pow()", "Mathf.Pow()"]
+calls_ts = ["Math.pow()"]
+calls_rs = ["*.pow()", "*.powf()", "*.powi()"]
+
+[operations.negate]
+title = "Negate"
+symbol = "−x"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "The value with the opposite sign."
+cs = "-a"
+ts = "-a"
+rs = "-a"
+
+[operations.plus]
+title = "To number"
+symbol = "+x"
+family = "math"
+pure = true
+inputs = ["Value:any"]
+output = "Result:number"
+explain = "Unary plus: the value itself (in TypeScript it also converts text to a number)."
+cs = "+a"
+ts = "+a"
+rs = ""
+
+[operations.increment]
+title = "Increment"
+symbol = "++"
+family = "math"
+pure = false
+inputs = ["Variable:number"]
+output = "Result:number"
+explain = "Adds 1 to the variable."
+cs = "i++, ++i"
+ts = "i++, ++i"
+rs = "i += 1"
+
+[operations.decrement]
+title = "Decrement"
+symbol = "−−"
+family = "math"
+pure = false
+inputs = ["Variable:number"]
+output = "Result:number"
+explain = "Subtracts 1 from the variable."
+cs = "i--, --i"
+ts = "i--, --i"
+rs = "i -= 1"
+
+# =============================================================================================
+# Math — library
+# =============================================================================================
+
+[operations."math.abs"]
+title = "Absolute value"
+symbol = "|x|"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "The value without its sign (|-3| = 3)."
+cs = "Math.Abs(x)"
+ts = "Math.abs(x)"
+rs = "x.abs()"
+calls_cs = ["Math.Abs()", "Mathf.Abs()"]
+calls_ts = ["Math.abs()"]
+calls_rs = ["*.abs()"]
+
+[operations."math.min"]
+title = "Min"
+symbol = "min"
+family = "math"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "The smaller of the values."
+cs = "Math.Min(a, b)"
+ts = "Math.min(a, b)"
+rs = "a.min(b)"
+calls_cs = ["Math.Min()", "Mathf.Min()"]
+calls_ts = ["Math.min()"]
+calls_rs = ["*.min()"]
+
+[operations."math.max"]
+title = "Max"
+symbol = "max"
+family = "math"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "The larger of the values."
+cs = "Math.Max(a, b)"
+ts = "Math.max(a, b)"
+rs = "a.max(b)"
+calls_cs = ["Math.Max()", "Mathf.Max()"]
+calls_ts = ["Math.max()"]
+calls_rs = ["*.max()"]
+
+[operations."math.clamp"]
+title = "Clamp"
+symbol = "clamp"
+family = "math"
+pure = true
+inputs = ["Value:number", "Min:number", "Max:number"]
+output = "Result:number"
+explain = "The value, limited to the range Min..Max."
+cs = "Math.Clamp(x, lo, hi)"
+ts = "Math.min(Math.max(x, lo), hi)"
+rs = "x.clamp(lo, hi)"
+calls_cs = ["Math.Clamp()", "Mathf.Clamp()", "Mathf.Clamp01()"]
+calls_rs = ["*.clamp()"]
+
+[operations."math.floor"]
+title = "Floor"
+symbol = "⌊x⌋"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "Rounds down to the nearest whole number."
+cs = "Math.Floor(x)"
+ts = "Math.floor(x)"
+rs = "x.floor()"
+calls_cs = ["Math.Floor()", "Mathf.Floor()", "Mathf.FloorToInt()"]
+calls_ts = ["Math.floor()"]
+calls_rs = ["*.floor()"]
+
+[operations."math.ceil"]
+title = "Ceiling"
+symbol = "⌈x⌉"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "Rounds up to the nearest whole number."
+cs = "Math.Ceiling(x)"
+ts = "Math.ceil(x)"
+rs = "x.ceil()"
+calls_cs = ["Math.Ceiling()", "Mathf.Ceil()", "Mathf.CeilToInt()"]
+calls_ts = ["Math.ceil()"]
+calls_rs = ["*.ceil()"]
+
+[operations."math.round"]
+title = "Round"
+symbol = "round"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "Rounds to the nearest whole number (C# rounds .5 to the even neighbor by default)."
+cs = "Math.Round(x)"
+ts = "Math.round(x)"
+rs = "x.round()"
+calls_cs = ["Math.Round()", "Mathf.Round()", "Mathf.RoundToInt()"]
+calls_ts = ["Math.round()"]
+calls_rs = ["*.round()"]
+
+[operations."math.truncate"]
+title = "Truncate"
+symbol = "trunc"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "Drops the fraction (toward zero)."
+cs = "Math.Truncate(x)"
+ts = "Math.trunc(x)"
+rs = "x.trunc()"
+calls_cs = ["Math.Truncate()"]
+calls_ts = ["Math.trunc()"]
+calls_rs = ["*.trunc()"]
+
+[operations."math.sqrt"]
+title = "Square root"
+symbol = "√"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "The number that, multiplied by itself, gives the value."
+cs = "Math.Sqrt(x)"
+ts = "Math.sqrt(x)"
+rs = "x.sqrt()"
+calls_cs = ["Math.Sqrt()", "Mathf.Sqrt()"]
+calls_ts = ["Math.sqrt()"]
+calls_rs = ["*.sqrt()"]
+
+[operations."math.exp"]
+title = "Exponential"
+symbol = "eˣ"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "e raised to the value."
+cs = "Math.Exp(x)"
+ts = "Math.exp(x)"
+rs = "x.exp()"
+calls_cs = ["Math.Exp()", "Mathf.Exp()"]
+calls_ts = ["Math.exp()"]
+calls_rs = ["*.exp()"]
+
+[operations."math.log"]
+title = "Logarithm"
+symbol = "log"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "The natural logarithm (or base 10 / base 2 for the log10/log2 variants)."
+cs = "Math.Log(x)"
+ts = "Math.log(x)"
+rs = "x.ln()"
+calls_cs = ["Math.Log()", "Math.Log10()", "Math.Log2()", "Mathf.Log()", "Mathf.Log10()"]
+calls_ts = ["Math.log()", "Math.log10()", "Math.log2()"]
+calls_rs = ["*.ln()", "*.log10()", "*.log2()"]
+
+[operations."math.trig"]
+title = "Trigonometry"
+symbol = "sin"
+family = "math"
+pure = true
+inputs = ["Angle:number"]
+output = "Result:number"
+explain = "Sine, cosine, tangent and their inverses; angles are in radians."
+cs = "Math.Sin(a), Math.Cos(a), Math.Atan2(y, x)"
+ts = "Math.sin(a), Math.cos(a), Math.atan2(y, x)"
+rs = "a.sin(), a.cos(), y.atan2(x)"
+calls_cs = ["Math.Sin()", "Math.Cos()", "Math.Tan()", "Math.Asin()", "Math.Acos()", "Math.Atan()", "Math.Atan2()", "Mathf.Sin()", "Mathf.Cos()", "Mathf.Tan()", "Mathf.Atan2()"]
+calls_ts = ["Math.sin()", "Math.cos()", "Math.tan()", "Math.asin()", "Math.acos()", "Math.atan()", "Math.atan2()"]
+calls_rs = ["*.sin()", "*.cos()", "*.tan()", "*.atan2()"]
+
+[operations."math.sign"]
+title = "Sign"
+symbol = "sign"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "-1, 0 or 1 depending on the sign of the value."
+cs = "Math.Sign(x)"
+ts = "Math.sign(x)"
+rs = "x.signum()"
+calls_cs = ["Math.Sign()", "Mathf.Sign()"]
+calls_ts = ["Math.sign()"]
+calls_rs = ["*.signum()"]
+
+[operations."math.lerp"]
+title = "Interpolate"
+symbol = "lerp"
+family = "math"
+pure = true
+inputs = ["From:number", "To:number", "T:number"]
+output = "Result:number"
+explain = "The value between From and To at fraction T (0 = From, 1 = To)."
+cs = "Mathf.Lerp(a, b, t)"
+ts = "a + (b - a) * t"
+rs = "a + (b - a) * t"
+calls_cs = ["Mathf.Lerp()", "Vector3.Lerp()", "Vector2.Lerp()", "Color.Lerp()"]
+
+[operations."math.pi"]
+title = "π"
+symbol = "π"
+family = "math"
+pure = true
+inputs = []
+output = "Value:number"
+explain = "The constant π (3.14159…)."
+cs = "Math.PI"
+ts = "Math.PI"
+rs = "std::f64::consts::PI"
+calls_cs = ["Math.PI", "Mathf.PI"]
+calls_ts = ["Math.PI"]
+
+[operations."math.is_nan"]
+title = "Is not a number"
+symbol = "NaN?"
+family = "math"
+pure = true
+inputs = ["Value:number"]
+output = "Result:bool"
+explain = "True when the value is NaN, the result of invalid math such as 0 / 0."
+cs = "double.IsNaN(x)"
+ts = "Number.isNaN(x)"
+rs = "x.is_nan()"
+calls_cs = ["double.IsNaN()", "float.IsNaN()", "Double.IsNaN()", "Single.IsNaN()"]
+calls_ts = ["Number.isNaN()", "isNaN()"]
+calls_rs = ["*.is_nan()"]
+
+[operations."math.random"]
+title = "Random number"
+symbol = "rand"
+family = "math"
+pure = false
+inputs = []
+output = "Value:number"
+explain = "A different number every time (between 0 and 1, or in a given range)."
+cs = "random.Next(), Random.Range(a, b)"
+ts = "Math.random()"
+rs = "rand::random()"
+calls_cs = ["*.Next()", "*.NextDouble()", "Random.Range()", "Random.Shared.Next()"]
+calls_ts = ["Math.random()"]
+calls_rs = ["rand::random()"]
+
+# =============================================================================================
+# Comparison
+# =============================================================================================
+
+[operations.equal]
+title = "Equal"
+symbol = "=="
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "True when A and B are equal."
+cs = "a == b"
+ts = "a === b"
+rs = "a == b"
+
+[operations.not_equal]
+title = "Not equal"
+symbol = "≠"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "True when A and B are different."
+cs = "a != b"
+ts = "a !== b"
+rs = "a != b"
+
+[operations.loose_equal]
+title = "Loosely equal"
+symbol = "≈"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "TypeScript/JavaScript ==: converts types before comparing (0 == \"\" is true; null == undefined is true)."
+cs = ""
+ts = "a == b"
+rs = ""
+
+[operations.loose_not_equal]
+title = "Loosely not equal"
+symbol = "≉"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "TypeScript/JavaScript !=: the opposite of loose ==."
+cs = ""
+ts = "a != b"
+rs = ""
+
+[operations.less]
+title = "Less"
+symbol = "<"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "True when A is smaller than B."
+cs = "a < b"
+ts = "a < b"
+rs = "a < b"
+
+[operations.less_or_equal]
+title = "Less or equal"
+symbol = "≤"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "True when A is smaller than or equal to B."
+cs = "a <= b"
+ts = "a <= b"
+rs = "a <= b"
+
+[operations.greater]
+title = "Greater"
+symbol = ">"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "True when A is larger than B."
+cs = "a > b"
+ts = "a > b"
+rs = "a > b"
+
+[operations.greater_or_equal]
+title = "Greater or equal"
+symbol = "≥"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "True when A is larger than or equal to B."
+cs = "a >= b"
+ts = "a >= b"
+rs = "a >= b"
+
+[operations.same_reference]
+title = "Same object"
+symbol = "≡"
+family = "compare"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "True when A and B are the very same object, not just equal ones."
+cs = "ReferenceEquals(a, b)"
+ts = "Object.is(a, b)"
+rs = "std::ptr::eq(a, b)"
+calls_cs = ["ReferenceEquals()", "object.ReferenceEquals()", "Object.ReferenceEquals()"]
+calls_ts = ["Object.is()"]
+calls_rs = ["std::ptr::eq()", "ptr::eq()"]
+
+[operations.is_missing]
+title = "Is missing"
+symbol = "∅?"
+family = "compare"
+pure = true
+inputs = ["Value:any"]
+output = "Result:bool"
+explain = "True when the value is null (or undefined in TypeScript, None in Rust)."
+cs = "x == null, x is null"
+ts = "x === null, x == null, x === undefined"
+rs = "x.is_none()"
+calls_rs = ["*.is_none()"]
+
+[operations.is_present]
+title = "Is present"
+symbol = "∃?"
+family = "compare"
+pure = true
+inputs = ["Value:any"]
+output = "Result:bool"
+explain = "True when the value is not null (not undefined in TypeScript, Some in Rust)."
+cs = "x != null, x is not null"
+ts = "x !== null, x != null, x !== undefined"
+rs = "x.is_some()"
+calls_rs = ["*.is_some()"]
+
+# =============================================================================================
+# Logic
+# =============================================================================================
+
+[operations.and]
+title = "And"
+symbol = "and"
+family = "logic"
+pure = true
+inputs = ["A:bool", "B:bool"]
+output = "Result:bool"
+explain = "True when both are true. B is only evaluated when A is true (short-circuit)."
+cs = "a && b"
+ts = "a && b"
+rs = "a && b"
+
+[operations.or]
+title = "Or"
+symbol = "or"
+family = "logic"
+pure = true
+inputs = ["A:bool", "B:bool"]
+output = "Result:bool"
+explain = "True when at least one is true. B is only evaluated when A is false (short-circuit). In TypeScript the result is A itself when it is truthy."
+cs = "a || b"
+ts = "a || b"
+rs = "a || b"
+
+[operations.not]
+title = "Not"
+symbol = "not"
+family = "logic"
+pure = true
+inputs = ["Value:bool"]
+output = "Result:bool"
+explain = "The opposite: true becomes false and false becomes true."
+cs = "!a"
+ts = "!a"
+rs = "!a"
+
+[operations.xor]
+title = "Exclusive or"
+symbol = "xor"
+family = "logic"
+pure = true
+inputs = ["A:bool", "B:bool"]
+output = "Result:bool"
+explain = "True when exactly one of them is true."
+cs = "a ^ b (booleans)"
+ts = "a !== b (booleans)"
+rs = "a ^ b"
+
+# =============================================================================================
+# Bits
+# =============================================================================================
+
+[operations.bit_and]
+title = "Bitwise and"
+symbol = "&"
+family = "bits"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "Keeps the bits set in both numbers (often used to test flags)."
+cs = "a & b"
+ts = "a & b"
+rs = "a & b"
+
+[operations.bit_or]
+title = "Bitwise or"
+symbol = "|"
+family = "bits"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "Keeps the bits set in either number (often used to combine flags)."
+cs = "a | b"
+ts = "a | b"
+rs = "a | b"
+
+[operations.bit_xor]
+title = "Bitwise xor"
+symbol = "^"
+family = "bits"
+pure = true
+inputs = ["A:number", "B:number"]
+output = "Result:number"
+explain = "Keeps the bits set in exactly one of the numbers."
+cs = "a ^ b"
+ts = "a ^ b"
+rs = "a ^ b"
+
+[operations.bit_not]
+title = "Bitwise not"
+symbol = "~"
+family = "bits"
+pure = true
+inputs = ["Value:number"]
+output = "Result:number"
+explain = "Flips every bit."
+cs = "~a"
+ts = "~a"
+rs = "!a"
+
+[operations.shift_left]
+title = "Shift left"
+symbol = "<<"
+family = "bits"
+pure = true
+inputs = ["Value:number", "Count:number"]
+output = "Result:number"
+explain = "Moves the bits left (multiplies by 2 for each step)."
+cs = "a << n"
+ts = "a << n"
+rs = "a << n"
+
+[operations.shift_right]
+title = "Shift right"
+symbol = ">>"
+family = "bits"
+pure = true
+inputs = ["Value:number", "Count:number"]
+output = "Result:number"
+explain = "Moves the bits right (divides by 2 for each step, keeping the sign)."
+cs = "a >> n"
+ts = "a >> n"
+rs = "a >> n"
+
+[operations.shift_right_unsigned]
+title = "Unsigned shift right"
+symbol = ">>>"
+family = "bits"
+pure = true
+inputs = ["Value:number", "Count:number"]
+output = "Result:number"
+explain = "Moves the bits right, filling with zeros."
+cs = "a >>> n"
+ts = "a >>> n"
+rs = "(a as u32) >> n"
+
+# =============================================================================================
+# Text
+# =============================================================================================
+
+[operations."text.concat"]
+title = "Join text"
+symbol = "+"
+family = "text"
+pure = true
+inputs = ["A:text", "B:any"]
+output = "Text:text"
+explain = "Puts two texts together; other values are converted to text first."
+cs = "\"a\" + b, string.Concat(a, b)"
+ts = "\"a\" + b, a.concat(b)"
+rs = "format!(\"{a}{b}\"), a + &b"
+calls_cs = ["string.Concat()", "String.Concat()"]
+
+[operations."text.format"]
+title = "Format text"
+symbol = "$\"…\""
+family = "text"
+pure = true
+inputs = ["Values:any"]
+output = "Text:text"
+explain = "Builds a text with values placed inside it."
+cs = "$\"Total: {total}\", string.Format(…)"
+ts = "`Total: ${total}`"
+rs = "format!(\"Total: {total}\")"
+calls_cs = ["string.Format()", "String.Format()"]
+
+[operations."text.length"]
+title = "Length"
+symbol = "len"
+family = "text"
+pure = true
+inputs = ["Value:any"]
+output = "Length:number"
+explain = "How many characters a text has, or how many items a list or array has."
+cs = "s.Length, list.Count"
+ts = "s.length, array.length"
+rs = "s.len(), v.len()"
+calls_cs = ["*.Length", "*.Count", "*.LongLength"]
+calls_ts = ["*.length", "*.size"]
+calls_rs = ["*.len()"]
+
+[operations."text.to_upper"]
+title = "Upper case"
+symbol = "ABC"
+family = "text"
+pure = true
+inputs = ["Text:text"]
+output = "Text:text"
+explain = "The text with all letters in upper case."
+cs = "s.ToUpper()"
+ts = "s.toUpperCase()"
+rs = "s.to_uppercase()"
+calls_cs = ["*.ToUpper()", "*.ToUpperInvariant()"]
+calls_ts = ["*.toUpperCase()", "*.toLocaleUpperCase()"]
+calls_rs = ["*.to_uppercase()"]
+
+[operations."text.to_lower"]
+title = "Lower case"
+symbol = "abc"
+family = "text"
+pure = true
+inputs = ["Text:text"]
+output = "Text:text"
+explain = "The text with all letters in lower case."
+cs = "s.ToLower()"
+ts = "s.toLowerCase()"
+rs = "s.to_lowercase()"
+calls_cs = ["*.ToLower()", "*.ToLowerInvariant()"]
+calls_ts = ["*.toLowerCase()", "*.toLocaleLowerCase()"]
+calls_rs = ["*.to_lowercase()"]
+
+[operations."text.trim"]
+title = "Trim"
+symbol = "trim"
+family = "text"
+pure = true
+inputs = ["Text:text"]
+output = "Text:text"
+explain = "The text without spaces (and line breaks) at its ends."
+cs = "s.Trim()"
+ts = "s.trim()"
+rs = "s.trim()"
+calls_cs = ["*.Trim()", "*.TrimStart()", "*.TrimEnd()"]
+calls_ts = ["*.trim()", "*.trimStart()", "*.trimEnd()"]
+calls_rs = ["*.trim()", "*.trim_start()", "*.trim_end()"]
+
+[operations."text.split"]
+title = "Split"
+symbol = "split"
+family = "text"
+pure = true
+inputs = ["Text:text", "Separator:text"]
+output = "Parts:list"
+explain = "Cuts the text into a list of parts at each separator."
+cs = "s.Split(',')"
+ts = "s.split(',')"
+rs = "s.split(',')"
+calls_cs = ["*.Split()"]
+calls_ts = ["*.split()"]
+calls_rs = ["*.split()"]
+
+[operations."text.join"]
+title = "Join list"
+symbol = "join"
+family = "text"
+pure = true
+inputs = ["Items:list", "Separator:text"]
+output = "Text:text"
+explain = "One text made of all the items, with the separator between them."
+cs = "string.Join(\", \", items)"
+ts = "items.join(\", \")"
+rs = "items.join(\", \")"
+calls_cs = ["string.Join()", "String.Join()"]
+calls_ts = ["*.join()"]
+calls_rs = ["*.join()"]
+
+[operations."text.slice"]
+title = "Part of text"
+symbol = "slice"
+family = "text"
+pure = true
+inputs = ["Text:text", "Start:number", "Length:number"]
+output = "Text:text"
+explain = "A piece of the text (C# Substring takes a length; TypeScript slice/substring take an end position)."
+cs = "s.Substring(start, length)"
+ts = "s.slice(start, end), s.substring(start, end)"
+rs = "&s[start..end]"
+calls_cs = ["*.Substring()"]
+calls_ts = ["*.substring()", "*.substr()"]
+
+[operations."text.index_of"]
+title = "Find position"
+symbol = "indexOf"
+family = "text"
+pure = true
+inputs = ["Value:any", "Search:any"]
+output = "Index:number"
+explain = "Where the search first appears (in a text or list), or -1 when it does not (None in Rust)."
+cs = "s.IndexOf(x), list.IndexOf(x)"
+ts = "s.indexOf(x), array.indexOf(x)"
+rs = "s.find(x), v.iter().position(…)"
+calls_cs = ["*.IndexOf()", "*.LastIndexOf()"]
+calls_ts = ["*.indexOf()", "*.lastIndexOf()", "*.findIndex()"]
+calls_rs = ["*.find()", "*.position()"]
+
+[operations."text.contains"]
+title = "Contains"
+symbol = "∋"
+family = "text"
+pure = true
+inputs = ["Value:any", "Search:any"]
+output = "Result:bool"
+explain = "True when the text (or list) contains the search."
+cs = "s.Contains(x), list.Contains(x)"
+ts = "s.includes(x), array.includes(x)"
+rs = "s.contains(x), v.contains(&x)"
+calls_cs = ["*.Contains()"]
+calls_ts = ["*.includes()"]
+calls_rs = ["*.contains()"]
+
+[operations."text.starts_with"]
+title = "Starts with"
+symbol = "starts"
+family = "text"
+pure = true
+inputs = ["Text:text", "Prefix:text"]
+output = "Result:bool"
+explain = "True when the text begins with the prefix."
+cs = "s.StartsWith(p)"
+ts = "s.startsWith(p)"
+rs = "s.starts_with(p)"
+calls_cs = ["*.StartsWith()"]
+calls_ts = ["*.startsWith()"]
+calls_rs = ["*.starts_with()"]
+
+[operations."text.ends_with"]
+title = "Ends with"
+symbol = "ends"
+family = "text"
+pure = true
+inputs = ["Text:text", "Suffix:text"]
+output = "Result:bool"
+explain = "True when the text ends with the suffix."
+cs = "s.EndsWith(p)"
+ts = "s.endsWith(p)"
+rs = "s.ends_with(p)"
+calls_cs = ["*.EndsWith()"]
+calls_ts = ["*.endsWith()"]
+calls_rs = ["*.ends_with()"]
+
+[operations."text.replace"]
+title = "Replace"
+symbol = "replace"
+family = "text"
+pure = true
+inputs = ["Text:text", "Search:text", "Replacement:text"]
+output = "Text:text"
+explain = "The text with the search replaced (TypeScript replace changes only the first match; replaceAll changes all)."
+cs = "s.Replace(a, b)"
+ts = "s.replaceAll(a, b), s.replace(a, b)"
+rs = "s.replace(a, b)"
+calls_cs = ["*.Replace()"]
+calls_ts = ["*.replace()", "*.replaceAll()"]
+calls_rs = ["*.replace()"]
+
+[operations."text.repeat"]
+title = "Repeat text"
+symbol = "×n"
+family = "text"
+pure = true
+inputs = ["Text:text", "Count:number"]
+output = "Text:text"
+explain = "The text repeated Count times."
+cs = "new string(c, n)"
+ts = "s.repeat(n)"
+rs = "s.repeat(n)"
+calls_ts = ["*.repeat()"]
+calls_rs = ["*.repeat()"]
+
+[operations."text.pad"]
+title = "Pad"
+symbol = "pad"
+family = "text"
+pure = true
+inputs = ["Text:text", "Width:number"]
+output = "Text:text"
+explain = "The text widened to the given width with spaces (or another character)."
+cs = "s.PadLeft(n), s.PadRight(n)"
+ts = "s.padStart(n), s.padEnd(n)"
+rs = "format!(\"{s:>n$}\")"
+calls_cs = ["*.PadLeft()", "*.PadRight()"]
+calls_ts = ["*.padStart()", "*.padEnd()"]
+
+[operations."text.char_at"]
+title = "Character at"
+symbol = "s[i]"
+family = "text"
+pure = true
+inputs = ["Text:text", "Index:number"]
+output = "Character:text"
+explain = "The character at a position."
+cs = "s[i]"
+ts = "s.charAt(i), s[i]"
+rs = "s.chars().nth(i)"
+calls_ts = ["*.charAt()", "*.at()"]
+calls_rs = ["*.nth()"]
+
+[operations."text.is_empty"]
+title = "Is empty"
+symbol = "empty?"
+family = "text"
+pure = true
+inputs = ["Value:any"]
+output = "Result:bool"
+explain = "True when the text (or list) has nothing in it; the C# helpers also treat null (and spaces) as empty."
+cs = "string.IsNullOrEmpty(s), string.IsNullOrWhiteSpace(s)"
+ts = "s.length === 0"
+rs = "s.is_empty()"
+calls_cs = ["string.IsNullOrEmpty()", "string.IsNullOrWhiteSpace()", "String.IsNullOrEmpty()", "String.IsNullOrWhiteSpace()"]
+calls_rs = ["*.is_empty()"]
+
+# =============================================================================================
+# Collections
+# =============================================================================================
+
+[operations."list.add"]
+title = "Add item"
+symbol = "push"
+family = "list"
+pure = false
+inputs = ["List:list", "Item:any"]
+output = ""
+explain = "Adds the item to the end of the list (changes the list)."
+cs = "list.Add(x)"
+ts = "array.push(x)"
+rs = "v.push(x)"
+calls_cs = ["*.Add()", "*.AddRange()", "*.Enqueue()", "*.Push()"]
+calls_ts = ["*.push()", "*.unshift()", "*.add()"]
+calls_rs = ["*.push()", "*.push_back()", "*.insert()"]
+
+[operations."list.insert"]
+title = "Insert item"
+symbol = "insert"
+family = "list"
+pure = false
+inputs = ["List:list", "Index:number", "Item:any"]
+output = ""
+explain = "Puts the item at a position, moving the following items (changes the list)."
+cs = "list.Insert(i, x)"
+ts = "array.splice(i, 0, x)"
+rs = "v.insert(i, x)"
+calls_cs = ["*.Insert()"]
+calls_ts = ["*.splice()"]
+
+[operations."list.remove"]
+title = "Remove item"
+symbol = "remove"
+family = "list"
+pure = false
+inputs = ["List:list", "Item:any"]
+output = "Removed:any"
+explain = "Takes an item out of the list, set or map (changes it)."
+cs = "list.Remove(x), list.RemoveAt(i), dict.Remove(k)"
+ts = "array.pop(), array.shift(), map.delete(k), set.delete(x)"
+rs = "v.remove(i), v.pop(), map.remove(&k)"
+calls_cs = ["*.Remove()", "*.RemoveAt()", "*.RemoveAll()", "*.Dequeue()", "*.Pop()"]
+calls_ts = ["*.pop()", "*.shift()", "*.delete()"]
+calls_rs = ["*.remove()", "*.pop()", "*.pop_front()"]
+
+[operations."list.clear"]
+title = "Clear"
+symbol = "clear"
+family = "list"
+pure = false
+inputs = ["List:list"]
+output = ""
+explain = "Removes every item (changes the collection)."
+cs = "list.Clear()"
+ts = "map.clear(), array.length = 0"
+rs = "v.clear()"
+calls_cs = ["*.Clear()"]
+calls_ts = ["*.clear()"]
+calls_rs = ["*.clear()"]
+
+[operations."list.get"]
+title = "Get by key"
+symbol = "get"
+family = "list"
+pure = true
+inputs = ["Map:map", "Key:any"]
+output = "Value:any"
+explain = "The value stored under the key (missing keys: C# throws or TryGetValue fails, TypeScript gives undefined, Rust gives None)."
+cs = "dict[key], dict.TryGetValue(key, out v)"
+ts = "map.get(key), obj[key]"
+rs = "map.get(&key)"
+calls_cs = ["*.TryGetValue()", "*.GetValueOrDefault()", "*.ElementAt()"]
+calls_ts = ["*.get()"]
+calls_rs = ["*.get()"]
+
+[operations."list.set"]
+title = "Set by key"
+symbol = "set"
+family = "list"
+pure = false
+inputs = ["Map:map", "Key:any", "Value:any"]
+output = ""
+explain = "Stores the value under the key (changes the map)."
+cs = "dict[key] = value"
+ts = "map.set(key, value)"
+rs = "map.insert(key, value)"
+calls_ts = ["*.set()"]
+
+[operations."list.has_key"]
+title = "Has key"
+symbol = "has"
+family = "list"
+pure = true
+inputs = ["Map:map", "Key:any"]
+output = "Result:bool"
+explain = "True when the map (or set) has the key."
+cs = "dict.ContainsKey(k)"
+ts = "map.has(k), k in obj"
+rs = "map.contains_key(&k)"
+calls_cs = ["*.ContainsKey()"]
+calls_ts = ["*.has()"]
+calls_rs = ["*.contains_key()"]
+
+[operations."list.keys"]
+title = "Keys"
+symbol = "keys"
+family = "list"
+pure = true
+inputs = ["Map:map"]
+output = "Keys:list"
+explain = "All the keys of a map or object."
+cs = "dict.Keys"
+ts = "Object.keys(obj), map.keys()"
+rs = "map.keys()"
+calls_cs = ["*.Keys"]
+calls_ts = ["Object.keys()", "*.keys()"]
+calls_rs = ["*.keys()"]
+
+[operations."list.values"]
+title = "Values"
+symbol = "values"
+family = "list"
+pure = true
+inputs = ["Map:map"]
+output = "Values:list"
+explain = "All the values of a map or object."
+cs = "dict.Values"
+ts = "Object.values(obj), map.values()"
+rs = "map.values()"
+calls_cs = ["*.Values"]
+calls_ts = ["Object.values()", "*.values()"]
+calls_rs = ["*.values()"]
+
+[operations."list.entries"]
+title = "Key/value pairs"
+symbol = "entries"
+family = "list"
+pure = true
+inputs = ["Map:map"]
+output = "Pairs:list"
+explain = "All the key/value pairs of a map or object."
+cs = "foreach (var (k, v) in dict)"
+ts = "Object.entries(obj), map.entries()"
+rs = "map.iter()"
+calls_ts = ["Object.entries()", "*.entries()"]
+
+[operations."list.first"]
+title = "First"
+symbol = "first"
+family = "list"
+pure = true
+inputs = ["Items:list"]
+output = "Item:any"
+explain = "The first item (some versions fail on an empty list, others give a default)."
+cs = "items.First(), items[0]"
+ts = "items[0], items.at(0)"
+rs = "v.first()"
+calls_cs = ["*.First()", "*.FirstOrDefault()"]
+calls_rs = ["*.first()"]
+
+[operations."list.last"]
+title = "Last"
+symbol = "last"
+family = "list"
+pure = true
+inputs = ["Items:list"]
+output = "Item:any"
+explain = "The last item."
+cs = "items.Last(), items[^1]"
+ts = "items.at(-1), items[items.length - 1]"
+rs = "v.last()"
+calls_cs = ["*.Last()", "*.LastOrDefault()"]
+calls_rs = ["*.last()"]
+
+[operations."list.sum"]
+title = "Sum"
+symbol = "Σ"
+family = "list"
+pure = true
+inputs = ["Items:list"]
+output = "Sum:number"
+explain = "All the items added together."
+cs = "items.Sum()"
+ts = "items.reduce((a, b) => a + b, 0)"
+rs = "v.iter().sum()"
+calls_cs = ["*.Sum()"]
+calls_rs = ["*.sum()"]
+
+[operations."list.average"]
+title = "Average"
+symbol = "avg"
+family = "list"
+pure = true
+inputs = ["Items:list"]
+output = "Average:number"
+explain = "The sum divided by the number of items."
+cs = "items.Average()"
+ts = "sum / items.length"
+rs = "sum / v.len() as f64"
+calls_cs = ["*.Average()"]
+
+[operations."list.sort"]
+title = "Sort"
+symbol = "sort"
+family = "list"
+pure = false
+inputs = ["Items:list"]
+output = "Sorted:list"
+explain = "The items in order (C# Sort and TypeScript sort change the list itself; OrderBy and toSorted return a new one)."
+cs = "list.Sort(), items.OrderBy(…)"
+ts = "array.sort(…), array.toSorted(…)"
+rs = "v.sort()"
+calls_cs = ["*.Sort()"]
+calls_ts = ["*.sort()"]
+calls_rs = ["*.sort()", "*.sort_by()", "*.sort_unstable()"]
+
+[operations."list.reverse"]
+title = "Reverse"
+symbol = "rev"
+family = "list"
+pure = false
+inputs = ["Items:list"]
+output = "Reversed:list"
+explain = "The items in the opposite order."
+cs = "list.Reverse()"
+ts = "array.reverse(), array.toReversed()"
+rs = "v.reverse()"
+calls_cs = ["*.Reverse()"]
+calls_ts = ["*.reverse()"]
+calls_rs = ["*.reverse()", "*.rev()"]
+
+[operations."list.slice"]
+title = "Part of list"
+symbol = "slice"
+family = "list"
+pure = true
+inputs = ["Items:list", "Start:number", "End:number"]
+output = "Items:list"
+explain = "A new list with the items between two positions."
+cs = "list.GetRange(start, count), items[start..end]"
+ts = "array.slice(start, end)"
+rs = "&v[start..end]"
+calls_cs = ["*.GetRange()"]
+calls_ts = ["*.slice()"]
+
+[operations."list.concat"]
+title = "Combine lists"
+symbol = "++"
+family = "list"
+pure = true
+inputs = ["A:list", "B:list"]
+output = "Items:list"
+explain = "A new list with the items of both."
+cs = "a.Concat(b)"
+ts = "a.concat(b), [...a, ...b]"
+rs = "[a, b].concat()"
+calls_ts = ["*.concat()"]
+calls_rs = ["*.chain()", "*.extend()"]
+
+[operations."list.range"]
+title = "Range of numbers"
+symbol = "a..b"
+family = "list"
+pure = true
+inputs = ["Start:number", "Count:number"]
+output = "Numbers:list"
+explain = "The numbers from a start, one after another."
+cs = "Enumerable.Range(0, n)"
+ts = "Array.from({ length: n }, (_, i) => i)"
+rs = "0..n"
+calls_cs = ["Enumerable.Range()"]
+calls_ts = ["Array.from()"]
+
+[operations."list.flatten"]
+title = "Flatten"
+symbol = "flat"
+family = "list"
+pure = true
+inputs = ["Lists:list"]
+output = "Items:list"
+explain = "One list with the items of all the inner lists."
+cs = "lists.SelectMany(x => x)"
+ts = "lists.flat()"
+rs = "v.into_iter().flatten()"
+calls_ts = ["*.flat()"]
+calls_rs = ["*.flatten()"]
+
+[operations."list.of"]
+title = "List of"
+symbol = "[…]"
+family = "list"
+pure = true
+inputs = ["Items:any"]
+output = "List:list"
+explain = "A new list (or array) with the given items."
+cs = "new List<int> { 1, 2 }, [1, 2]"
+ts = "[1, 2], Array.of(1, 2)"
+rs = "vec![1, 2]"
+calls_ts = ["Array.of()"]
+
+# =============================================================================================
+# Conversion
+# =============================================================================================
+
+[operations."convert.to_integer"]
+title = "To integer"
+symbol = "int"
+family = "convert"
+pure = true
+inputs = ["Value:any"]
+output = "Number:number"
+explain = "Reads a whole number from text or another value (fails or gives NaN when it is not a number)."
+cs = "int.Parse(s), Convert.ToInt32(x), (int)x"
+ts = "parseInt(s, 10), Math.trunc(Number(s))"
+rs = "s.parse::<i32>()"
+calls_cs = ["int.Parse()", "int.TryParse()", "long.Parse()", "long.TryParse()", "Int32.Parse()", "Convert.ToInt32()", "Convert.ToInt64()"]
+calls_ts = ["parseInt()", "Number.parseInt()"]
+
+[operations."convert.to_number"]
+title = "To number"
+symbol = "num"
+family = "convert"
+pure = true
+inputs = ["Value:any"]
+output = "Number:number"
+explain = "Reads a number (with fraction) from text or another value."
+cs = "double.Parse(s), decimal.Parse(s), Convert.ToDouble(x)"
+ts = "Number(s), parseFloat(s)"
+rs = "s.parse::<f64>()"
+calls_cs = ["double.Parse()", "double.TryParse()", "decimal.Parse()", "decimal.TryParse()", "float.Parse()", "Convert.ToDouble()", "Convert.ToDecimal()"]
+calls_ts = ["Number()", "parseFloat()", "Number.parseFloat()"]
+calls_rs = ["*.parse()"]
+
+[operations."convert.to_text"]
+title = "To text"
+symbol = "str"
+family = "convert"
+pure = true
+inputs = ["Value:any"]
+output = "Text:text"
+explain = "The value written as text."
+cs = "x.ToString()"
+ts = "String(x), x.toString()"
+rs = "x.to_string()"
+calls_cs = ["*.ToString()", "Convert.ToString()"]
+calls_ts = ["String()", "*.toString()", "*.toFixed()"]
+calls_rs = ["*.to_string()"]
+
+[operations."convert.to_bool"]
+title = "To boolean"
+symbol = "bool"
+family = "convert"
+pure = true
+inputs = ["Value:any"]
+output = "Result:bool"
+explain = "The value as true/false (TypeScript Boolean(x) uses truthiness)."
+cs = "bool.Parse(s), Convert.ToBoolean(x)"
+ts = "Boolean(x), !!x"
+rs = "s.parse::<bool>()"
+calls_cs = ["bool.Parse()", "bool.TryParse()", "Convert.ToBoolean()"]
+calls_ts = ["Boolean()"]
+
+[operations."convert.from_json"]
+title = "Read JSON"
+symbol = "{…}"
+family = "convert"
+pure = true
+inputs = ["Json:text"]
+output = "Value:any"
+explain = "Turns JSON text into objects."
+cs = "JsonSerializer.Deserialize<T>(json), JsonConvert.DeserializeObject<T>(json)"
+ts = "JSON.parse(json)"
+rs = "serde_json::from_str(&json)"
+calls_cs = ["JsonSerializer.Deserialize()", "JsonConvert.DeserializeObject()", "JsonUtility.FromJson()"]
+calls_ts = ["JSON.parse()"]
+calls_rs = ["serde_json::from_str()"]
+
+[operations."convert.to_json"]
+title = "Write JSON"
+symbol = "\"{…}\""
+family = "convert"
+pure = true
+inputs = ["Value:any"]
+output = "Json:text"
+explain = "Turns objects into JSON text."
+cs = "JsonSerializer.Serialize(x), JsonConvert.SerializeObject(x)"
+ts = "JSON.stringify(x)"
+rs = "serde_json::to_string(&x)"
+calls_cs = ["JsonSerializer.Serialize()", "JsonConvert.SerializeObject()", "JsonUtility.ToJson()"]
+calls_ts = ["JSON.stringify()"]
+calls_rs = ["serde_json::to_string()"]
+
+# =============================================================================================
+# Time
+# =============================================================================================
+
+[operations."time.now"]
+title = "Now"
+symbol = "now"
+family = "time"
+pure = false
+inputs = []
+output = "Time:time"
+explain = "The current date and time (different every time it runs)."
+cs = "DateTime.Now, DateTime.UtcNow"
+ts = "new Date(), Date.now()"
+rs = "SystemTime::now()"
+calls_cs = ["DateTime.Now", "DateTime.UtcNow", "DateTimeOffset.Now", "DateTimeOffset.UtcNow", "DateTime.Today"]
+calls_ts = ["Date.now()"]
+calls_rs = ["SystemTime::now()", "Instant::now()"]
+
+[operations."time.elapsed"]
+title = "Elapsed time"
+symbol = "⏱"
+family = "time"
+pure = false
+inputs = []
+output = "Time:number"
+explain = "A clock for measuring durations."
+cs = "Stopwatch.StartNew(), sw.ElapsedMilliseconds, Time.time"
+ts = "performance.now()"
+rs = "start.elapsed()"
+calls_cs = ["Stopwatch.StartNew()", "*.ElapsedMilliseconds", "Time.time", "Time.deltaTime"]
+calls_ts = ["performance.now()"]
+calls_rs = ["*.elapsed()"]
+
+# =============================================================================================
+# Input / output and environment
+# =============================================================================================
+
+[operations."io.print"]
+title = "Print"
+symbol = "print"
+family = "io"
+pure = false
+inputs = ["Values:any"]
+output = ""
+explain = "Writes the values to the console or log."
+cs = "Console.WriteLine(x), Debug.Log(x)"
+ts = "console.log(x)"
+rs = "println!(\"{x}\")"
+calls_cs = ["Console.WriteLine()", "Console.Write()", "Debug.Log()", "Debug.WriteLine()", "Trace.WriteLine()", "*.LogInformation()", "*.LogDebug()"]
+calls_ts = ["console.log()", "console.info()", "console.debug()"]
+calls_rs = ["println!()", "print!()"]
+
+[operations."io.print_error"]
+title = "Print error"
+symbol = "warn"
+family = "io"
+pure = false
+inputs = ["Values:any"]
+output = ""
+explain = "Writes the values to the error output or as a warning."
+cs = "Console.Error.WriteLine(x), Debug.LogError(x)"
+ts = "console.error(x), console.warn(x)"
+rs = "eprintln!(\"{x}\")"
+calls_cs = ["Console.Error.WriteLine()", "Debug.LogError()", "Debug.LogWarning()", "*.LogError()", "*.LogWarning()"]
+calls_ts = ["console.error()", "console.warn()"]
+calls_rs = ["eprintln!()"]
+
+[operations."io.read_line"]
+title = "Read line"
+symbol = "input"
+family = "io"
+pure = false
+inputs = []
+output = "Line:text"
+explain = "Waits for the user to type a line."
+cs = "Console.ReadLine()"
+ts = "readline.question(…)"
+rs = "stdin().read_line(&mut s)"
+calls_cs = ["Console.ReadLine()"]
+calls_rs = ["*.read_line()"]
+
+[operations."io.read_file"]
+title = "Read file"
+symbol = "read"
+family = "io"
+pure = false
+inputs = ["Path:text"]
+output = "Content:text"
+explain = "The content of a file."
+cs = "File.ReadAllText(path)"
+ts = "fs.readFileSync(path, 'utf8'), await fs.promises.readFile(path)"
+rs = "fs::read_to_string(path)"
+calls_cs = ["File.ReadAllText()", "File.ReadAllLines()", "File.ReadAllBytes()", "File.ReadAllTextAsync()"]
+calls_ts = ["fs.readFileSync()", "readFileSync()", "fs.readFile()", "readFile()", "fs.promises.readFile()"]
+calls_rs = ["fs::read_to_string()", "std::fs::read_to_string()", "fs::read()"]
+
+[operations."io.write_file"]
+title = "Write file"
+symbol = "write"
+family = "io"
+pure = false
+inputs = ["Path:text", "Content:text"]
+output = ""
+explain = "Saves the content to a file (replacing it)."
+cs = "File.WriteAllText(path, text)"
+ts = "fs.writeFileSync(path, text)"
+rs = "fs::write(path, text)"
+calls_cs = ["File.WriteAllText()", "File.WriteAllLines()", "File.WriteAllBytes()", "File.AppendAllText()", "File.WriteAllTextAsync()"]
+calls_ts = ["fs.writeFileSync()", "writeFileSync()", "fs.writeFile()", "writeFile()", "fs.appendFileSync()", "fs.promises.writeFile()"]
+calls_rs = ["fs::write()", "std::fs::write()"]
+
+[operations."io.file_exists"]
+title = "File exists"
+symbol = "exists?"
+family = "io"
+pure = false
+inputs = ["Path:text"]
+output = "Result:bool"
+explain = "True when a file is at the path."
+cs = "File.Exists(path)"
+ts = "fs.existsSync(path)"
+rs = "Path::new(p).exists()"
+calls_cs = ["File.Exists()", "Directory.Exists()"]
+calls_ts = ["fs.existsSync()", "existsSync()"]
+calls_rs = ["*.exists()"]
+
+[operations."io.env"]
+title = "Environment variable"
+symbol = "env"
+family = "io"
+pure = false
+inputs = ["Name:text"]
+output = "Value:text"
+explain = "A setting given to the program by its environment."
+cs = "Environment.GetEnvironmentVariable(name)"
+ts = "process.env.NAME"
+rs = "env::var(name)"
+calls_cs = ["Environment.GetEnvironmentVariable()"]
+calls_rs = ["env::var()", "std::env::var()"]
+
+# =============================================================================================
+# Objects
+# =============================================================================================
+
+[operations."object.equals"]
+title = "Equals"
+symbol = "equals"
+family = "object"
+pure = true
+inputs = ["A:any", "B:any"]
+output = "Result:bool"
+explain = "Equality defined by the type itself (which may compare contents)."
+cs = "a.Equals(b)"
+ts = "deepEqual(a, b)"
+rs = "a == b (PartialEq)"
+calls_cs = ["*.Equals()", "Equals()", "object.Equals()"]
+
+[operations."object.type_of"]
+title = "Type of"
+symbol = "type"
+family = "object"
+pure = true
+inputs = ["Value:any"]
+output = "Type:any"
+explain = "The type of the value at run time."
+cs = "x.GetType()"
+ts = "typeof x"
+rs = "std::any::type_name_of_val(&x)"
+calls_cs = ["*.GetType()"]
+
+[operations."object.hash"]
+title = "Hash code"
+symbol = "#"
+family = "object"
+pure = true
+inputs = ["Value:any"]
+output = "Hash:number"
+explain = "A number computed from the value, used by maps and sets."
+cs = "x.GetHashCode()"
+ts = ""
+rs = "hasher.hash(&x)"
+calls_cs = ["*.GetHashCode()", "HashCode.Combine()"]
+
+# =============================================================================================
+# Asynchrony
+# =============================================================================================
+
+[operations."async.all"]
+title = "Wait for all"
+symbol = "all"
+family = "async"
+pure = true
+inputs = ["Tasks:list"]
+output = "Results:list"
+explain = "Finishes when all the tasks finished, with all their results."
+cs = "Task.WhenAll(tasks)"
+ts = "Promise.all(promises)"
+rs = "join!(a, b), join_all(futures)"
+calls_cs = ["Task.WhenAll()", "UniTask.WhenAll()"]
+calls_ts = ["Promise.all()", "Promise.allSettled()"]
+calls_rs = ["join_all()", "join!()"]
+
+[operations."async.any"]
+title = "First to finish"
+symbol = "race"
+family = "async"
+pure = true
+inputs = ["Tasks:list"]
+output = "Result:any"
+explain = "Finishes when the first of the tasks finishes."
+cs = "Task.WhenAny(tasks)"
+ts = "Promise.race(promises), Promise.any(promises)"
+rs = "select!{…}"
+calls_cs = ["Task.WhenAny()", "UniTask.WhenAny()"]
+calls_ts = ["Promise.race()", "Promise.any()"]
+calls_rs = ["select!()"]
+
+[operations."async.ready"]
+title = "Ready value"
+symbol = "ready"
+family = "async"
+pure = true
+inputs = ["Value:any"]
+output = "Task:any"
+explain = "A task (promise) that has already finished with the value."
+cs = "Task.FromResult(x), Task.CompletedTask"
+ts = "Promise.resolve(x)"
+rs = "async { x }, ready(x)"
+calls_cs = ["Task.FromResult()", "Task.CompletedTask", "ValueTask.FromResult()"]
+calls_ts = ["Promise.resolve()"]
+calls_rs = ["ready()"]
+
+# =============================================================================================
+# Errors
+# =============================================================================================
+
+[operations."error.assert"]
+title = "Assert"
+symbol = "assert"
+family = "error"
+pure = false
+inputs = ["Condition:bool"]
+output = ""
+explain = "Stops (in debug builds or tests) when the condition is false."
+cs = "Debug.Assert(cond)"
+ts = "console.assert(cond), assert(cond)"
+rs = "assert!(cond)"
+calls_cs = ["Debug.Assert()", "Trace.Assert()", "Assert.IsTrue()"]
+calls_ts = ["console.assert()", "assert()", "assert.ok()"]
+calls_rs = ["assert!()", "debug_assert!()"]

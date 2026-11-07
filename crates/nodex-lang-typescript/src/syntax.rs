@@ -54,6 +54,40 @@ pub fn modifiers(src: Src, decl: Node) -> Vec<String> {
             out.push(flavor);
         }
     }
+    // Modifiers the parser did not see (blanked by `prepare`, such as `abstract override`).
+    if let Some(name) = decl.child_by_field_name("name").or_else(|| decl.child_by_field_name("pattern")) {
+        let head = &src.text[decl.start_byte()..name.start_byte()];
+        if has_word(head, "override") && !out.iter().any(|f| f == "override") {
+            out.push("override".into());
+        }
+        for d in decorators_in_text(head) {
+            if !out.contains(&d) {
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// True if `text` contains `word` as a whole word.
+pub fn has_word(text: &str, word: &str) -> bool {
+    let bytes = text.as_bytes();
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    text.match_indices(word).any(|(i, _)| {
+        (i == 0 || !ident(bytes[i - 1])) && bytes.get(i + word.len()).is_none_or(|&b| !ident(b))
+    })
+}
+
+/// `@Inject(TOKEN) private dep` → `attr:Inject`: decorators read from the source text (the
+/// grammar does not know parameter decorators; `prepare` hides them from it).
+pub fn decorators_in_text(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, _) in text.match_indices('@') {
+        let name: String = text[i + 1..].chars().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.')).collect();
+        if !name.is_empty() {
+            out.push(format!("attr:{name}"));
+        }
+    }
     out
 }
 

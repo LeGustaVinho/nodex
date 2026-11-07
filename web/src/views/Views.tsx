@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { api } from "../api";
 import { useTrace } from "../trace";
+import { useCatalog } from "../catalog";
 import { callGraph } from "../graph/callGraph";
 import { flowToGraph } from "../graph/flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "../graph/structureGraph";
@@ -88,15 +89,16 @@ export function CallsView() {
 }
 
 export function BlueprintView() {
-  const { flowSymbol, expanded, showDataWires, select, selection, openFlow } = useUi();
+  const { flowSymbol, expanded, showDataWires, detail, select, selection, openFlow } = useUi();
+  const catalog = useCatalog();
   const flow = useQuery({
     queryKey: ["flow", flowSymbol],
     queryFn: () => api.flow(flowSymbol!),
     enabled: !!flowSymbol,
   });
   const graph = useMemo(
-    () => (flow.data ? flowToGraph(flow.data, expanded, showDataWires) : undefined),
-    [flow.data, expanded, showDataWires],
+    () => (flow.data ? flowToGraph(flow.data, expanded, showDataWires, { level: detail, operations: catalog?.operations }) : undefined),
+    [flow.data, expanded, showDataWires, detail, catalog],
   );
   // During replay, follow the current step in the code panel.
   const replayNode = useTrace((s) => (s.replay?.flow === flowSymbol ? s.replay.page.steps[s.replay.index]?.node : undefined));
@@ -122,13 +124,18 @@ export function BlueprintView() {
     <>
     <ReplayBar flow={flowSymbol} />
     <GraphCanvas
-      key={`flow:${flowSymbol}`}
+      key={`flow:${flowSymbol}:${detail}`}
       graph={graph}
-      layoutKey={`flow:${flowSymbol}`}
+      layoutKey={`flow:${flowSymbol}:${detail}`}
       fitFirst={3}
       selectedId={selectedId}
       onNodeDoubleClick={(n) => {
-        // Double-clicking a call jumps into the called function's Blueprint.
+        // Double-clicking a call (or a function value with a Blueprint) opens that Blueprint.
+        if (n.type === "expr") {
+          const symbol = (n.data as { expr: { symbol: string | null } }).expr.symbol;
+          if (symbol) openFlow(symbol);
+          return;
+        }
         const target = flow.data?.nodes.find((x) => x.id === n.id)?.calls.find((c) => c.symbol);
         if (target?.symbol) openFlow(target.symbol);
       }}

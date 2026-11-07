@@ -12,7 +12,7 @@ const SKIP_DIRS: &[&str] = &[
     "Temp", ".turbo",
 ];
 
-const CODE_EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+const CODE_EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "vue"];
 
 /// Dependencies that describe what kind of project this is.
 const FLAVOR_DEPS: &[(&str, &str)] = &[

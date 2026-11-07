@@ -1,0 +1,24 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/vue/Search.pick
+EventEntry — Vue calls this when the template raises 'click'
+Emit — raise 'pick' to the parent component with item
+== src/vue/Search.(module).watch query
+EventEntry — Vue runs this when query changes
+Branch — if next.length > 20
+  true:
+    SetMember — set query.value to next.slice(0, 20)
+  false:
+== src/vue/Search.(module).onMounted
+EventEntry — Vue calls this after the component is added to the page
+SetMember — set query.value to new URLSearchParams(location.search).get("q") ?? ""
+== src/vue/Search.(module)
+EventEntry — Vue runs this setup once for every instance of the component
+Var — props = the props the parent component passes
+Var — emit = the events this component can raise to its parent
+Var — query = reactive value, starts as "" (read and write query.value)
+Var — matches = computed value, recalculated when what it reads changes
+Subscribe — when query changes, run watch query
+Subscribe — after the component is added to the page, run onMounted

@@ -1,0 +1,41 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/react/Counter.useTicker.effect
+EventEntry — React runs this after rendering, when intervalMs changes
+Var — id = setInterval(() => setTicks((t) => t + 1), intervalMs)
+Return — return () => clearInterval(id)
+== src/react/Counter.useTicker
+Entry — when useTicker(intervalMs) is called
+Var — state ticks, changed with setTicks; starts as 0
+Subscribe — after rendering, when intervalMs changes, run the effect
+Return — return ticks
+== src/react/Counter.Counter.increment
+Entry — when local function increment() is called
+Branch — if count >= 100
+  true:
+    Return — return
+  false:
+Call — change state with setCount((c) => c + step) (React renders again)
+== src/react/Counter.Counter.effect
+EventEntry — React runs this after rendering, when count changes
+Call — history.current.push(count)
+SetMember — set document.title to `Count: ${count}`
+== src/react/Counter.Counter
+EventEntry — React renders <Counter> (again whenever its props or state change)
+Var — state count, changed with setCount; starts as start
+Var — history = a box kept between renders (.current starts as [])
+Var — theme = the ThemeContext value from the nearest provider
+Var — ticks = result of hook useTicker(1000)
+Var — doubled = remembered result, recomputed when count changes
+Subscribe — after rendering, when count changes, run the effect
+Var — increment = remembered function, recreated when count, step change
+Branch — if count < 0
+  true:
+    Return — show <p className="error">Negative</p>
+  false:
+Return — show <div className={theme}> <Row label="count" value={count} /> <Row label="doubled" value={do…
+== src/react/Counter.Row
+EventEntry — React renders <Row> (again whenever its props or state change)
+Return — show <p> {label}: {value} </p>

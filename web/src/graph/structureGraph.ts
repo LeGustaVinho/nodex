@@ -128,6 +128,7 @@ export function typesGraph(index: StructureIndex, namespace: string | null, show
     let kind: string | null = null;
     if (e.kind === "Inherits") kind = "inherits";
     else if (e.kind === "Implements") kind = "implements";
+    else if (e.kind === "Compatible") kind = "compatible";
     else if (showUses && (e.kind === "References" || e.kind === "Instantiates")) kind = e.kind === "Instantiates" ? "creates" : "uses";
     if (!kind) continue;
     const from = index.owningType(e.from);

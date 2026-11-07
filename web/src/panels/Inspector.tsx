@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import { conceptColor, conceptInfo, flavorInfo, typeColor, useCatalog } from "../catalog";
+import { conceptColor, conceptInfo, flavorInfo, operationColor, operationInfo, typeColor, useCatalog } from "../catalog";
 import type { Concept } from "../gen/Concept";
 import type { Expr } from "../gen/Expr";
 import type { Language } from "../gen/Language";
@@ -44,6 +44,52 @@ function ConceptHeader({ concept, label }: { concept: Concept; label: string }) 
   );
 }
 
+/** A shared operation: what it does and how each language writes it. */
+function OperationSection({ op: key, language }: { op: string | null; language: Language }) {
+  const catalog = useCatalog();
+  const op = operationInfo(catalog, key);
+  if (!op) return null;
+  const family = catalog?.families[op.family];
+  const rows: [string, Language | "rust", string][] = [
+    ["C#", "csharp", op.cs],
+    ["TypeScript", "typescript", op.ts],
+    ["Rust", "rust", op.rs],
+  ];
+  return (
+    <>
+      <div className="insp-section">
+        <div className="section-title">Operation</div>
+        <div className="value-row">
+          <span className="op-chip" style={{ background: operationColor(catalog, op) }}>
+            {op.symbol}
+          </span>
+          <strong>{op.title}</strong>
+          {family && <span className="muted">{family.title}</span>}
+          {!op.pure && <span className="badge small">has an effect</span>}
+        </div>
+        <p className="explain">{op.explain}</p>
+        <div className="value-row muted">
+          {op.inputs.length > 0 ? op.inputs.map((p) => p.replace(":", ": ")).join(", ") : "no inputs"}
+          {op.output && ` → ${op.output.replace(":", ": ")}`}
+        </div>
+      </div>
+      <div className="insp-section">
+        <div className="section-title">In other languages</div>
+        <table className="op-langs">
+          <tbody>
+            {rows.map(([name, lang, code]) => (
+              <tr key={name} className={lang === language ? "current" : ""}>
+                <td>{name}</td>
+                <td>{code ? <code>{code}</code> : <span className="muted">no direct equivalent</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 function exprAt(root: Expr | null, path: string): Expr | null {
   let cur = root;
   for (const part of path.split(".").slice(1)) cur = cur?.children[Number(part)] ?? null;
@@ -76,6 +122,17 @@ export function Inspector() {
       return (
         <div className="inspector">
           <ConceptHeader concept={expr.concept} label={expr.label} />
+          <OperationSection op={expr.op} language={flow.data.language} />
+          {expr.params.length > 0 && (
+            <div className="insp-section">
+              <div className="section-title">Parameters</div>
+              <div className="value-row">
+                {expr.params.map((p) => (
+                  <code key={p}>{p}</code>
+                ))}
+              </div>
+            </div>
+          )}
           {expr.target && (
             <div className="insp-section">
               <div className="section-title">Resolves to</div>
@@ -95,6 +152,7 @@ export function Inspector() {
     return (
       <div className="inspector">
         <ConceptHeader concept={node.concept} label={node.label} />
+        {node.concept === "Call" && <OperationSection op={node.expr?.op ?? null} language={flow.data.language} />}
         {owner?.doc && (
           <div className="insp-section">
             <div className="section-title">Author's description</div>

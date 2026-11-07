@@ -3,20 +3,23 @@ source: crates/nodex-core/tests/typescript_fixtures.rs
 expression: outline_file(ir)
 ---
 == src/components.Button
-Entry — when Button(label, onClick, children) is called
-Return — return <button className="btn" onClick={onClick} disabled={!onClick}> {label} {children} </butt…
+EventEntry — React renders <Button> (again whenever its props or state change)
+Return — show <button className="btn" onClick={onClick} disabled={!onClick}> {label} {children} </button>
 == src/components.App.handleClick
 Entry — when local function handleClick() is called
-Call — setCount((c) => c + 1)
+Call — change state with setCount((c) => c + 1) (React renders again)
+== src/components.App.effect
+EventEntry — React runs this after rendering, when count changes
+SetMember — set document.title to `Count: ${count}`
 == src/components.App
-Entry — when App(items) is called
-Destructure — unpack [count, setCount] from useState(0)
-Destructure — unpack [query, setQuery] from useState("")
-Call — useEffect(() => { … }, [count])
+EventEntry — React renders <App> (again whenever its props or state change)
+Var — state count, changed with setCount; starts as 0
+Var — state query, changed with setQuery; starts as ""
+Subscribe — after rendering, when count changes, run the effect
 Lambda — define function handleClick()
 Var — visible = items → filter((i) => i.includes(query)) → map((i) => <li key={i}>{i}</li>)
 Branch — if items.length === 0
   true:
-    Return — return <p>No items</p>
+    Return — show <p>No items</p>
   false:
-Return — return <> <input value={query} onChange={(e) => setQuery(e.target.value)} /> <Button label={`Cl…
+Return — show <> <input value={query} onChange={(e) => setQuery(e.target.value)} /> <Button label={`Clic…

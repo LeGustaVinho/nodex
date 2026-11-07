@@ -48,6 +48,19 @@ impl<'a> LineIndex<'a> {
     }
 }
 
+/// Entry label of a callback Blueprint named `<callee> callback` / `<event> handler`.
+pub fn callback_entry_label(name: &str, params: &[&str]) -> String {
+    let base = name.split('~').next().unwrap_or(name);
+    let with = if params.is_empty() { String::new() } else { format!(" with ({})", params.join(", ")) };
+    if let Some(callee) = base.strip_suffix(" callback") {
+        format!("when {callee} calls this function{with}")
+    } else if let Some(event) = base.strip_suffix(" handler") {
+        format!("when {event} is raised{with}")
+    } else {
+        format!("when {base} is called{with}")
+    }
+}
+
 /// Collapses all whitespace runs to single spaces and trims.
 pub fn normalize_ws(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -113,9 +126,32 @@ impl NodeSpec {
         self
     }
 
+    /// Sets the expression tree. Function values in it that have a Blueprint of their own
+    /// (`Lambda` with a symbol) become call targets, so the node opens them.
     pub fn expr(mut self, expr: Option<Expr>) -> Self {
+        if let Some(e) = &expr {
+            let mut lambdas = Vec::new();
+            collect_lambda_targets(e, &mut lambdas);
+            for target in lambdas {
+                if !self.calls.iter().any(|c| c.symbol == target.symbol) {
+                    self.calls.push(target);
+                }
+            }
+        }
         self.expr = expr;
         self
+    }
+}
+
+fn collect_lambda_targets(e: &Expr, out: &mut Vec<CallTarget>) {
+    if e.concept == Concept::Lambda
+        && let Some(symbol) = &e.symbol
+    {
+        let display = symbol.rsplit_once('.').map(|(_, n)| n).unwrap_or(symbol).to_owned();
+        out.push(CallTarget { symbol: Some(symbol.clone()), display, external: false });
+    }
+    for c in &e.children {
+        collect_lambda_targets(c, out);
     }
 }
 

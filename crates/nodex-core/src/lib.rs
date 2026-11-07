@@ -9,6 +9,7 @@
 pub mod canon;
 pub mod catalog;
 pub mod link;
+pub mod operations;
 pub mod project;
 pub mod semantic;
 

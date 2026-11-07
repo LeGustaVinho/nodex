@@ -7,11 +7,14 @@
 
 mod expr;
 mod flow;
+mod frameworks;
 mod instrument;
+mod prepare;
 mod project;
 pub mod semantic;
 mod structure;
 mod syntax;
+mod vue;
 
 use std::path::Path;
 
@@ -30,7 +33,7 @@ impl LanguageFrontend for TypeScriptFrontend {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"]
+        &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "vue"]
     }
 
     fn detect(&self, root: &Path) -> Option<ProjectDescriptor> {
@@ -72,75 +75,38 @@ fn is_javascript(rel: &str) -> bool {
     matches!(extension(rel), "js" | "jsx" | "mjs" | "cjs")
 }
 
-/// A copy of `text` the parser accepts, with the same byte length (see ADR-011): a UTF-8 byte
-/// order mark becomes three spaces. `None` when nothing needs changing.
-fn prepare(text: &str) -> Option<String> {
-    text.strip_prefix('\u{feff}').map(|rest| format!("   {rest}"))
-}
-
-/// Import types (`x: import('./a').T`, `typeof import('node:fs')`), which the grammar lacks:
-/// the `import('…')` part becomes an identifier of the same length (`_____.T`).
-fn rewrite_import_types(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut out = bytes.to_vec();
-    let mut changed = false;
-    let mut from = 0;
-    while let Some(pos) = text[from..].find("import(").map(|p| p + from) {
-        from = pos + 7;
-        let before = text[..pos].trim_end();
-        let type_position = before.ends_with("typeof") || before.ends_with("readonly") || before.ends_with("keyof") || before.ends_with([':', '<', '|', '&']);
-        if !type_position || (pos > 0 && (bytes[pos - 1].is_ascii_alphanumeric() || bytes[pos - 1] == b'_')) {
-            continue;
-        }
-        let Some(close) = text[pos..].find(')').map(|c| c + pos) else { continue };
-        let inner = text[pos + 7..close].trim();
-        if !(inner.starts_with(['"', '\'']) && inner.ends_with(['"', '\''])) || text[pos..close].contains('\n') {
-            continue;
-        }
-        for b in &mut out[pos..=close] {
-            *b = b'_';
-        }
-        changed = true;
+/// What the parser reads for a file: the text itself, or the script of a Vue component.
+fn parser_input(rel: &str, text: &str) -> (String, bool, bool) {
+    if extension(rel) == "vue" {
+        let s = vue::script(text);
+        (s.text, !s.typescript, s.setup)
+    } else {
+        (text.to_owned(), uses_tsx(rel), false)
     }
-    changed.then(|| String::from_utf8(out).ok()).flatten()
 }
 
-fn error_count(tree: &tree_sitter::Tree) -> usize {
-    let mut count = 0;
-    let mut stack = vec![tree.root_node()];
-    while let Some(n) = stack.pop() {
-        if n.is_error() || n.is_missing() {
-            count += 1;
-        }
-        if n.has_error() {
-            let mut c = n.walk();
-            stack.extend(n.children(&mut c));
-        }
-    }
-    count
+/// Parses a file with the right grammar through a prepared copy (see [`prepare`]).
+fn parse(rel: &str, text: &str) -> Option<prepare::Prepared> {
+    let (input, tsx, _) = parser_input(rel, text);
+    parse_as(tsx, &input)
 }
 
-/// Parses a file with the right grammar; a prepared copy is used only if it parses better.
-fn parse(rel: &str, text: &str) -> Option<tree_sitter::Tree> {
+fn parse_as(tsx: bool, text: &str) -> Option<prepare::Prepared> {
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&grammar(uses_tsx(rel))).ok()?;
-    let prepared = prepare(text);
-    let base = prepared.as_deref().unwrap_or(text);
-    let tree = parser.parse(base, None)?;
-    if !tree.root_node().has_error() || !base.contains("import(") {
-        return Some(tree);
-    }
-    let Some(candidate) = rewrite_import_types(base) else { return Some(tree) };
-    match parser.parse(&candidate, None) {
-        Some(better) if error_count(&better) < error_count(&tree) => Some(better),
-        _ => Some(tree),
-    }
+    parser.set_language(&grammar(tsx)).ok()?;
+    prepare::parse(&mut parser, text)
+}
+
+/// The rewrites a file needed to parse (see [`prepare`]); a diagnostic aid.
+pub fn grammar_bridges(rel: &str, text: &str) -> Vec<&'static str> {
+    parse(rel, text).map(|p| p.rules).unwrap_or_default()
 }
 
 /// Where the grammar fails: `(line, first line of the failing code)`. A diagnostic aid for
 /// corpus testing.
 pub fn remaining_parse_errors(rel: &str, text: &str) -> Vec<(usize, String)> {
-    let Some(tree) = parse(rel, text) else { return Vec::new() };
+    let Some(prepared) = parse(rel, text) else { return Vec::new() };
+    let tree = prepared.tree;
     let mut out = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
@@ -173,7 +139,13 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         ir.diagnostics.push(Diagnostic { severity: Severity::Info, message: "Minified file: not shown.".into(), span: None });
         return ir;
     }
-    let Some(tree) = parse(rel_path, text) else {
+    // Vue components: only their scripts are code; the rest of the file is blanked for everything
+    // that reads text (labels, spans and line numbers still match the real file).
+    let (input, tsx, vue_setup) = parser_input(rel_path, text);
+    let fw = frameworks::detect(rel_path, text);
+    let original = text;
+    let text = input.as_str();
+    let Some(prepare::Prepared { tree, .. }) = parse_as(tsx, text) else {
         ir.diagnostics.push(Diagnostic {
             severity: Severity::Error,
             message: "tree-sitter TypeScript grammar is incompatible with the runtime".into(),
@@ -194,12 +166,13 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
 
     let src = syntax::Src { text, file: rel_path, index: &index };
     let is_dts = rel_path.ends_with(".d.ts") || rel_path.ends_with(".d.mts") || rel_path.ends_with(".d.cts");
-    let mut collector = structure::Collector::new(src, is_javascript(rel_path), is_dts);
+    let handlers = frameworks::template_handlers(original);
+    let mut collector = structure::Collector::new(src, is_javascript(rel_path), is_dts, fw, vue_setup, handlers);
     collector.program(root);
     let structure::Collected { mut symbols, imports, mut type_refs, bodies, function_ids } = collector.finish();
 
     for job in &bodies {
-        let lowered = flow::lower_body(src, job, &function_ids);
+        let lowered = flow::lower_body(src, job, &function_ids, fw);
         type_refs.extend(lowered.type_refs);
         if let Some(sym) = symbols.iter_mut().find(|s| s.id == job.symbol) {
             sym.has_flow = true;
@@ -221,11 +194,6 @@ mod tests {
     #[test]
     fn import_types_parse_through_a_same_length_copy() {
         let text = "let a: import('./x.js').T[] = [];\ntype F = typeof import(\"node:fs\");\nconst m = await import('./m.js');\n";
-        let rewritten = rewrite_import_types(text).expect("rewritten");
-        assert_eq!(rewritten.len(), text.len());
-        assert!(rewritten.contains("let a: ________________.T[]"));
-        assert!(rewritten.contains(&format!("typeof {};", "_".repeat("import(\"node:fs\")".len()))));
-        assert!(rewritten.contains("await import('./m.js')"), "dynamic imports stay");
         let ir = lower_source("a.ts", text);
         assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
     }

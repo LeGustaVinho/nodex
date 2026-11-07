@@ -265,13 +265,17 @@ impl Project {
             .values()
             .find_map(|f| f.ir.flows.iter().find(|g| g.symbol == symbol).map(|g| (f.language, g.clone())))?;
         let Some(facts) = self.semantic.get(&language).and_then(|e| e.facts.clone()) else {
+            let mut raw = raw;
+            crate::operations::recognize_flow(&mut raw);
             return Some(raw);
         };
         if self.locator.is_none() {
             self.structure();
         }
         let locator = self.locator.clone()?;
-        Some(semantic::enrich_flow(&raw, &facts, &locator))
+        let mut flow = semantic::enrich_flow(&raw, &facts, &locator);
+        crate::operations::recognize_flow(&mut flow);
+        Some(flow)
     }
 
     /// Frontends for the languages present in the project.

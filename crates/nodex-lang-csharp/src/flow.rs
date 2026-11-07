@@ -44,12 +44,12 @@ const ENTRY_FLAVORS: &[&str] = &[
     "abstract", "getter", "setter", "computed", "top-level", "operator",
 ];
 
-pub fn lower_body(src: Src, job: &BodyJob) -> Lowered {
+pub fn lower_body(src: Src, job: &BodyJob, callbacks: &std::collections::HashMap<usize, nodex_ir::SymbolId>) -> Lowered {
     let mut l = Lowering {
         src,
         owner: job.owner.clone(),
         b: FlowBuilder::new(job.symbol.clone()),
-        ex: ExprLowering::new(src),
+        ex: ExprLowering { functions: callbacks.clone(), ..ExprLowering::new(src) },
         unity: job.unity,
         coroutine: job.flavors.iter().any(|f| f == "unity:coroutine"),
         label_max: 96,
@@ -64,6 +64,10 @@ pub fn lower_body(src: Src, job: &BodyJob) -> Lowered {
         (None, BodyKind::TopLevel) => (Concept::Entry, "when the program starts".to_owned()),
         (None, BodyKind::EventAdd) => (Concept::Entry, format!("when a handler subscribes to {}", job.name.trim_end_matches(".add"))),
         (None, BodyKind::EventRemove) => (Concept::Entry, format!("when a handler unsubscribes from {}", job.name.trim_end_matches(".remove"))),
+        (None, BodyKind::LocalFunction) if job.flavors.iter().any(|f| f == "callback") => {
+            let params: Vec<&str> = job.params.iter().map(|(n, _)| n.as_str()).collect();
+            (Concept::Entry, nodex_lang_api::kit::callback_entry_label(&job.name, &params))
+        }
         (None, BodyKind::LocalFunction) => {
             let params: Vec<&str> = job.params.iter().map(|(n, _)| n.as_str()).collect();
             (Concept::Entry, format!("when local function {}({}) is called", job.name, params.join(", ")))

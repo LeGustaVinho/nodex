@@ -1,0 +1,66 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/modern.Holder.read
+Entry — when read() is called
+Return — return undefined
+== src/modern.Holder.write
+Entry — when write(_value) is called
+== src/modern.tuple
+Entry — when tuple(items) is called
+Return — return items
+== src/modern.Inject
+Entry — when Inject(_token) is called
+Return — return (_target: object, _key: string | symbol | undefined, _index: number) => {}
+== src/modern.Service.constructor
+Entry — when a new Service is created
+SetMember — increase Service.#instances by 1
+== src/modern.Service.owns
+Entry — when owns(other) is called
+Branch — if #token in other
+  true:
+    Return — return true
+  false:
+Return — return false
+== src/modern.Service.count
+Entry — when count() is called
+Return — return Service.#instances
+== src/modern.resources
+Entry — when resources() is called
+Var — closed = 0
+Loop.ForEach — for each r in openAll()
+  body:
+    Assign — add r ? 1 : 0 to closed
+Loop.ForEach — for each a in openAll()
+  body:
+    Assign — add a ? 1 : 0 to closed
+Var — using = { bind: (n: number) => n + closed }
+Return — return using.bind(1) + Helper().length + String(config).length
+== src/modern.view
+Entry — when view() is called
+Var — markup = `<p>&nbsp;</p>`
+Return — return markup
+== src/modern.area
+Entry — when area(shape) is called
+Match — match shape.kind
+  case:
+    Return — return Math.PI * shape.r ** 2
+  case:
+    Return — return shape.side ** 2
+TypeCheck — check while compiling that every case of shape was handled
+TypeCheck — check while compiling that every case of shape was handled
+Return — return unreachable
+== src/modern.Mixed.greet
+Entry — when greet() is called
+Return — return "hi"
+== src/modern.(immediately run)
+Entry — when the module runs it, right where it is written
+Await — ready = wait for Promise.resolve(true)
+Branch — if !ready
+  true:
+    Throw — fail with new Error("not ready")
+  false:
+== src/modern.(module)
+Entry — when the module is loaded
+Call — run the function written here

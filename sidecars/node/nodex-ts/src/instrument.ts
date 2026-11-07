@@ -234,6 +234,15 @@ function findEntry(root: string, project: ProjectHost): string {
 // The transformer
 // ------------------------------------------------------------------------------------------
 
+/** Calls whose function argument the framework calls later (see frameworks.rs `registration`). */
+const REGISTRATIONS = new Set([
+  "useEffect", "useLayoutEffect", "useInsertionEffect",
+  "onBeforeMount", "onMounted", "onBeforeUpdate", "onUpdated", "onBeforeUnmount", "onUnmounted", "onActivated", "onDeactivated", "onErrorCaptured",
+  "watch", "watchEffect", "effect", "subscribe",
+  "get", "post", "put", "patch", "delete", "del", "all", "options", "head", "use", "listen", "createServer",
+  "on", "once", "addListener", "addEventListener", "prependListener",
+]);
+
 interface Ctx {
   /** The instrumented function being visited, if any. */
   method: Method | null;
@@ -243,6 +252,8 @@ interface Ctx {
   topLevel: boolean;
   /** Members of a class declared at module level. */
   classTop: boolean;
+  /** Members of an object literal held by a module-level constant or export (depth below it). */
+  objectTop?: number;
   /** Qualified name prefix for method names. */
   scope: string;
 }
@@ -457,16 +468,65 @@ function instrumenter(rel: string, methods: MethodMap[]): ts.TransformerFactory<
       return fn;
     };
 
+    const propertyName = (name: ts.PropertyName): string =>
+      ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) || ts.isPrivateIdentifier(name) ? name.text : name.getText(sf);
+
+    /**
+     * Object literals whose function members have Blueprints in Nodex: held by a module-level
+     * constant, `export default`, `module.exports`/`exports.x`, or nested up to two levels.
+     */
+    const objectHolder = (obj: ts.ObjectLiteralExpression, ctx: Ctx): { scope: string; depth: number } | null => {
+      let p: ts.Node = obj.parent;
+      while (ts.isParenthesizedExpression(p) || ts.isAsExpression(p) || ts.isSatisfiesExpression(p)) p = p.parent;
+      const prefix = ctx.scope ? `${ctx.scope}.` : "";
+      if (ctx.topLevel) {
+        if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return { scope: `${prefix}${p.name.text}`, depth: 0 };
+        if (ts.isExportAssignment(p)) return { scope: `${prefix}default`, depth: 0 };
+        if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(p.left)) {
+          const target = p.left.getText(sf);
+          if (target.startsWith("module.exports") || target.startsWith("exports.")) return { scope: `${prefix}${target.replace(/^module\./, "")}`, depth: 0 };
+        }
+      }
+      if (ctx.objectTop !== undefined && ctx.objectTop < 2 && ts.isPropertyAssignment(p)) {
+        return { scope: `${ctx.scope}.${propertyName(p.name)}`, depth: ctx.objectTop + 1 };
+      }
+      return null;
+    };
+
     /** The Blueprint name of a function value, or null when it has none in Nodex. */
     const blueprintName = (fn: ts.ArrowFunction | ts.FunctionExpression, ctx: Ctx): string | null => {
       const p = fn.parent;
       const blockBody = ts.isBlock(fn.body);
+      // Callbacks handed to a framework or an event source (routes, middleware, listeners,
+      // effects): Nodex gives them their own Blueprint (crates/nodex-lang-typescript/src/frameworks.rs).
+      if (blockBody && (ctx.method || ctx.topLevel) && ts.isCallExpression(p) && p.arguments.includes(fn as ts.Expression)) {
+        const callee = ts.isPropertyAccessExpression(p.expression) ? p.expression.name.text : ts.isIdentifier(p.expression) ? p.expression.text : "";
+        if (REGISTRATIONS.has(callee)) return `${ctx.scope ? `${ctx.scope}.` : ""}${callee}`;
+        // Any other block-bodied callback (`items.forEach(item => { … })`) has a Blueprint
+        // `<callee> callback` (structure.rs `local_functions`). Events resolve by span, so the
+        // name is informative only.
+        return `${ctx.scope ? `${ctx.scope}.` : ""}${callee || "call"} callback`;
+      }
+      // `const onSave = useCallback(() => { … }, [])`, `const Row = memo(function Row() { … })`.
+      if (ts.isCallExpression(p) && p.arguments[0] === fn && ts.isVariableDeclaration(p.parent) && ts.isIdentifier(p.parent.name)) {
+        const callee = p.expression.getText(sf).split(".").pop() ?? "";
+        if (["memo", "forwardRef", "useCallback"].includes(callee) && (ctx.topLevel || (ctx.method && blockBody))) {
+          return `${ctx.scope ? `${ctx.scope}.` : ""}${p.parent.name.text}`;
+        }
+      }
       if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) {
         if (ctx.topLevel || (ctx.method && blockBody)) return `${ctx.scope ? `${ctx.scope}.` : ""}${p.name.text}`;
         return null;
       }
       if (ts.isPropertyDeclaration(p) && ctx.classTop) return `${ctx.scope}.${p.name.getText(sf)}`;
+      if (ts.isPropertyAssignment(p) && ctx.objectTop !== undefined) return `${ctx.scope}.${propertyName(p.name)}`;
       if (ts.isExportAssignment(p) && ctx.topLevel) return "default";
+      // `(async () => { … })()` as a module-level statement.
+      if (ts.isParenthesizedExpression(p) && ts.isCallExpression(p.parent) && p.parent.expression === p && ctx.topLevel && blockBody) {
+        let stmt: ts.Node = p.parent.parent;
+        while (ts.isVoidExpression(stmt) || ts.isAwaitExpression(stmt) || ts.isParenthesizedExpression(stmt)) stmt = stmt.parent;
+        if (ts.isExpressionStatement(stmt)) return "(immediately run)";
+      }
       if (
         ts.isBinaryExpression(p) &&
         p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -482,7 +542,7 @@ function instrumenter(rel: string, methods: MethodMap[]): ts.TransformerFactory<
 
     const visit = (node: ts.Node, ctx: Ctx): ts.VisitResult<ts.Node> => {
       const child = (c: Ctx) => (n: ts.Node) => visit(n, c);
-      const opaque: Ctx = { ...ctx, method: null, opaque: true, topLevel: false, classTop: false };
+      const opaque: Ctx = { ...ctx, method: null, opaque: true, topLevel: false, classTop: false, objectTop: undefined };
 
       if (ctx.opaque) {
         return ts.visitEachChild(node, child(ctx), context);
@@ -499,13 +559,15 @@ function instrumenter(rel: string, methods: MethodMap[]): ts.TransformerFactory<
         return name ? instrumentFunction(node, name, ctx) : ts.visitEachChild(node, child(opaque), context);
       }
       if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-        const top = ctx.topLevel && (ts.isClassDeclaration(node) || ts.isExportAssignment(node.parent));
+        const holder = ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name) ? node.parent.name.text : undefined;
+        const top = ctx.topLevel && (ts.isClassDeclaration(node) || ts.isExportAssignment(node.parent) || holder !== undefined);
         if (!top) return ts.visitEachChild(node, child(opaque), context);
-        const scope = `${ctx.scope ? `${ctx.scope}.` : ""}${node.name?.text ?? "default"}`;
+        const scope = `${ctx.scope ? `${ctx.scope}.` : ""}${node.name?.text ?? holder ?? "default"}`;
         return ts.visitEachChild(node, child({ method: null, opaque: false, topLevel: false, classTop: true, scope }), context);
       }
       if (ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
-        if (!node.body || !ctx.classTop) return ts.visitEachChild(node, child(opaque), context);
+        const member = ctx.classTop || (ctx.objectTop !== undefined && ts.isObjectLiteralExpression(node.parent));
+        if (!node.body || !member) return ts.visitEachChild(node, child(opaque), context);
         const base = ts.isConstructorDeclaration(node) ? "constructor" : node.name.getText(sf);
         const suffix = ts.isGetAccessorDeclaration(node) ? ".get" : ts.isSetAccessorDeclaration(node) ? ".set" : "";
         return instrumentFunction(node, `${ctx.scope}.${base}${suffix}`, ctx);
@@ -517,7 +579,12 @@ function instrumenter(rel: string, methods: MethodMap[]): ts.TransformerFactory<
         // Field initializers run in the constructor; only function values are instrumented.
         return ts.visitEachChild(node, child(ctx), context);
       }
-      if (ts.isObjectLiteralExpression(node) || ts.isFunctionLike(node)) {
+      if (ts.isObjectLiteralExpression(node)) {
+        const holder = objectHolder(node, ctx);
+        if (holder === null) return ts.visitEachChild(node, child(opaque), context);
+        return ts.visitEachChild(node, child({ method: null, opaque: false, topLevel: false, classTop: false, objectTop: holder.depth, scope: holder.scope }), context);
+      }
+      if (ts.isFunctionLike(node)) {
         return ts.visitEachChild(node, child(opaque), context);
       }
       if (ts.isModuleDeclaration(node)) {

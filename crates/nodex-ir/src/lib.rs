@@ -149,6 +149,8 @@ pub enum StructEdgeKind {
     DependsOn,
     /// A function raises an event (`Handler?.Invoke(...)`).
     Raises,
+    /// A type fits an interface without declaring it (TypeScript structural typing).
+    Compatible,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash)]
@@ -297,6 +299,9 @@ pub enum Concept {
     Destructure,
     Lambda,
     Pipeline,
+    /// A shared operation from `catalog/operations.toml` (`+`, `≥`, `and`, `Max`, `To upper case`):
+    /// the same node in every language; `Expr::op` names it.
+    Operation,
     // Escape hatches
     Opaque,
     Macro,
@@ -348,6 +353,7 @@ impl Concept {
         Concept::Destructure,
         Concept::Lambda,
         Concept::Pipeline,
+        Concept::Operation,
         Concept::Opaque,
         Concept::Macro,
     ];
@@ -415,6 +421,17 @@ pub struct Expr {
     /// Display name of the resolved target, including external ones (`System.Console.WriteLine(string)`).
     #[serde(default)]
     pub target: Option<String>,
+    /// The shared operation this expression performs (`add`, `greater_or_equal`, `math.max`,
+    /// `text.to_upper`): a key of `catalog/operations.toml`. Language-agnostic.
+    #[serde(default)]
+    pub op: Option<String>,
+    /// Type category of the result when known (`bool`, `number`, `text`, `list`): the pin
+    /// types of `catalog/operations.toml`.
+    #[serde(default)]
+    pub ty: Option<String>,
+    /// Parameter names of a `Lambda`.
+    #[serde(default)]
+    pub params: Vec<String>,
 }
 
 /// One node of a Blueprint-style flow graph.

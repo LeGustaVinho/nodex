@@ -42,6 +42,9 @@ pub enum RefKind {
     Handler,
     /// `Event?.Invoke(...)` or `Event(...)`; `site` is the invocation; the target is the event.
     Raise,
+    /// A type that has every member of an interface without declaring it (TypeScript structural
+    /// typing); `site` is the type's name; the target is the interface.
+    Compatible,
 }
 
 /// The symbol a reference resolves to.

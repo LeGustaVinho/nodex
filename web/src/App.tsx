@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { DETAIL_LEVELS } from "./graph/flowGraph";
 import { useEffect } from "react";
 import { ApiError, api, connectEvents, token } from "./api";
 import { CodePanel } from "./panels/CodePanel";
@@ -50,6 +51,10 @@ function TopBar() {
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
   const { index } = useStructure();
   const flowSymbol = ui.flowSymbol ? index?.byId.get(ui.flowSymbol) : undefined;
+  const root = project.data?.root;
+  useEffect(() => {
+    if (root) useUi.getState().loadDetail(root);
+  }, [root]);
   return (
     <header className="topbar">
       <div className="brand">
@@ -97,12 +102,27 @@ function TopBar() {
             <span className="crumb" title={flowSymbol.signature ?? ""}>
               {flowSymbol.qualified_name}
             </span>
+            <div className="segmented" role="group" aria-label="Detail">
+              {DETAIL_LEVELS.map((l) => (
+                <button
+                  key={l.id}
+                  className={ui.detail === l.id ? "on" : ""}
+                  title={l.explain}
+                  aria-pressed={ui.detail === l.id}
+                  onClick={() => ui.setDetail(l.id)}
+                >
+                  {l.label}
+                </button>
+              ))}
+            </div>
             <label className="toggle" title="Wires from where a variable is created to where it is used">
               <input type="checkbox" checked={ui.showDataWires} onChange={(e) => ui.setShowDataWires(e.target.checked)} /> data wires
             </label>
-            <button onClick={ui.collapseAll} title="Hide all expression details">
-              Collapse
-            </button>
+            {ui.detail === "statements" && (
+              <button onClick={ui.collapseAll} title="Hide all expression details">
+                Collapse
+              </button>
+            )}
           </>
         )}
       </div>

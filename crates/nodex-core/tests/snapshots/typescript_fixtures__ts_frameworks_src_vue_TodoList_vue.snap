@@ -1,0 +1,31 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/vue/TodoList.default.data
+EventEntry — Vue calls data to create the component's reactive data
+Return — return { draft: "", todos: [] }
+== src/vue/TodoList.default.computed.visible
+EventEntry — Vue runs this when visible is read and a value it depends on has changed
+Return — return this.todos.filter((t) => !this.filter || t.text.includes(this.filter))
+== src/vue/TodoList.default.computed.remaining
+EventEntry — Vue runs this when remaining is read and a value it depends on has changed
+Return — return this.todos.filter((t) => !t.done).length
+== src/vue/TodoList.default.watch.todos
+EventEntry — Vue runs this when todos changes
+Call — localStorage.setItem("todos", JSON.stringify(next))
+== src/vue/TodoList.default.methods.add
+EventEntry — Vue calls this when the template raises 'keyup'
+Branch — if !this.draft
+  true:
+    Return — return
+  false:
+Call — this.todos.push({ id: Date.now(), text: this.draft, done: false })
+SetMember — set this.draft to ""
+Emit — raise 'added' to the parent component with this.todos.length
+== src/vue/TodoList.default.methods.toggle
+EventEntry — Vue calls this when the template raises 'click'
+SetMember — set todo.done to !todo.done
+== src/vue/TodoList.default.mounted
+EventEntry — Vue calls mounted after the component is added to the page
+SetMember — set this.todos to JSON.parse(localStorage.getItem("todos") || "[]")

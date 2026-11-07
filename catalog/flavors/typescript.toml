@@ -200,3 +200,241 @@ explain = "setInterval: runs again and again until cleared."
 [destructure]
 label = "unpacks"
 explain = "Takes several values out of an object or array at once."
+
+# --- Added by the syntax review ------------------------------------------------------------
+
+[object]
+label = "object"
+explain = "An object literal that holds functions (const api = { get() { … } }, module.exports = { … }): each function has its own Blueprint under it."
+
+[object-member]
+label = "object member"
+explain = "A function written inside an object literal; this refers to the object when called as obj.member()."
+
+[iife]
+label = "runs immediately"
+explain = "A function called right where it is written, (async () => { … })(): scripts often keep their main logic in one."
+
+[exhaustive-check]
+label = "exhaustive check"
+explain = "x satisfies never (or a never-typed variable): the compiler fails if a case of a union was not handled before this point. Nothing happens at run time."
+
+[module-augmentation]
+label = "augments a module"
+explain = "declare module \"x\" { … }: adds declarations to another module's types, for example new fields on a library's request object."
+
+[global-augmentation]
+label = "augments globals"
+explain = "declare global { … }: adds declarations to the global scope, such as fields on Window."
+
+# --- Frameworks: React ---------------------------------------------------------------------------
+
+["react:component"]
+label = "React component"
+explain = "React calls this function (or class) to render part of the page, and again whenever its props or state change. What it returns is what is shown."
+
+["react:lifecycle"]
+label = "React lifecycle"
+explain = "A class component method that React calls at a specific moment (after mounting, before removal, on every render)."
+
+["react:hook"]
+label = "hook"
+explain = "A function whose name starts with use: it can keep state and effects for the component that calls it, on every render."
+
+["react:effect"]
+label = "effect"
+explain = "Code React runs after rendering, when the listed values changed (useEffect). The function it returns runs as clean-up."
+
+["react:state"]
+label = "state"
+explain = "A value React keeps between renders (useState, useReducer). Changing it with its setter makes the component render again."
+
+["react:set-state"]
+label = "changes state"
+explain = "Changes React state: the component renders again with the new value (after this code finishes, not immediately)."
+
+["react:ref"]
+label = "ref"
+explain = "useRef: a box whose .current survives renders; changing it does not render again."
+
+["react:memo"]
+label = "memoized"
+explain = "React keeps the result (or function) from the previous render and recomputes it only when the listed values change."
+
+["react:context"]
+label = "context"
+explain = "Reads a value provided higher in the component tree, without passing it through every component."
+
+["react:callback"]
+label = "useCallback"
+explain = "A function React keeps between renders, recreated only when the listed values change."
+
+["react:forward-ref"]
+label = "forwards ref"
+explain = "forwardRef: the parent can get a ref to an element inside this component."
+
+# --- Frameworks: Vue -----------------------------------------------------------------------------
+
+["vue:component"]
+label = "Vue component"
+explain = "A Vue component: Vue creates it, calls its lifecycle options and re-renders its template when its reactive data changes."
+
+["vue:setup"]
+label = "setup"
+explain = "The top level of <script setup>: Vue runs it once for every instance of the component."
+
+["vue:lifecycle"]
+label = "Vue lifecycle"
+explain = "Vue calls this at a moment of the component's life (created, mounted, updated, unmounted)."
+
+["vue:watch"]
+label = "watcher"
+explain = "Code Vue runs again whenever the watched reactive value changes."
+
+["vue:computed"]
+label = "computed"
+explain = "A value Vue recalculates only when the reactive values it reads change, and caches otherwise."
+
+["vue:ref"]
+label = "ref"
+explain = "ref(): a reactive value; reading and writing .value lets Vue track it and update the template."
+
+["vue:reactive"]
+label = "reactive"
+explain = "reactive(): an object whose properties Vue tracks; changing them updates the template."
+
+["vue:props"]
+label = "props"
+explain = "Values the parent component passes in. Read-only for this component."
+
+["vue:emits"]
+label = "emits"
+explain = "The events this component can raise to its parent (defineEmits)."
+
+["vue:emit"]
+label = "emits to parent"
+explain = "Raises an event the parent component listens to in its template (@name)."
+
+["vue:model"]
+label = "v-model"
+explain = "A value shared two ways with the parent through v-model."
+
+["vue:method"]
+label = "method"
+explain = "A component method, usually called from the template (@click) or from other options."
+
+["vue:composable"]
+label = "composable"
+explain = "A function from the app or a library (use...) that provides reactive state or services to the component."
+
+# --- Frameworks: Angular -------------------------------------------------------------------------
+
+["angular:component"]
+label = "Angular component"
+explain = "@Component: Angular creates it for its selector in templates, injects its constructor parameters and calls its lifecycle hooks."
+
+["angular:directive"]
+label = "directive"
+explain = "@Directive: adds behavior to existing elements in templates."
+
+["angular:pipe"]
+label = "pipe"
+explain = "@Pipe: a value transformation used in templates ({{ value | name }})."
+
+["angular:service"]
+label = "service"
+explain = "@Injectable: Angular creates it and passes it to whoever asks for it (dependency injection)."
+
+["angular:module"]
+label = "NgModule"
+explain = "@NgModule: groups components, directives and providers."
+
+["angular:lifecycle"]
+label = "Angular lifecycle"
+explain = "A hook Angular calls at a moment of the component's life (ngOnInit, ngOnChanges, ngOnDestroy, ...)."
+
+["angular:input"]
+label = "input"
+explain = "A value the parent template sets ([name]). Angular updates it when the parent's value changes."
+
+["angular:output"]
+label = "output"
+explain = "An event the parent template can listen to ((name)); emitting it calls the parent's handler."
+
+["angular:inject"]
+label = "injected"
+explain = "Angular provides this object (dependency injection): the class does not create it."
+
+["angular:signal"]
+label = "signal"
+explain = "A reactive value: reading it in a template or computed() makes Angular update when it changes."
+
+["angular:effect"]
+label = "effect"
+explain = "Code Angular runs again whenever a signal it reads changes."
+
+["angular:host-listener"]
+label = "host listener"
+explain = "@HostListener: Angular calls this method when the host element (or window/document) raises the event."
+
+["angular:host-binding"]
+label = "host binding"
+explain = "@HostBinding: this value is written to a property or attribute of the host element."
+
+["angular:view-query"]
+label = "view query"
+explain = "@ViewChild/@ViewChildren: Angular fills this with elements of the component's own template."
+
+["angular:content-query"]
+label = "content query"
+explain = "@ContentChild/@ContentChildren: Angular fills this with elements projected into the component."
+
+["rxjs:subscribe"]
+label = "subscription"
+explain = "Runs the callback for every value the observable emits, until unsubscribed."
+
+[rx-pipeline]
+label = "RxJS pipeline"
+explain = "source.pipe(op1, op2, ...): every emitted value flows through the operators in order."
+
+# --- Frameworks: Node.js -------------------------------------------------------------------------
+
+["node:route"]
+label = "route"
+explain = "The web framework calls this handler when a request with this method and path arrives."
+
+["node:middleware"]
+label = "middleware"
+explain = "Runs for every request (or every request under a path) before its route; it calls next() to continue."
+
+["node:listen"]
+label = "listen"
+explain = "The server starts accepting connections; the callback runs once it is ready."
+
+["node:server"]
+label = "server"
+explain = "The callback runs for every request the server receives."
+
+["node:app"]
+label = "web app"
+explain = "A web application or router object; routes and middleware are registered on it."
+
+["node:exit"]
+label = "exits"
+explain = "process.exit: the program ends here; pending work (timers, I/O) does not finish."
+
+["node:blocking"]
+label = "blocking"
+explain = "A synchronous Node.js call: the whole program waits until it finishes (no other request or timer runs meanwhile)."
+
+["node:process"]
+label = "child process"
+explain = "Runs another program in a separate process."
+
+["node:worker"]
+label = "worker thread"
+explain = "Runs a script on another thread, in parallel with this one."
+
+[event-handler]
+label = "event handler"
+explain = "Code that runs when the object raises this event; it may run many times."

@@ -3,4 +3,4 @@
 /**
  * Relation between two symbols.
  */
-export type StructEdgeKind = "Contains" | "Inherits" | "Implements" | "Calls" | "Instantiates" | "References" | "Imports" | "Subscribes" | "DependsOn" | "Raises";
+export type StructEdgeKind = "Contains" | "Inherits" | "Implements" | "Calls" | "Instantiates" | "References" | "Imports" | "Subscribes" | "DependsOn" | "Raises" | "Compatible";

@@ -1,0 +1,16 @@
+{
+  "name": "nodex-frameworks",
+  "private": true,
+  "type": "module",
+  "nodex": { "entry": "src/node/server.ts" },
+  "dependencies": {
+    "@angular/core": "^19.0.0",
+    "express": "^5.0.0",
+    "react": "^19.0.0",
+    "rxjs": "^7.8.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

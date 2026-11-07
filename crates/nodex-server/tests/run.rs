@@ -119,4 +119,8 @@ async fn runs_the_typescript_sample_and_records_its_execution() {
     let calls = state.run.recorder().unwrap().lock().unwrap().calls(10_000);
     assert!(calls.spans.iter().any(|s| s.flow == total && s.depth > 0 && !s.open));
     assert!(calls.spans.iter().any(|s| s.flow == ship && s.resumed), "async continuation spans");
+
+    // The `shipped` listener has its own Blueprint and runs once (order 1 ships).
+    let listener = "src/main.main.on 'shipped'";
+    assert_eq!(snapshot.calls.get(listener), Some(&1), "{:?}", snapshot.calls.keys().collect::<Vec<_>>());
 }

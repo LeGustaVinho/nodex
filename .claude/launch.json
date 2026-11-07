@@ -23,6 +23,13 @@
       "url": "http://127.0.0.1:7440"
     },
     {
+      "name": "nodex-frameworks",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/ts/Frameworks", "--no-browser", "--port", "7450"],
+      "port": 7450,
+      "url": "http://127.0.0.1:7450"
+    },
+    {
       "name": "web-dev",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "web", "dev"],

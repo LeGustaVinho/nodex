@@ -1,0 +1,30 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/objects.api.get
+Entry — when get(url) is called
+Return — return fetch(url)
+== src/objects.api.post
+Entry — when post(url, body) is called
+Return — return fetch(url, { method: "POST", body })
+== src/objects.api.nested.deep
+Entry — when deep() is called
+Return — return 1
+== src/objects.exports.run
+Entry — when run() is called
+Call — api.get("/x")
+== src/objects.exports.helper
+Entry — when helper() is called
+Return — return 2
+== src/objects.default.methods.click
+Entry — when click() is called
+SetMember — increase this.count by 1
+== src/objects.default.data
+Entry — when data() is called
+Return — return { count: 0 }
+== src/objects.(module)
+Entry — when the module is loaded
+Var — api = { async get(url) { … }, post: (url, body) => fetch(url, { method: "POST", body }), nested…
+SetMember — export { run() { … }, helper: function () { … } } as module.exports
+Assign — export { name: "comp", methods: { click() { … } }, data() { … } } as the default

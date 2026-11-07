@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Span } from "./gen/Span";
+import type { DetailLevel } from "./graph/flowGraph";
 
 export type View = "architecture" | "types" | "calls" | "timeline" | "blueprint";
 
@@ -26,6 +27,10 @@ interface UiState {
   expanded: Record<string, boolean>;
   showDataWires: boolean;
   showUses: boolean;
+  /** How much of each statement the Blueprint draws; remembered per project. */
+  detail: DetailLevel;
+  /** localStorage key for `detail` (per project root). */
+  detailKey: string | null;
   connected: boolean;
   setView: (v: View) => void;
   openFlow: (symbol: string) => void;
@@ -34,7 +39,11 @@ interface UiState {
   setCallDepth: (depth: number) => void;
   select: (s: Selection, span?: Span | null) => void;
   focusCode: (span: Span | null) => void;
-  toggleExpanded: (nodeId: string) => void;
+  /** Opens or closes a statement's details; `shown` is whether they are shown now. */
+  toggleExpanded: (nodeId: string, shown: boolean) => void;
+  setDetail: (level: DetailLevel) => void;
+  /** Reads the remembered detail level of the project at `root`. */
+  loadDetail: (root: string) => void;
   collapseAll: () => void;
   setShowDataWires: (v: boolean) => void;
   setShowUses: (v: boolean) => void;
@@ -65,6 +74,8 @@ export const useUi = create<UiState>((set) => ({
   expanded: {},
   showDataWires: true,
   showUses: true,
+  detail: "statements",
+  detailKey: null,
   connected: false,
   setView: (view) =>
     set((s) => {
@@ -83,7 +94,27 @@ export const useUi = create<UiState>((set) => ({
   setCallDepth: (callDepth) => set({ callDepth }),
   select: (selection, span) => set(span === undefined ? { selection } : { selection, codeFocus: span }),
   focusCode: (codeFocus) => set({ codeFocus }),
-  toggleExpanded: (id) => set((s) => ({ expanded: { ...s.expanded, [id]: !s.expanded[id] } })),
+  toggleExpanded: (id, shown) => set((s) => ({ expanded: { ...s.expanded, [id]: !shown } })),
+  setDetail: (detail) =>
+    set((s) => {
+      try {
+        if (s.detailKey) window.localStorage.setItem(s.detailKey, detail);
+      } catch {
+        // Storage may be unavailable (private window); the level still applies for this visit.
+      }
+      return { detail, expanded: {} };
+    }),
+  loadDetail: (root) => {
+    const detailKey = `nodex.detail:${root}`;
+    let detail: DetailLevel = "statements";
+    try {
+      const saved = window.localStorage.getItem(detailKey);
+      if (saved === "operations" || saved === "everything" || saved === "statements") detail = saved;
+    } catch {
+      // Ignore: default level.
+    }
+    set({ detailKey, detail });
+  },
   collapseAll: () => set({ expanded: {} }),
   setShowDataWires: (showDataWires) => set({ showDataWires }),
   setShowUses: (showUses) => set({ showUses }),

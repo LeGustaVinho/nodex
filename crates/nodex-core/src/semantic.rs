@@ -137,6 +137,13 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
                     edges.insert((owner.id.clone(), event, StructEdgeKind::Raises));
                 }
             }
+            RefKind::Compatible => {
+                if let (Some(ty), Some(target)) = (locator.owning_type(&r.site), locator.target(&r.target))
+                    && ty.id != target
+                {
+                    edges.insert((ty.id.clone(), target, StructEdgeKind::Compatible));
+                }
+            }
             RefKind::Subscribe | RefKind::Unsubscribe | RefKind::Handler => {}
         }
     }
@@ -245,7 +252,7 @@ pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -
                     annotate(expr, &r.site, symbol.as_deref(), &r.target);
                 }
             }
-            RefKind::Base | RefKind::Handler => {}
+            RefKind::Base | RefKind::Handler | RefKind::Compatible => {}
         }
     }
 

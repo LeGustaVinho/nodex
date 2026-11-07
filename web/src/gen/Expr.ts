@@ -19,4 +19,18 @@ symbol: string | null,
 /**
  * Display name of the resolved target, including external ones (`System.Console.WriteLine(string)`).
  */
-target: string | null, };
+target: string | null, 
+/**
+ * The shared operation this expression performs (`add`, `greater_or_equal`, `math.max`,
+ * `text.to_upper`): a key of `catalog/operations.toml`. Language-agnostic.
+ */
+op: string | null, 
+/**
+ * Type category of the result when known (`bool`, `number`, `text`, `list`): the pin
+ * types of `catalog/operations.toml`.
+ */
+ty: string | null, 
+/**
+ * Parameter names of a `Lambda`.
+ */
+params: Array<string>, };

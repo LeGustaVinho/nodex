@@ -167,8 +167,14 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         bodies,
     } = collector.finish();
 
+    // Callbacks with a Blueprint of their own, by start byte (the lambda's `Expr::symbol`).
+    let callbacks: std::collections::HashMap<usize, nodex_ir::SymbolId> = bodies
+        .iter()
+        .filter(|j| j.flavors.iter().any(|f| f == "callback"))
+        .map(|j| (j.decl.start_byte(), j.symbol.clone()))
+        .collect();
     for job in &bodies {
-        let lowered = flow::lower_body(src, job);
+        let lowered = flow::lower_body(src, job, &callbacks);
         type_refs.extend(lowered.type_refs);
         if let Some(sym) = symbols.iter_mut().find(|s| s.id == job.symbol) {
             sym.has_flow = true;

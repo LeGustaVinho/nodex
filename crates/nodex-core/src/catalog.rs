@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 const CONCEPTS: &str = include_str!("../../../catalog/concepts.toml");
+const OPERATIONS: &str = include_str!("../../../catalog/operations.toml");
 const FLAVORS: &[(&str, &str)] = &[
     ("common", include_str!("../../../catalog/flavors/common.toml")),
     ("csharp", include_str!("../../../catalog/flavors/csharp.toml")),
@@ -36,6 +37,58 @@ pub struct FlavorInfo {
     pub explain: String,
 }
 
+/// A family of operations (math, text, ...): its title and node color.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct FamilyInfo {
+    pub title: String,
+    pub color: String,
+}
+
+/// One shared operation of `catalog/operations.toml`.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct OperationInfo {
+    pub title: String,
+    pub symbol: String,
+    pub family: String,
+    pub pure: bool,
+    /// `Name:type` pins in argument order (the receiver first for methods).
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    /// `Name:type`, empty when the operation returns nothing.
+    #[serde(default)]
+    pub output: String,
+    pub explain: String,
+    #[serde(default)]
+    pub cs: String,
+    #[serde(default)]
+    pub ts: String,
+    #[serde(default)]
+    pub rs: String,
+    #[serde(default)]
+    pub calls_cs: Vec<String>,
+    #[serde(default)]
+    pub calls_ts: Vec<String>,
+    #[serde(default)]
+    pub calls_rs: Vec<String>,
+}
+
+impl OperationInfo {
+    /// The call patterns for a language (`csharp`, `typescript`, `rust`).
+    pub fn calls(&self, language: &str) -> &[String] {
+        match language {
+            "csharp" => &self.calls_cs,
+            "typescript" => &self.calls_ts,
+            "rust" => &self.calls_rs,
+            _ => &[],
+        }
+    }
+}
+
+/// Pin types an operation may use.
+pub const PIN_TYPES: &[&str] = &["number", "text", "bool", "list", "map", "any", "time"];
+
 /// Display and explanation data for concepts and flavors.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
@@ -44,6 +97,15 @@ pub struct Catalog {
     pub concepts: BTreeMap<String, ConceptInfo>,
     /// Flavor tables keyed by source (`common`, `csharp`, ...).
     pub flavors: BTreeMap<String, BTreeMap<String, FlavorInfo>>,
+    pub families: BTreeMap<String, FamilyInfo>,
+    /// Shared operations keyed by `Expr::op` (`add`, `math.max`, `text.to_upper`, ...).
+    pub operations: BTreeMap<String, OperationInfo>,
+}
+
+#[derive(Deserialize)]
+struct OperationsFile {
+    families: BTreeMap<String, FamilyInfo>,
+    operations: BTreeMap<String, OperationInfo>,
 }
 
 #[derive(Deserialize)]
@@ -65,7 +127,14 @@ impl Catalog {
         for (name, text) in FLAVORS {
             flavors.insert((*name).to_owned(), toml::from_str(text)?);
         }
-        Ok(Self { categories: file.categories, concepts: file.concepts, flavors })
+        let ops: OperationsFile = toml::from_str(OPERATIONS)?;
+        Ok(Self {
+            categories: file.categories,
+            concepts: file.concepts,
+            flavors,
+            families: ops.families,
+            operations: ops.operations,
+        })
     }
 
     /// Problems that make the catalog inconsistent with the IR. Empty when valid.
@@ -84,6 +153,28 @@ impl Catalog {
         for key in self.concepts.keys() {
             if !Concept::ALL.iter().any(|c| &c.key() == key) {
                 problems.push(format!("catalog concept {key} does not exist in nodex_ir::Concept"));
+            }
+        }
+        for (key, op) in &self.operations {
+            if !self.families.contains_key(&op.family) {
+                problems.push(format!("operation {key} uses unknown family {}", op.family));
+            }
+            let output = (!op.output.is_empty()).then_some(&op.output);
+            for pin in op.inputs.iter().chain(output) {
+                match pin.split_once(':') {
+                    Some((name, ty)) if !name.is_empty() && PIN_TYPES.contains(&ty) => {}
+                    _ => problems.push(format!("operation {key} has a bad pin {pin:?} (want Name:type)")),
+                }
+            }
+            if op.pure && op.output.is_empty() {
+                problems.push(format!("pure operation {key} has no output"));
+            }
+            for lang in ["csharp", "typescript", "rust"] {
+                for pattern in op.calls(lang) {
+                    if crate::operations::Pattern::parse(pattern).is_none() {
+                        problems.push(format!("operation {key} has a bad {lang} call pattern {pattern:?}"));
+                    }
+                }
             }
         }
         problems

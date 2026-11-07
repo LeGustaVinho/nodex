@@ -1,0 +1,44 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/node/server.(module).middleware
+EventEntry — for every request, before its route
+Call — console.log(`${req.method} ${req.url}`)
+Call — next()
+== src/node/server.(module).GET /users
+EventEntry — when a GET /users request arrives
+Call — res.json(users)
+== src/node/server.(module).GET /users/:id
+EventEntry — when a GET /users/:id request arrives
+Var — user = users.find((u) => u.id === Number(req.params.id))
+Branch — if !user
+  true:
+    Call — res.status(404).json({ error: "not found" })
+    Return — return
+  false:
+Call — res.json(user)
+== src/node/server.(module).POST /backup.on 'exit'
+EventEntry — when child raises 'exit'
+Call — res.json({ code })
+== src/node/server.(module).POST /backup
+EventEntry — when a POST /backup request arrives
+Var — child = program "git" running in another process
+Subscribe — on child 'exit', run on 'exit'
+== src/node/server.(module).listening
+EventEntry — when the server starts listening on port 3000
+Call — console.log("listening on 3000")
+== src/node/server.(module).on 'SIGINT'
+EventEntry — when process raises 'SIGINT'
+Call — server.close()
+Return — end the program with exit code 0
+== src/node/server.(module)
+Entry — when the module is loaded
+Var — app = a new express web application
+Var — users = JSON.parse(readFileSync(new URL("./users.json", import.meta.url), "utf8")) as { id: num…
+Subscribe — for every request, first run middleware
+Subscribe — on GET /users requests, run GET /users
+Subscribe — on GET /users/:id requests, run GET /users/:id
+Subscribe — on POST /backup requests, run POST /backup
+Var — server = start listening on port 3000, then run listening
+Subscribe — on process 'SIGINT', run on 'SIGINT'

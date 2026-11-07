@@ -460,6 +460,11 @@ impl<'a, 't> Collector<'a, 't> {
         let mut stack = vec![body];
         while let Some(n) = stack.pop() {
             for child in named_children(n) {
+                if matches!(child.kind(), "lambda_expression" | "anonymous_method_expression") {
+                    self.callback(child, owner, parent, ty);
+                    stack.push(child);
+                    continue;
+                }
                 if child.kind() != "local_function_statement" {
                     stack.push(child);
                     continue;
@@ -511,6 +516,97 @@ impl<'a, 't> Collector<'a, 't> {
                 });
             }
         }
+    }
+
+    /// A block-bodied lambda handed to a call (`items.ForEach(item => { … })`) or to an event
+    /// (`button.Click += (s, e) => { … }`) gets a Blueprint of its own: `<callee> callback`.
+    fn callback(&mut self, lambda: Node<'t>, owner: &str, parent: &str, ty: &TypeCtx) {
+        let src = self.src;
+        let Some(body) = lambda.child_by_field_name("body").or_else(|| first_child_of_kind(lambda, "block")) else { return };
+        if body.kind() != "block" || !named_children(body).iter().any(|s| s.kind() != "comment") {
+            return;
+        }
+        let Some(holder) = lambda.parent() else { return };
+        let name = match holder.kind() {
+            "argument" => {
+                let invocation = holder.parent().and_then(|list| list.parent());
+                let callee = invocation
+                    .filter(|i| matches!(i.kind(), "invocation_expression" | "object_creation_expression"))
+                    .map(|i| match i.kind() {
+                        "object_creation_expression" => {
+                            i.child_by_field_name("type").map(|t| bare_type_name(&src.norm(t))).unwrap_or_default()
+                        }
+                        _ => match i.child_by_field_name("function") {
+                            Some(f) if f.kind() == "member_access_expression" => {
+                                f.child_by_field_name("name").map(|n| bare_type_name(&src.norm(n))).unwrap_or_default()
+                            }
+                            Some(f) => bare_type_name(&src.norm(f)),
+                            None => String::new(),
+                        },
+                    })
+                    .filter(|n| !n.is_empty() && !n.contains(['(', '.']))
+                    .unwrap_or_else(|| "call".into());
+                format!("{callee} callback")
+            }
+            "assignment_expression"
+                if holder.child_by_field_name("right").is_some_and(|r| r.id() == lambda.id())
+                    && holder.child_by_field_name("operator").is_some_and(|o| src.text(o) == "+=") =>
+            {
+                let event = holder
+                    .child_by_field_name("left")
+                    .map(|l| src.norm(l))
+                    .map(|l| l.rsplit('.').next().unwrap_or(&l).to_owned())
+                    .unwrap_or_else(|| "event".into());
+                format!("{event} handler")
+            }
+            _ => return,
+        };
+        let mut id = format!("{owner}.{name}");
+        let mut i = 2;
+        while self.symbols.iter().any(|s| s.id == id) {
+            id = format!("{owner}.{name}~{i}");
+            i += 1;
+        }
+        let mut params: Vec<(String, Option<String>)> = parameters(src, lambda).into_iter().map(|(n, t, _)| (n, t)).collect();
+        if params.is_empty()
+            && let Some(p) = lambda.child_by_field_name("parameters").filter(|p| matches!(p.kind(), "identifier" | "implicit_parameter"))
+        {
+            params.push((src.norm(p), None));
+        }
+        let mut flavors = vec!["local-function".to_owned(), "callback".to_owned()];
+        if children(lambda).iter().any(|c| src.text(*c) == "async") {
+            flavors.push("async".into());
+        }
+        let signature = src.header(lambda, Some(body));
+        self.push_or_merge(Symbol {
+            id: id.clone(),
+            kind: SymbolKind::Function,
+            name: name.clone(),
+            qualified_name: format!("{parent}.{name}"),
+            parent: Some(parent.to_owned()),
+            language: Language::Csharp,
+            origins: vec![src.span(lambda)],
+            flavors: flavors.clone(),
+            signature: Some(signature.clone()),
+            type_text: None,
+            has_flow: false,
+            external: false,
+            doc: None,
+        });
+        self.bodies.push(BodyJob {
+            symbol: id,
+            owner: owner.to_owned(),
+            name,
+            kind: BodyKind::LocalFunction,
+            decl: lambda,
+            body,
+            signature,
+            params,
+            returns_void: false,
+            flavors,
+            unity_message: None,
+            unity: ty.unity || self.unity_file,
+        });
     }
 
     fn method(&mut self, node: Node<'t>, ty: &TypeCtx) {

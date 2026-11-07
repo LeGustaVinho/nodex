@@ -37,6 +37,7 @@ export default function App({ items }: { items: string[] }) {
       </Button>
       <ul>{visible}</ul>
       {count > 3 && <strong>Many clicks</strong>}
+      <footer>&copy; Nodex&nbsp;2026</footer>
     </>
   );
 }

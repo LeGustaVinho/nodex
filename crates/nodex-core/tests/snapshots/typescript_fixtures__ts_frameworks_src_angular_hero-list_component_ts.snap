@@ -1,0 +1,22 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/angular/hero-list.component.HeroListComponent.constructor
+Entry — when a new HeroListComponent is created
+== src/angular/hero-list.component.HeroListComponent.ngOnInit.on this.service.heroes() value
+EventEntry — runs for every value this.service.heroes() emits
+SetMember — set this.heroes to heroes.slice(0, this.limit)
+== src/angular/hero-list.component.HeroListComponent.ngOnInit
+EventEntry — Angular calls ngOnInit once, after the first input values are set
+SetMember — set this.subscription to: on every value of this.service.heroes(), run on this.service.heroes()…
+== src/angular/hero-list.component.HeroListComponent.ngOnDestroy
+EventEntry — Angular calls ngOnDestroy right before it destroys the component
+Call — this.subscription?.unsubscribe()
+== src/angular/hero-list.component.HeroListComponent.clear
+EventEntry — Angular calls this when the host element receives 'window:keydown.escape'
+SetMember — set this.heroes to []
+== src/angular/hero-list.component.HeroListComponent.choose
+EventEntry — Angular calls this when the template raises 'click'
+Call — this.service.select(hero)
+Emit — send hero through this.chosen

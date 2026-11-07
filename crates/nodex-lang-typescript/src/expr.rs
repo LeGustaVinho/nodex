@@ -2,6 +2,7 @@
 
 use nodex_ir::{Concept, Expr};
 use nodex_lang_api::kit::truncate;
+use nodex_lang_api::ops::{self, Equality};
 use tree_sitter::Node;
 
 use crate::syntax::{Src, bare_type_name, children, is_function_value, named_children, pattern_names, string_value, uses_this};
@@ -28,6 +29,8 @@ pub enum PipelineKind {
     Array,
     /// `fetch(u).then(…).catch(…)`.
     Promise,
+    /// RxJS: `source$.pipe(map(…), filter(…))`.
+    Rx,
 }
 
 /// A method-chain pipeline.
@@ -61,15 +64,35 @@ pub fn unparen(mut node: Node) -> Node {
 pub struct ExprLowering<'a> {
     pub src: Src<'a>,
     pub instantiated: Vec<String>,
+    /// Functions with a Blueprint of their own, by start byte: a `Lambda` for one of them points
+    /// to it (`Expr::symbol`).
+    pub functions: std::collections::HashMap<usize, nodex_ir::SymbolId>,
 }
 
 impl<'a> ExprLowering<'a> {
     pub fn new(src: Src<'a>) -> Self {
-        Self { src, instantiated: Vec::new() }
+        Self { src, instantiated: Vec::new(), functions: Default::default() }
     }
 
     /// Detects an array or promise pipeline rooted at `node`.
     pub fn pipeline<'t>(&self, node: Node<'t>) -> Option<Pipeline<'t>> {
+        // RxJS: `source$.pipe(map(…), filter(…))`; the operators are the arguments.
+        let call = unparen(node);
+        if call.kind() == "call_expression"
+            && let Some(func) = call.child_by_field_name("function").filter(|f| f.kind() == "member_expression")
+            && func.child_by_field_name("property").is_some_and(|p| self.src.text(p) == "pipe")
+            && let Some(args) = call.child_by_field_name("arguments")
+        {
+            let ops = named_children(args);
+            if !ops.is_empty() && ops.iter().all(|o| o.kind() == "call_expression") {
+                let stages = ops
+                    .iter()
+                    .map(|o| (o.child_by_field_name("function").map(|f| self.src.norm(f)).unwrap_or_default(), *o))
+                    .collect();
+                let source = func.child_by_field_name("object").unwrap_or(call);
+                return Some(Pipeline { kind: PipelineKind::Rx, source, stages });
+            }
+        }
         let mut stages = Vec::new();
         let mut cur = unparen(node);
         while cur.kind() == "call_expression" {
@@ -151,6 +174,9 @@ impl<'a> ExprLowering<'a> {
             children,
             symbol: None,
             target: None,
+            op: None,
+            ty: None,
+            params: Vec::new(),
         };
         let text = || truncate(&src.norm(node), 40);
         let with = |mut e: Expr, flavor: &str| {
@@ -172,10 +198,14 @@ impl<'a> ExprLowering<'a> {
                             children: args,
                             symbol: None,
                             target: None,
+                            op: None,
+                            ty: None,
+                            params: Vec::new(),
                         };
                         let known = match p.kind {
                             PipelineKind::Array => is_array_stage(name, *call),
                             PipelineKind::Promise => PROMISE_OPS.contains(&name.as_str()),
+                            PipelineKind::Rx => true,
                         };
                         if !known {
                             stage.flavors.push("custom-stage".into());
@@ -185,6 +215,7 @@ impl<'a> ExprLowering<'a> {
                     let flavor = match p.kind {
                         PipelineKind::Array => "array-pipeline",
                         PipelineKind::Promise => "promise",
+                        PipelineKind::Rx => "rx-pipeline",
                     };
                     return with(mk(Concept::Pipeline, "pipeline".into(), kids), flavor);
                 }
@@ -274,13 +305,15 @@ impl<'a> ExprLowering<'a> {
                     "delete" => "delete",
                     other => other,
                 };
-                let e = mk(Concept::UnaryOp, label.to_owned(), kids);
+                let e = ops::operator(mk(Concept::UnaryOp, label.to_owned(), kids), &op, Equality::Loose);
                 if op == "!" { with(e, "truthiness") } else { e }
             }
             "update_expression" => {
                 let op = children(node).into_iter().find(|c| !c.is_named()).map(|c| src.text(c).to_owned()).unwrap_or_default();
                 let kids = node.child_by_field_name("argument").map(|a| vec![self.lower(a)]).unwrap_or_default();
-                mk(Concept::UnaryOp, op, kids)
+                let prefix = node.child(0).is_some_and(|c| !c.is_named());
+                let e = ops::operator(mk(Concept::UnaryOp, op.clone(), kids), &op, Equality::Loose);
+                with(e, if prefix { "prefix" } else { "postfix" })
             }
             "assignment_expression" | "augmented_assignment_expression" => {
                 let op = node
@@ -288,7 +321,7 @@ impl<'a> ExprLowering<'a> {
                     .map(|o| src.text(o).to_owned())
                     .unwrap_or_else(|| "=".into());
                 let kids = ["left", "right"].iter().filter_map(|f| node.child_by_field_name(f)).map(|c| self.lower(c)).collect();
-                mk(Concept::Assign, op, kids)
+                ops::compound_assign(mk(Concept::Assign, op.clone(), kids), &op, Equality::Loose)
             }
             "ternary_expression" => {
                 let kids = ["condition", "consequence", "alternative"]
@@ -318,10 +351,16 @@ impl<'a> ExprLowering<'a> {
                 if kids.is_empty() {
                     mk(Concept::Literal, text(), Vec::new())
                 } else {
-                    with(mk(Concept::Compose, "text with values".into(), kids), "interpolation")
+                    let mut e = with(mk(Concept::Compose, "text with values".into(), kids), "interpolation");
+                    e.ty = Some("text".into());
+                    e
                 }
             }
-            "string" | "number" | "regex" | "true" | "false" | "null" | "undefined" => mk(Concept::Literal, text(), Vec::new()),
+            "string" | "number" | "regex" | "true" | "false" | "null" | "undefined" => {
+                let mut e = mk(Concept::Literal, text(), Vec::new());
+                e.ty = ops::literal_type(&e.label).map(str::to_owned);
+                e
+            }
             "identifier" | "this" | "super" | "shorthand_property_identifier" | "property_identifier"
             | "private_property_identifier" | "meta_property" | "import" | "statement_identifier" => mk(Concept::Var, text(), Vec::new()),
             "object" => {
@@ -378,7 +417,7 @@ impl<'a> ExprLowering<'a> {
                 Some(inner) => self.lower(inner),
                 None => mk(Concept::Literal, "{}".into(), Vec::new()),
             },
-            "jsx_text" => mk(Concept::Literal, text(), Vec::new()),
+            "jsx_text" | "html_character_reference" => mk(Concept::Literal, text(), Vec::new()),
             "class" => {
                 let name = node.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_default();
                 with(mk(Concept::Construct, format!("class {name}").trim().to_owned(), Vec::new()), "class-expression")
@@ -402,6 +441,9 @@ impl<'a> ExprLowering<'a> {
             children,
             symbol: None,
             target: None,
+            op: None,
+            ty: None,
+            params: Vec::new(),
         };
         // `typeof x === "string"`: a type check that narrows `x`.
         if matches!(op.as_str(), "===" | "==" | "!==" | "!=")
@@ -427,14 +469,17 @@ impl<'a> ExprLowering<'a> {
                 mk(Concept::TypeCheck, truncate(&format!("is {ty}"), 40), kids, vec!["instanceof".into()])
             }
             "in" => mk(Concept::TypeCheck, "has key".into(), kids, vec!["in".into()]),
-            "==" | "!=" => mk(
-                Concept::BinaryOp,
-                if op == "==" { "==".into() } else { "≠".into() },
-                kids,
-                vec!["loose-equality".into()],
+            "==" | "!=" => ops::operator(
+                mk(Concept::BinaryOp, if op == "==" { "==".into() } else { "≠".into() }, kids, vec!["loose-equality".into()]),
+                &op,
+                Equality::Loose,
             ),
-            "&&" | "||" => mk(Concept::BinaryOp, if op == "&&" { "and".into() } else { "or".into() }, kids, Vec::new()),
-            _ => mk(Concept::BinaryOp, op_label(&op).to_owned(), kids, Vec::new()),
+            "&&" | "||" => ops::operator(
+                mk(Concept::BinaryOp, if op == "&&" { "and".into() } else { "or".into() }, kids, Vec::new()),
+                &op,
+                Equality::Loose,
+            ),
+            _ => ops::operator(mk(Concept::BinaryOp, op_label(&op).to_owned(), kids, Vec::new()), &op, Equality::Loose),
         }
     }
 
@@ -455,8 +500,11 @@ impl<'a> ExprLowering<'a> {
             span: src.span(node),
             flavors: Vec::new(),
             children: kids,
-            symbol: None,
+            symbol: self.functions.get(&node.start_byte()).cloned(),
             target: None,
+            op: None,
+            ty: None,
+            params: ops::param_names(&params),
         };
         if children(node).iter().any(|c| !c.is_named() && src.text(*c) == "async") {
             e.flavors.push("async".into());
@@ -522,6 +570,9 @@ impl<'a> ExprLowering<'a> {
                                 children: Vec::new(),
                                 symbol: None,
                                 target: None,
+                                op: None,
+                                ty: None,
+                                params: Vec::new(),
                             }),
                         }
                     }
@@ -557,6 +608,9 @@ impl<'a> ExprLowering<'a> {
             children: kids,
             symbol: None,
             target: None,
+            op: None,
+            ty: None,
+            params: Vec::new(),
         }
     }
 

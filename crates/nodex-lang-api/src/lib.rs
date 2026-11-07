@@ -8,6 +8,7 @@
 //! spans and stable ids, so a frontend only writes the CST → concept mapping.
 
 pub mod kit;
+pub mod ops;
 pub mod sidecar;
 pub mod syntax;
 

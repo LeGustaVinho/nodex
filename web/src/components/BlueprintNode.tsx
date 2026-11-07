@@ -1,6 +1,6 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
-import { SHAPE_ICON, conceptColor, conceptInfo, flavorLabel, typeColor, useCatalog } from "../catalog";
+import { SHAPE_ICON, conceptColor, conceptInfo, flavorLabel, operationInfo, typeColor, useCatalog } from "../catalog";
 import type { Pin } from "../gen/Pin";
 import type { BlueprintData } from "../graph/flowGraph";
 import { useUi } from "../store";
@@ -34,7 +34,7 @@ function PinView({ pin, side, value }: { pin: Pin; side: "in" | "out"; value?: s
 const EXPR_PIN: Pin = { id: "expr", kind: "Data", label: "details", ty: null };
 
 function BlueprintNodeImpl({ data, selected }: NodeProps) {
-  const { node, expanded, language, flow } = data as unknown as BlueprintData;
+  const { node, expanded, language, flow, argPins, hiddenInputs, canExpand } = data as unknown as BlueprintData;
   const catalog = useCatalog();
   // Live execution overlay.
   const count = useTrace((s) => s.counts[flow]?.[node.id]);
@@ -49,7 +49,13 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
   const toggle = useUi((s) => s.toggleExpanded);
   const info = conceptInfo(catalog, node.concept);
   const color = conceptColor(catalog, node.concept);
-  const inputs = expanded ? [...node.inputs, EXPR_PIN] : node.inputs;
+  // Compact levels: the call's arguments are the statement's own pins, values inline.
+  const args: Pin[] = (argPins ?? []).map((p, i) => ({ id: p.id, kind: "Data", label: p.name ?? `argument ${i + 1}`, ty: p.ty }));
+  const argValues = new Map((argPins ?? []).map((p) => [p.id, p.value ?? undefined]));
+  const own = hiddenInputs?.length ? node.inputs.filter((p) => !hiddenInputs.includes(p.id)) : node.inputs;
+  const inputs = argPins ? [...own, ...args] : expanded ? [...own, EXPR_PIN] : own;
+  // A statement that performs a shared operation with an effect (print, write file) is titled by it.
+  const op = node.expr && node.concept === "Call" ? operationInfo(catalog, node.expr.op) : undefined;
   const rows = Math.max(inputs.length, node.outputs.length);
   const unreachable = node.flavors.includes("unreachable");
   const visibleFlavors = node.flavors.filter((f) => f !== "unreachable");
@@ -61,7 +67,9 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
     >
       <div className="bp-head">
         <span className="bp-icon">{SHAPE_ICON[info.shape] ?? "▸"}</span>
-        <span className="bp-title">{info.title}</span>
+        <span className="bp-title" title={op?.explain}>
+          {op ? op.title : info.title}
+        </span>
         {count !== undefined && !replaying && (
           <span className="bp-count" title={`ran ${count} time${count === 1 ? "" : "s"}`}>
             ×{count}
@@ -72,13 +80,13 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
             ⚠ {throws}
           </span>
         )}
-        {node.expr && (
+        {node.expr && canExpand !== false && (
           <button
             className="bp-expand nodrag"
             title={expanded ? "Hide expression details" : "Show expression details"}
             onClick={(e) => {
               e.stopPropagation();
-              toggle(node.id);
+              toggle(node.id, expanded);
             }}
           >
             {expanded ? "−" : "+"}
@@ -94,7 +102,7 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
       <div className="bp-pins">
         {Array.from({ length: rows }, (_, i) => (
           <div className="pin-row" key={i}>
-            <div className="pin-cell">{inputs[i] && <PinView pin={inputs[i]} side="in" />}</div>
+            <div className="pin-cell">{inputs[i] && <PinView pin={inputs[i]} side="in" value={argValues.get(inputs[i].id)} />}</div>
             <div className="pin-cell right">
               {node.outputs[i] && (
                 <PinView pin={node.outputs[i]} side="out" value={replaying ? undefined : vars?.[node.outputs[i].label]} />

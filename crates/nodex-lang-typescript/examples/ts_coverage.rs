@@ -25,6 +25,9 @@ fn main() {
         for d in &ir.diagnostics {
             println!("  DIAG {:?} {} {:?}", d.severity, d.message, d.span.as_ref().map(|s| (s.start_line, s.start_col)));
         }
+        for rule in nodex_lang_typescript::grammar_bridges(&name, &text) {
+            println!("  BRIDGED {rule}");
+        }
         for (line, snippet) in nodex_lang_typescript::remaining_parse_errors(&name, &text) {
             println!("  GRAMMAR @{line}: {snippet}");
         }

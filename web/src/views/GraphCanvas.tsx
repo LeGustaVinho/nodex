@@ -46,6 +46,8 @@ export function edgeStyle(e: GEdge): Partial<Edge> {
       return { type: "smoothstep", style: { stroke: "#d0d4da", strokeWidth: 1.8 }, markerEnd: { type: MarkerType.ArrowClosed, color: "#d0d4da" }, label: "extends" };
     case "implements":
       return { type: "smoothstep", style: { stroke: "#d0d4da", strokeWidth: 1.6, strokeDasharray: "6 4" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#d0d4da" }, label: "implements" };
+    case "compatible":
+      return { type: "smoothstep", style: { stroke: "#a9b4c2", strokeWidth: 1.4, strokeDasharray: "1 5", strokeLinecap: "round" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#a9b4c2" }, label: "fits" };
     case "uses":
       return { type: "smoothstep", style: { stroke: "#5d6b7d", strokeWidth: 1.2, strokeDasharray: "2 4" }, markerEnd: { type: MarkerType.Arrow, color: "#5d6b7d" } };
     case "creates":

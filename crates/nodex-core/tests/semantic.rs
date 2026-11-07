@@ -149,6 +149,9 @@ fn typescript_sidecar_resolves_the_sample() {
     assert!(has("src/main.main", "src/domain/order.Order", StructEdgeKind::Instantiates));
     assert!(has("src/domain/shapes.Circle", "src/domain/shapes.Shape", StructEdgeKind::Inherits));
     assert!(has("src/domain/shapes.Shape", "src/domain/order.Entity", StructEdgeKind::Implements));
+    // Structural typing: Order has every member of Priced without declaring it.
+    assert!(has("src/domain/order.Order", "src/domain/order.Priced", StructEdgeKind::Compatible));
+    assert!(!has("src/domain/order.Order", "src/domain/order.Entity", StructEdgeKind::Compatible), "declared contracts are not repeated");
 
     // Inferred types reach the pins; array stages are confirmed as standard operations.
     let main = project.flow("src/main.main").unwrap();

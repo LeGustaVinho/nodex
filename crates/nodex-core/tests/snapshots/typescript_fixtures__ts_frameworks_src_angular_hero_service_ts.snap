@@ -1,0 +1,10 @@
+---
+source: crates/nodex-core/tests/typescript_fixtures.rs
+expression: outline_file(ir)
+---
+== src/angular/hero.service.HeroService.heroes
+Entry — when heroes() is called
+Return — return this.http.get<Hero[]>("/api/heroes") → map((heroes) => heroes.filter((h) => h.name.len… …
+== src/angular/hero.service.HeroService.select
+Entry — when select(hero) is called
+Call — this.selected.set(hero)
