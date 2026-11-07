@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { ApiError, api, connectEvents, token } from "./api";
 import { CodePanel } from "./panels/CodePanel";
+import { ConsolePanel, RunButton } from "./panels/RunPanel";
+import { useTrace } from "./trace";
 import { Inspector } from "./panels/Inspector";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
@@ -17,10 +19,17 @@ const VIEWS: { id: View; label: string; hint: string }[] = [
 function useLiveUpdates() {
   const queryClient = useQueryClient();
   const setConnected = useUi((s) => s.setConnected);
+  useEffect(() => {
+    void api.run().then((snap) => useTrace.getState().loadSnapshot(snap)).catch(() => undefined);
+  }, []);
   useEffect(
     () =>
       connectEvents(
         (event) => {
+          const trace = useTrace.getState();
+          if (event.type === "run-status") trace.setStatus(event.data);
+          else if (event.type === "run-output") trace.appendOutput(event.data.lines);
+          else if (event.type === "trace-frame") trace.applyFrame(event.data);
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys = event.type === "graph-changed" ? ["structure", "project", "flow", "source"] : ["structure", "project", "flow"];
             for (const key of keys) {
@@ -95,6 +104,7 @@ function TopBar() {
           </>
         )}
       </div>
+      <RunButton />
       <SemanticBadge />
       <span className={`status ${ui.connected ? "on" : "off"}`} title={ui.connected ? "Live: updates on save" : "Disconnected"}>
         ●
@@ -141,6 +151,7 @@ export function App() {
         {view === "types" && <TypesView />}
         {view === "calls" && <CallsView />}
         {view === "blueprint" && <BlueprintView />}
+        <ConsolePanel />
       </main>
       <section className="right">
         <Inspector />

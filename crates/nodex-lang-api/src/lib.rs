@@ -58,7 +58,7 @@ pub trait LanguageFrontend: Send + Sync {
         None
     }
 
-    /// Build-time instrumentation for live traces. Arrives in milestone M4.
+    /// Build-time instrumentation for live traces.
     fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {
         None
     }
@@ -84,16 +84,22 @@ pub trait SemanticProvider: Send {
 
 /// Prepares an instrumented build that streams trace events to the Nodex server.
 pub trait TraceInstrumenter: Send + Sync {
-    /// Produces the instrumented artifacts and returns the command that runs them.
-    fn prepare(&self, root: &Path, out_dir: &Path) -> Result<RunCommand, String>;
+    /// Builds and instruments the project at `root` into `out_dir` (never into the user's own
+    /// build output) and returns the command that runs it. Progress lines go to `log`.
+    /// Blocks for as long as the build takes.
+    fn prepare(&self, root: &Path, out_dir: &Path, log: &mut dyn FnMut(&str)) -> Result<RunCommand, String>;
 }
 
-/// A process the server starts to run an instrumented program.
+/// A process the server starts to run an instrumented program. The server adds the
+/// `NODEX_TRACE` and `NODEX_TRACE_TOKEN` environment variables.
 #[derive(Debug, Clone)]
 pub struct RunCommand {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: PathBuf,
+    /// The instrumenter's map from (method, point) to source ranges.
+    pub trace_map: PathBuf,
+    pub description: String,
 }
 
 /// How to start a Debug Adapter Protocol adapter for a language.

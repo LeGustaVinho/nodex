@@ -312,6 +312,11 @@ impl Project {
         self.locator = None;
     }
 
+    /// Every flow graph of the project (syntax-only; node IDs and spans match enriched flows).
+    pub fn flows(&self) -> impl Iterator<Item = &FlowGraph> {
+        self.files.values().flat_map(|f| f.ir.flows.iter())
+    }
+
     pub fn file_ir(&self, rel: &str) -> Option<&FileIr> {
         self.files.get(rel).map(|f| &f.ir)
     }

@@ -3,7 +3,7 @@
 Nodex turns source code into language-agnostic, Blueprint-style node graphs so a programmer can read code in a language they do not know.
 The same logic looks the same in every language: a C# `foreach`, a TypeScript `for..of` and a Rust `for x in iter` are one **For Each** node.
 
-**Status**: milestones M0–M3 — C# (plain .NET and Unity) structure, Blueprints and Roslyn semantics with a Calls view. Live execution, TypeScript and Rust are on the roadmap.
+**Status**: milestones M0–M4 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces with replay for .NET programs. Unity Play Mode traces, TypeScript and Rust are on the roadmap.
 Full documentation lives in the Obsidian vault at `D:\MEGA\Obsidian\Default\Nodex` (start at `Nodex.md`).
 
 ## Quick start
@@ -22,6 +22,12 @@ Optional, for exact calls, events and `var` types (needs the .NET 10 SDK):
 dotnet build sidecars/dotnet/Nodex.Roslyn -c Release
 ```
 
+Optional, to run programs with live traces (**▶ Run** in the UI):
+
+```bash
+dotnet build sidecars/dotnet/Nodex.Weaver -c Release
+```
+
 ```bash
 cargo run --release -p nodex-server -- open fixtures/csharp/Sample
 ```
@@ -33,6 +39,7 @@ The server prints a link with a session token and opens it in your browser.
 - **Architecture** — namespaces, imported namespaces and packages.
 - **Types** — classes, interfaces and records, with *extends*, *implements*, *uses* and *creates* edges.
 - **Calls** — callers and callees of a function, including events it raises and who handles them (needs the sidecar).
+- **▶ Run** — builds an instrumented copy of a .NET program and runs it: nodes count executions, show the values they produce and glow while running; **Replay** walks through a function step by step.
 - **Blueprint** — the statements of one function as nodes, with exec wires, data wires for locals, plain-language labels, an inspector that explains each concept, and two-way sync with the code.
 
 ## Repository layout
@@ -43,7 +50,8 @@ The server prints a link with a session token and opens it in your browser.
 | `crates/nodex-lang-api` | `LanguageFrontend` trait and the lowering kit |
 | `crates/nodex-lang-csharp` | C#/Unity frontend (tree-sitter) |
 | `crates/nodex-core` | Project model, linker, concept catalog, canonical forms |
-| `crates/nodex-server` | `nodex` CLI, HTTP/WebSocket API, file watcher, embedded UI |
+| `crates/nodex-trace` | Trace protocol decoder, span resolver, recorder (counts, values, replay timeline) |
+| `crates/nodex-server` | `nodex` CLI, HTTP/WebSocket API, file watcher, semantic worker, run manager, embedded UI |
 | `web/` | React + React Flow + ELK + Monaco UI |
 | `catalog/` | Concept and flavor definitions (single source for code, UI and docs) |
 | `fixtures/` | C#, Unity and Rosetta (same algorithm in C#/TS/Rust) test inputs |
@@ -59,10 +67,10 @@ cargo test --workspace
 pnpm --dir web test
 ```
 
-Tests that drive the real Roslyn sidecar are ignored by default; run them after building it:
+Tests that drive the real .NET sidecars (Roslyn, weaver) are ignored by default; run them after building both:
 
 ```bash
-cargo test -p nodex-core --test semantic -- --ignored
+cargo test --workspace -- --ignored
 ```
 
 UI development with hot reload — start the server allowing the Vite origin, then Vite:

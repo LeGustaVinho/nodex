@@ -1,0 +1,11 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Trace runtime injected into woven assemblies. netstandard2.1 so Unity (Mono/IL2CPP) can load it too. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Nodex.Trace</RootNamespace>
+  </PropertyGroup>
+
+</Project>

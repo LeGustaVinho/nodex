@@ -1,7 +1,12 @@
 import type { Catalog } from "./gen/Catalog";
 import type { FlowGraph } from "./gen/FlowGraph";
+import type { OutputLine } from "./gen/OutputLine";
 import type { ProjectSummary } from "./gen/ProjectSummary";
+import type { RunSnapshot } from "./gen/RunSnapshot";
+import type { RunStatus } from "./gen/RunStatus";
+import type { StepsPage } from "./gen/StepsPage";
 import type { StructureGraph } from "./gen/StructureGraph";
+import type { TraceFrame } from "./gen/TraceFrame";
 
 /** Session token: taken from `?token=` once, then kept for the tab's lifetime. */
 function readToken(): string {
@@ -54,6 +59,10 @@ export const api = {
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),
   layout: (key: string) => json<Positions>(`/api/layout?key=${encodeURIComponent(key)}`),
+  run: () => json<RunSnapshot>("/api/run"),
+  runStart: () => request("/api/run", { method: "POST" }),
+  runStop: () => request("/api/run/stop", { method: "POST" }),
+  traceSteps: (symbol: string) => json<StepsPage>(`/api/trace/steps?symbol=${encodeURIComponent(symbol)}`),
   saveLayout: (key: string, positions: Positions) =>
     request(`/api/layout?key=${encodeURIComponent(key)}`, {
       method: "PUT",
@@ -62,7 +71,12 @@ export const api = {
     }),
 };
 
-export type ServerEvent = { type: "graph-changed"; files: string[] } | { type: "semantic-changed" };
+export type ServerEvent =
+  | { type: "graph-changed"; data: { files: string[] } }
+  | { type: "semantic-changed" }
+  | { type: "run-status"; data: RunStatus }
+  | { type: "run-output"; data: { lines: OutputLine[] } }
+  | { type: "trace-frame"; data: TraceFrame };
 
 /** Connects to the live-update socket, reconnecting with backoff. Returns a disposer. */
 export function connectEvents(onEvent: (e: ServerEvent) => void, onStatus: (connected: boolean) => void): () => void {

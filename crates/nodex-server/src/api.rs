@@ -89,6 +89,40 @@ pub struct Position {
     y: f64,
 }
 
+pub async fn run_snapshot(State(state): State<Arc<AppState>>) -> ApiResult {
+    Ok(Json(state.run.snapshot()).into_response())
+}
+
+/// Builds, instruments and runs the project; progress arrives over the WebSocket.
+pub async fn run_start(State(state): State<Arc<AppState>>) -> ApiResult {
+    crate::runner::start(&state).map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(StatusCode::ACCEPTED.into_response())
+}
+
+pub async fn run_stop(State(state): State<Arc<AppState>>) -> ApiResult {
+    Ok(if state.run.stop() { StatusCode::ACCEPTED } else { StatusCode::NO_CONTENT }.into_response())
+}
+
+#[derive(Deserialize)]
+pub struct StepsQuery {
+    symbol: String,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+
+fn default_limit() -> usize {
+    5000
+}
+
+/// Recorded steps of one function, for replay.
+pub async fn trace_steps(State(state): State<Arc<AppState>>, Query(q): Query<StepsQuery>) -> ApiResult {
+    let recorder = state.run.recorder().ok_or_else(|| not_found("recording"))?;
+    let page = recorder.lock().map_err(poisoned)?.steps(&q.symbol, q.offset, q.limit.min(20_000));
+    Ok(Json(page).into_response())
+}
+
 pub async fn ws(State(state): State<Arc<AppState>>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| client(socket, state))
 }

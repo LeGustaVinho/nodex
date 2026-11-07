@@ -13,6 +13,7 @@ nodex-ir = { path = "crates/nodex-ir" }
 nodex-lang-api = { path = "crates/nodex-lang-api" }
 nodex-core = { path = "crates/nodex-core" }
 nodex-lang-csharp = { path = "crates/nodex-lang-csharp" }
+nodex-trace = { path = "crates/nodex-trace" }
 
 anyhow = "1"
 thiserror = "2"

@@ -1,0 +1,12 @@
+[package]
+name = "nodex-trace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Trace protocol decoder, span resolution and recording for Nodex live execution"
+
+[dependencies]
+nodex-ir.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true

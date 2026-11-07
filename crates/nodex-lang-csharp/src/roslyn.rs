@@ -108,30 +108,5 @@ impl Drop for RoslynSidecar {
 
 /// Finds the sidecar: `NODEX_ROSLYN`, next to the executable, or a build in the source tree.
 pub fn locate() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("NODEX_ROSLYN").map(PathBuf::from) {
-        return p.is_file().then_some(p);
-    }
-    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
-    if let Some(dir) = &exe_dir {
-        let installed = dir.join("sidecars").join("Nodex.Roslyn").join("Nodex.Roslyn.dll");
-        if installed.is_file() {
-            return Some(installed);
-        }
-    }
-    let source_tree = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let starts = exe_dir.into_iter().chain(std::iter::once(source_tree));
-    for start in starts {
-        for dir in start.ancestors() {
-            for config in ["Release", "Debug"] {
-                let candidate = dir
-                    .join("sidecars/dotnet/Nodex.Roslyn/bin")
-                    .join(config)
-                    .join("net10.0/Nodex.Roslyn.dll");
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    None
+    crate::sidecar::locate("Nodex.Roslyn", "NODEX_ROSLYN")
 }

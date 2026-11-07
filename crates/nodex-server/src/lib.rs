@@ -7,6 +7,7 @@
 
 pub mod api;
 pub mod assets;
+pub mod runner;
 pub mod security;
 pub mod semantic_worker;
 pub mod watch;
@@ -17,19 +18,25 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use axum::Router;
 use axum::middleware;
-use axum::routing::get;
+use axum::routing::{get, post};
 use nodex_core::{Catalog, Project};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
 /// Events pushed to every connected browser.
 #[derive(Serialize, Clone, Debug)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(tag = "type", content = "data", rename_all = "kebab-case")]
 pub enum ServerEvent {
     /// Files changed on disk and were re-lowered.
     GraphChanged { files: Vec<String> },
     /// Semantic analysis progressed (loading, ready, unavailable) or produced new facts.
     SemanticChanged,
+    /// The run state changed (preparing, running, exited, failed).
+    RunStatus(runner::RunStatus),
+    /// New lines of build or program output.
+    RunOutput { lines: Vec<runner::OutputLine> },
+    /// Live execution changes since the previous frame.
+    TraceFrame(Box<nodex_trace::TraceFrame>),
 }
 
 pub struct AppState {
@@ -44,6 +51,7 @@ pub struct AppState {
     pub layout_lock: Mutex<()>,
     /// Channels to the semantic workers (changed absolute paths).
     pub semantic_tx: Mutex<Vec<mpsc::Sender<Vec<PathBuf>>>>,
+    pub run: runner::RunManager,
 }
 
 impl AppState {
@@ -60,6 +68,7 @@ impl AppState {
             layout_file,
             layout_lock: Mutex::new(()),
             semantic_tx: Mutex::new(Vec::new()),
+            run: runner::RunManager::default(),
         })
     }
 
@@ -80,6 +89,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/source", get(api::source))
         .route("/api/catalog", get(api::catalog))
         .route("/api/layout", get(api::get_layout).put(api::put_layout))
+        .route("/api/run", get(api::run_snapshot).post(api::run_start))
+        .route("/api/run/stop", post(api::run_stop))
+        .route("/api/trace/steps", get(api::trace_steps))
         .route("/ws", get(api::ws))
         .route_layer(middleware::from_fn_with_state(state.clone(), security::require_token));
 

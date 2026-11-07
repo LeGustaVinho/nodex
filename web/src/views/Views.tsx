@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { api } from "../api";
+import { useTrace } from "../trace";
 import { callGraph } from "../graph/callGraph";
 import { flowToGraph } from "../graph/flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "../graph/structureGraph";
 import { useUi } from "../store";
+import { ReplayBar } from "../panels/RunPanel";
 import { GraphCanvas } from "./GraphCanvas";
 
 export function useStructure() {
@@ -96,6 +98,12 @@ export function BlueprintView() {
     () => (flow.data ? flowToGraph(flow.data, expanded, showDataWires) : undefined),
     [flow.data, expanded, showDataWires],
   );
+  // During replay, follow the current step in the code panel.
+  const replayNode = useTrace((s) => (s.replay?.flow === flowSymbol ? s.replay.page.steps[s.replay.index]?.node : undefined));
+  useEffect(() => {
+    const span = replayNode ? flow.data?.nodes.find((n) => n.id === replayNode)?.span : undefined;
+    if (span) useUi.getState().focusCode(span);
+  }, [replayNode, flow.data]);
   // Show the function's code when a Blueprint opens from a link or the sidebar.
   useEffect(() => {
     const span = flow.data?.span;
@@ -106,9 +114,13 @@ export function BlueprintView() {
     return <div className="empty">Pick a method in the sidebar or double-click one in the Types view to open its Blueprint.</div>;
   }
   if (flow.error) return <div className="empty">This function is no longer in the project.</div>;
+  // During replay the canvas follows the current step.
   const selectedId =
-    selection?.kind === "flow-node" ? selection.id : selection?.kind === "expr" ? `${selection.nodeId}/e/${selection.path}` : null;
+    replayNode ??
+    (selection?.kind === "flow-node" ? selection.id : selection?.kind === "expr" ? `${selection.nodeId}/e/${selection.path}` : null);
   return (
+    <>
+    <ReplayBar flow={flowSymbol} />
     <GraphCanvas
       key={`flow:${flowSymbol}`}
       graph={graph}
@@ -131,5 +143,6 @@ export function BlueprintView() {
         }
       }}
     />
+    </>
   );
 }

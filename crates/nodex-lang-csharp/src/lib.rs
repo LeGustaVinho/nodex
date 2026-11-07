@@ -6,8 +6,10 @@
 
 mod expr;
 mod flow;
+mod instrument;
 mod project;
 pub mod roslyn;
+mod sidecar;
 mod structure;
 mod syntax;
 mod unity;
@@ -15,7 +17,7 @@ mod unity;
 use std::path::Path;
 
 use nodex_ir::{Diagnostic, FileIr, Language, Severity};
-use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SemanticProvider, SourceFile, kit::LineIndex};
+use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SemanticProvider, SourceFile, TraceInstrumenter, kit::LineIndex};
 
 /// The C# language frontend.
 #[derive(Debug, Default, Clone, Copy)]
@@ -40,6 +42,10 @@ impl LanguageFrontend for CSharpFrontend {
 
     fn semantic(&self, root: &Path) -> Option<Result<Box<dyn SemanticProvider>, String>> {
         Some(roslyn::RoslynSidecar::start(root).map(|s| Box::new(s) as Box<dyn SemanticProvider>))
+    }
+
+    fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {
+        Some(Box::new(instrument::DotnetInstrumenter))
     }
 }
 
