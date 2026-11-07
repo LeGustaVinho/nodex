@@ -34,8 +34,7 @@ pub struct FlowQuery {
 }
 
 pub async fn flow(State(state): State<Arc<AppState>>, Query(q): Query<FlowQuery>) -> ApiResult {
-    let project = state.project.lock().map_err(poisoned)?;
-    let flow = project.flow(&q.symbol).ok_or_else(|| not_found("flow"))?;
+    let flow = state.project.lock().map_err(poisoned)?.flow(&q.symbol).ok_or_else(|| not_found("flow"))?;
     Ok(Json(flow).into_response())
 }
 

@@ -5,11 +5,12 @@ import { CodePanel } from "./panels/CodePanel";
 import { Inspector } from "./panels/Inspector";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
-import { ArchitectureView, BlueprintView, TypesView, useStructure } from "./views/Views";
+import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 
 const VIEWS: { id: View; label: string; hint: string }[] = [
   { id: "architecture", label: "Architecture", hint: "Namespaces, packages and their dependencies" },
   { id: "types", label: "Types", hint: "Classes, interfaces and how they relate" },
+  { id: "calls", label: "Calls", hint: "Who calls a function, and what it calls" },
   { id: "blueprint", label: "Blueprint", hint: "The steps inside one function" },
 ];
 
@@ -20,8 +21,9 @@ function useLiveUpdates() {
     () =>
       connectEvents(
         (event) => {
-          if (event.type === "graph-changed") {
-            for (const key of ["structure", "project", "flow", "source"]) {
+          if (event.type === "graph-changed" || event.type === "semantic-changed") {
+            const keys = event.type === "graph-changed" ? ["structure", "project", "flow", "source"] : ["structure", "project", "flow"];
+            for (const key of keys) {
               void queryClient.invalidateQueries({ queryKey: [key] });
             }
           }
@@ -67,6 +69,18 @@ function TopBar() {
             </label>
           </>
         )}
+        {ui.view === "calls" && (
+          <label className="toggle" title="How many steps of callers and callees to show">
+            depth
+            <select value={ui.callDepth} onChange={(e) => ui.setCallDepth(Number(e.target.value))}>
+              {[1, 2, 3, 4].map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {ui.view === "blueprint" && flowSymbol && (
           <>
             <span className="crumb" title={flowSymbol.signature ?? ""}>
@@ -81,10 +95,26 @@ function TopBar() {
           </>
         )}
       </div>
+      <SemanticBadge />
       <span className={`status ${ui.connected ? "on" : "off"}`} title={ui.connected ? "Live: updates on save" : "Disconnected"}>
         ●
       </span>
     </header>
+  );
+}
+
+/** Shows whether exact (compiler-grade) analysis is loading, ready or unavailable. */
+function SemanticBadge() {
+  const project = useQuery({ queryKey: ["project"], queryFn: api.project });
+  const status = project.data?.semantic ?? [];
+  if (status.length === 0) return null;
+  const state = status.some((s) => s.state === "loading") ? "loading" : status.every((s) => s.state === "ready") ? "ready" : "unavailable";
+  const label = { loading: "analyzing…", ready: "semantics", unavailable: "syntax only" }[state];
+  const title = status.map((s) => `${s.language}: ${s.detail}${s.messages.length ? "\n" + s.messages.join("\n") : ""}`).join("\n\n");
+  return (
+    <span className={`semantic semantic-${state}`} title={title}>
+      {label}
+    </span>
   );
 }
 
@@ -109,6 +139,7 @@ export function App() {
       <main className="main">
         {view === "architecture" && <ArchitectureView />}
         {view === "types" && <TypesView />}
+        {view === "calls" && <CallsView />}
         {view === "blueprint" && <BlueprintView />}
       </main>
       <section className="right">

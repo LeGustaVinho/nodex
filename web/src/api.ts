@@ -62,7 +62,7 @@ export const api = {
     }),
 };
 
-export type ServerEvent = { type: "graph-changed"; files: string[] };
+export type ServerEvent = { type: "graph-changed"; files: string[] } | { type: "semantic-changed" };
 
 /** Connects to the live-update socket, reconnecting with backoff. Returns a disposer. */
 export function connectEvents(onEvent: (e: ServerEvent) => void, onStatus: (connected: boolean) => void): () => void {

@@ -8,7 +8,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use nodex_core::Project;
 use nodex_lang_api::LanguageFrontend;
-use nodex_server::{AppState, new_token, router, watch};
+use nodex_server::{AppState, new_token, router, semantic_worker, watch};
 
 #[derive(Parser)]
 #[command(name = "nodex", version, about = "Visualize code as language-agnostic node graphs")]
@@ -66,6 +66,7 @@ async fn open(path: PathBuf, port: u16, no_browser: bool, dev_origins: Vec<Strin
     let token = new_token();
     let state = AppState::new(project, token.clone(), port, dev_origins);
     let _watcher = watch::spawn(state.clone()).context("cannot watch the project folder")?;
+    semantic_worker::spawn(&state);
 
     let url = format!("http://127.0.0.1:{port}/?token={token}");
     println!("Nodex is running at {url}");

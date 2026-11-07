@@ -1,12 +1,13 @@
 //! # Nodex C# frontend
 //!
 //! Lowers C# (plain .NET and Unity) to the Nodex IR using tree-sitter. It needs no build and no
-//! restore: structure and flow graphs come from syntax alone. Semantic enrichment through a
-//! Roslyn sidecar arrives in milestone M3.
+//! restore: structure and flow graphs come from syntax alone. The Roslyn sidecar ([`roslyn`])
+//! adds exact semantics when the .NET SDK is available.
 
 mod expr;
 mod flow;
 mod project;
+pub mod roslyn;
 mod structure;
 mod syntax;
 mod unity;
@@ -14,7 +15,7 @@ mod unity;
 use std::path::Path;
 
 use nodex_ir::{Diagnostic, FileIr, Language, Severity};
-use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SourceFile, kit::LineIndex};
+use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SemanticProvider, SourceFile, kit::LineIndex};
 
 /// The C# language frontend.
 #[derive(Debug, Default, Clone, Copy)]
@@ -35,6 +36,10 @@ impl LanguageFrontend for CSharpFrontend {
 
     fn lower_file(&self, file: &SourceFile) -> FileIr {
         lower_source(&file.rel_path, &file.text)
+    }
+
+    fn semantic(&self, root: &Path) -> Option<Result<Box<dyn SemanticProvider>, String>> {
+        Some(roslyn::RoslynSidecar::start(root).map(|s| Box::new(s) as Box<dyn SemanticProvider>))
     }
 }
 

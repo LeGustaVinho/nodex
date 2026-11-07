@@ -5,3 +5,4 @@ node_modules/
 *.snap.new
 bin/
 obj/
+*.tsbuildinfo

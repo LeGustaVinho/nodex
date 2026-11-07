@@ -10,4 +10,13 @@ export type Expr = { concept: Concept,
 /**
  * Short natural-language label (`Where`, `+`, `order.Amount`).
  */
-label: string, span: Span, flavors: Array<string>, children: Array<Expr>, };
+label: string, span: Span, flavors: Array<string>, children: Array<Expr>, 
+/**
+ * Project symbol this expression refers to (a called method, a created type), when a
+ * semantic provider resolved it.
+ */
+symbol: string | null, 
+/**
+ * Display name of the resolved target, including external ones (`System.Console.WriteLine(string)`).
+ */
+target: string | null, };

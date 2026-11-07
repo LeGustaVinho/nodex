@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
 
-use crate::{AppState, ServerEvent};
+use crate::{AppState, ServerEvent, semantic_worker};
 
 /// Quiet period that groups bursts of file-system events (editors save in several steps).
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -35,10 +35,14 @@ pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher>
                 while let Ok(p) = rx.recv_timeout(DEBOUNCE) {
                     batch.insert(p);
                 }
-                let changed: Vec<String> = match state.project.lock() {
-                    Ok(mut project) => batch.iter().filter_map(|p| project.refresh_path(p)).collect(),
+                let (changed, changed_paths): (Vec<String>, Vec<PathBuf>) = match state.project.lock() {
+                    Ok(mut project) => batch
+                        .iter()
+                        .filter_map(|p| project.refresh_path(p).map(|rel| (rel, p.clone())))
+                        .unzip(),
                     Err(_) => break,
                 };
+                semantic_worker::notify(&state, &changed_paths);
                 if !changed.is_empty() {
                     tracing::info!(files = ?changed, "re-lowered");
                     let _ = state.events.send(ServerEvent::GraphChanged { files: changed });

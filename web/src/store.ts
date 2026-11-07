@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Span } from "./gen/Span";
 
-export type View = "architecture" | "types" | "blueprint";
+export type View = "architecture" | "types" | "calls" | "blueprint";
 
 /** What the inspector and code panel show. */
 export type Selection =
@@ -16,6 +16,9 @@ interface UiState {
   flowSymbol: string | null;
   /** Namespace filter for the Types view (null = all). */
   namespace: string | null;
+  /** Function (or type) the Calls view is centered on. */
+  callFocus: string | null;
+  callDepth: number;
   selection: Selection;
   /** Span to reveal in the code panel. */
   codeFocus: Span | null;
@@ -27,6 +30,8 @@ interface UiState {
   setView: (v: View) => void;
   openFlow: (symbol: string) => void;
   setNamespace: (ns: string | null) => void;
+  showCalls: (symbol: string) => void;
+  setCallDepth: (depth: number) => void;
   select: (s: Selection, span?: Span | null) => void;
   focusCode: (span: Span | null) => void;
   toggleExpanded: (nodeId: string) => void;
@@ -53,6 +58,8 @@ export const useUi = create<UiState>((set) => ({
   view: startFlow ? "blueprint" : "architecture",
   flowSymbol: startFlow,
   namespace: null,
+  callFocus: null,
+  callDepth: 2,
   selection: null,
   codeFocus: null,
   expanded: {},
@@ -69,6 +76,11 @@ export const useUi = create<UiState>((set) => ({
     set({ flowSymbol, view: "blueprint", expanded: {} });
   },
   setNamespace: (namespace) => set({ namespace }),
+  showCalls: (callFocus) => {
+    writeHash("calls", null);
+    set({ callFocus, view: "calls" });
+  },
+  setCallDepth: (callDepth) => set({ callDepth }),
   select: (selection, span) => set(span === undefined ? { selection } : { selection, codeFocus: span }),
   focusCode: (codeFocus) => set({ codeFocus }),
   toggleExpanded: (id) => set((s) => ({ expanded: { ...s.expanded, [id]: !s.expanded[id] } })),

@@ -56,6 +56,7 @@ export function Inspector() {
   const flowSymbol = selection && selection.kind !== "symbol" ? selection.flow : null;
   const flow = useQuery({ queryKey: ["flow", flowSymbol], queryFn: () => api.flow(flowSymbol!), enabled: !!flowSymbol });
   const openFlow = useUi((s) => s.openFlow);
+  const showCalls = useUi((s) => s.showCalls);
 
   if (!selection) {
     return (
@@ -75,6 +76,17 @@ export function Inspector() {
       return (
         <div className="inspector">
           <ConceptHeader concept={expr.concept} label={expr.label} />
+          {expr.target && (
+            <div className="insp-section">
+              <div className="section-title">Resolves to</div>
+              <div className="value-row">
+                <code>{expr.target}</code>
+                {expr.symbol && index?.byId.get(expr.symbol)?.has_flow && (
+                  <button onClick={() => openFlow(expr.symbol!)}>Open Blueprint</button>
+                )}
+              </div>
+            </div>
+          )}
           <Flavors flavors={expr.flavors} language={flow.data.language} />
         </div>
       );
@@ -82,6 +94,18 @@ export function Inspector() {
     return (
       <div className="inspector">
         <ConceptHeader concept={node.concept} label={node.label} />
+        {node.calls.length > 0 && (
+          <div className="insp-section">
+            <div className="section-title">Calls</div>
+            {node.calls.map((c) => (
+              <div key={c.display} className="value-row">
+                <code title={c.external ? "outside this project" : "declared in this project"}>{c.display}</code>
+                {c.external && <span className="muted">external</span>}
+                {c.symbol && index?.byId.get(c.symbol)?.has_flow && <button onClick={() => openFlow(c.symbol!)}>Open Blueprint</button>}
+              </div>
+            ))}
+          </div>
+        )}
         <Flavors flavors={node.flavors} language={flow.data.language} />
         {(node.inputs.some((p) => p.kind === "Data") || node.outputs.some((p) => p.kind === "Data")) && (
           <div className="insp-section">
@@ -135,9 +159,12 @@ export function Inspector() {
       </div>
       {symbol.signature && <pre className="code-snippet">{symbol.signature}</pre>}
       {symbol.has_flow && (
-        <button className="primary" onClick={() => openFlow(symbol.id)}>
-          Open Blueprint
-        </button>
+        <div className="button-row">
+          <button className="primary" onClick={() => openFlow(symbol.id)}>
+            Open Blueprint
+          </button>
+          <button onClick={() => showCalls(symbol.id)}>Show calls</button>
+        </div>
       )}
       <Flavors flavors={symbol.flavors} language={symbol.language} />
       {(outgoing.length > 0 || incoming.length > 0) && (

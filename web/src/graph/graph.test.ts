@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { StructureGraph } from "../gen/StructureGraph";
 import type { Symbol } from "../gen/Symbol";
+import { callGraph } from "./callGraph";
 import { flowToGraph } from "./flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "./structureGraph";
 
@@ -15,25 +16,26 @@ const flow: FlowGraph = {
   nodes: [
     {
       id: "a", concept: "Entry", label: "when M is called", code: "void M()", span, flavors: [], purity: "Impure",
-      inputs: [], outputs: [{ id: "out", kind: "Exec", label: "", ty: null }], expr: null, writes: [],
+      inputs: [], outputs: [{ id: "out", kind: "Exec", label: "", ty: null }], expr: null, writes: [], calls: [],
     },
     {
       id: "b", concept: "Var", label: "x = 1 + 2", code: "int x = 1 + 2;", span, flavors: [], purity: "Impure",
       inputs: [{ id: "in", kind: "Exec", label: "", ty: null }],
       outputs: [{ id: "out", kind: "Exec", label: "", ty: null }, { id: "var:x", kind: "Data", label: "x", ty: "int" }],
       expr: {
-        concept: "BinaryOp", label: "+", span, flavors: [],
+        concept: "BinaryOp", label: "+", span, flavors: [], symbol: null, target: null,
         children: [
-          { concept: "Literal", label: "1", span, flavors: [], children: [] },
-          { concept: "Literal", label: "2", span, flavors: [], children: [] },
+          { concept: "Literal", label: "1", span, flavors: [], children: [], symbol: null, target: null },
+          { concept: "Literal", label: "2", span, flavors: [], children: [], symbol: null, target: null },
         ],
       },
       writes: ["x"],
+      calls: [],
     },
     {
       id: "c", concept: "Return", label: "return x", code: "return x;", span, flavors: [], purity: "Impure",
       inputs: [{ id: "in", kind: "Exec", label: "", ty: null }, { id: "use:x", kind: "Data", label: "x", ty: "int" }],
-      outputs: [], expr: null, writes: [],
+      outputs: [], expr: null, writes: [], calls: [],
     },
   ],
   edges: [
@@ -108,5 +110,36 @@ describe("structure graphs", () => {
 
   it("types view can hide usage edges", () => {
     expect(typesGraph(index, "App", false).edges.some((e) => e.kind === "uses")).toBe(false);
+  });
+});
+
+describe("callGraph", () => {
+  const calls: StructureGraph = {
+    symbols: [
+      sym("ns:App", "Namespace", null),
+      sym("App.S", "Class", "ns:App"),
+      sym("App.S.Main()", "Method", "App.S", { has_flow: true }),
+      sym("App.S.Ship()", "Method", "App.S", { has_flow: true }),
+      sym("App.S.Shipped", "Event", "App.S"),
+      sym("App.S.Log()", "Method", "App.S", { has_flow: true }),
+      sym("App.S.Unrelated()", "Method", "App.S", { has_flow: true }),
+    ],
+    edges: [
+      { from: "App.S.Main()", to: "App.S.Ship()", kind: "Calls" },
+      { from: "App.S.Ship()", to: "App.S.Shipped", kind: "Raises" },
+      { from: "App.S.Shipped", to: "App.S.Log()", kind: "Subscribes" },
+      { from: "App.S.Unrelated()", to: "App.S.Log()", kind: "Calls" },
+    ],
+  };
+  const index = new StructureIndex(calls);
+
+  it("follows calls, raises and subscriptions in both directions up to the depth", () => {
+    const g = callGraph(index, "App.S.Ship()", 2);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(["App.S.Log()", "App.S.Main()", "App.S.Ship()", "App.S.Shipped"]);
+    expect(g.edges.map((e) => e.kind).sort()).toEqual(["calls", "raises", "subscribes"]);
+  });
+
+  it("limits the depth", () => {
+    expect(callGraph(index, "App.S.Ship()", 1).nodes).toHaveLength(3);
   });
 });

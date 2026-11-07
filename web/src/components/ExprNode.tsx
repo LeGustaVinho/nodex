@@ -23,7 +23,10 @@ function ExprNodeImpl({ data, selected }: NodeProps) {
             </span>
           ))}
       </div>
-      <div className="expr-label">{expr.label}</div>
+      <div className="expr-label" title={expr.target ?? undefined}>
+        {expr.label}
+      </div>
+      {expr.target && <div className="expr-target">→ {expr.target}</div>}
       <div className="expr-pins" style={{ height: rows * 16 }}>
         {expr.children.map((_, i) => (
           <Handle

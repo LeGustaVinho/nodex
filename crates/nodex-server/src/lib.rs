@@ -8,11 +8,12 @@
 pub mod api;
 pub mod assets;
 pub mod security;
+pub mod semantic_worker;
 pub mod watch;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use axum::Router;
 use axum::middleware;
@@ -27,6 +28,8 @@ use tokio::sync::broadcast;
 pub enum ServerEvent {
     /// Files changed on disk and were re-lowered.
     GraphChanged { files: Vec<String> },
+    /// Semantic analysis progressed (loading, ready, unavailable) or produced new facts.
+    SemanticChanged,
 }
 
 pub struct AppState {
@@ -39,6 +42,8 @@ pub struct AppState {
     pub catalog: Catalog,
     pub layout_file: PathBuf,
     pub layout_lock: Mutex<()>,
+    /// Channels to the semantic workers (changed absolute paths).
+    pub semantic_tx: Mutex<Vec<mpsc::Sender<Vec<PathBuf>>>>,
 }
 
 impl AppState {
@@ -54,6 +59,7 @@ impl AppState {
             catalog: Catalog::embedded(),
             layout_file,
             layout_lock: Mutex::new(()),
+            semantic_tx: Mutex::new(Vec::new()),
         })
     }
 

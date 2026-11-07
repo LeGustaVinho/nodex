@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { api } from "../api";
+import { callGraph } from "../graph/callGraph";
 import { flowToGraph } from "../graph/flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "../graph/structureGraph";
 import { useUi } from "../store";
@@ -58,8 +59,34 @@ export function TypesView() {
   );
 }
 
+export function CallsView() {
+  const { index } = useStructure();
+  const { callFocus, callDepth, flowSymbol, selection, select, openFlow } = useUi();
+  const focus = callFocus ?? flowSymbol ?? (selection?.kind === "symbol" ? selection.id : null);
+  const graph = useMemo(() => (index && focus ? callGraph(index, focus, callDepth) : undefined), [index, focus, callDepth]);
+  if (!focus) {
+    return <div className="empty">Select a function, then choose “Show calls” in the inspector to see who calls it and what it calls.</div>;
+  }
+  return (
+    <GraphCanvas
+      key={`calls:${focus}:${callDepth}`}
+      graph={graph}
+      layoutKey={`calls:${focus}`}
+      selectedId={selection?.kind === "symbol" ? selection.id : null}
+      onNodeClick={(n) => {
+        const s = index?.byId.get(n.id);
+        select({ kind: "symbol", id: n.id }, s?.origins[0] ?? null);
+      }}
+      onNodeDoubleClick={(n) => {
+        if (index?.byId.get(n.id)?.has_flow) openFlow(n.id);
+      }}
+      emptyText="No calls found. Calls appear once semantic analysis is ready."
+    />
+  );
+}
+
 export function BlueprintView() {
-  const { flowSymbol, expanded, showDataWires, select, selection } = useUi();
+  const { flowSymbol, expanded, showDataWires, select, selection, openFlow } = useUi();
   const flow = useQuery({
     queryKey: ["flow", flowSymbol],
     queryFn: () => api.flow(flowSymbol!),
@@ -88,6 +115,11 @@ export function BlueprintView() {
       layoutKey={`flow:${flowSymbol}`}
       fitFirst={3}
       selectedId={selectedId}
+      onNodeDoubleClick={(n) => {
+        // Double-clicking a call jumps into the called function's Blueprint.
+        const target = flow.data?.nodes.find((x) => x.id === n.id)?.calls.find((c) => c.symbol);
+        if (target?.symbol) openFlow(target.symbol);
+      }}
       onNodeClick={(n) => {
         if (!flow.data) return;
         if (n.type === "expr") {

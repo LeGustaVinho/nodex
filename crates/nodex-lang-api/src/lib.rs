@@ -12,7 +12,8 @@ pub mod kit;
 use std::path::{Path, PathBuf};
 
 pub use nodex_ir as ir;
-use nodex_ir::{FileIr, Language, PackageRef, Span, SymbolId};
+use nodex_ir::semantic::SemanticFacts;
+use nodex_ir::{FileIr, Language, PackageRef};
 
 /// A source file handed to a frontend.
 #[derive(Debug, Clone)]
@@ -49,8 +50,11 @@ pub trait LanguageFrontend: Send + Sync {
     /// becomes `Opaque` nodes and parse problems become diagnostics.
     fn lower_file(&self, file: &SourceFile) -> FileIr;
 
-    /// Semantic enrichment (call targets, types, inheritance). Arrives in milestone M3.
-    fn semantic(&self) -> Option<Box<dyn SemanticProvider>> {
+    /// Starts a semantic provider for the project at `root` (call targets, types, inheritance).
+    /// Returns `Err` with a human-readable reason when the provider cannot run (missing
+    /// toolchain, sidecar not built). Frontends without semantics return `None`.
+    fn semantic(&self, root: &Path) -> Option<Result<Box<dyn SemanticProvider>, String>> {
+        let _ = root;
         None
     }
 
@@ -65,14 +69,17 @@ pub trait LanguageFrontend: Send + Sync {
     }
 }
 
-/// Resolves what syntax alone cannot: which symbol a call targets, the type of an expression,
+/// Resolves what syntax alone cannot: which symbol a call targets, the type of a local,
 /// inheritance across files and assemblies. Implemented by sidecars (Roslyn, TypeScript API,
-/// rust-analyzer).
-pub trait SemanticProvider: Send + Sync {
-    /// Resolves the symbol referenced at `span` (a call site, a type name, a member access).
-    fn resolve(&self, span: &Span) -> Option<SymbolId>;
-    /// Returns the type of the expression at `span`, as display text.
-    fn type_of(&self, span: &Span) -> Option<String>;
+/// rust-analyzer). Calls may be slow; the server runs them on a background thread.
+pub trait SemanticProvider: Send {
+    /// One-line description (`Roslyn · MSBuild · Sample.csproj`).
+    fn describe(&self) -> String;
+    /// Analyzes the whole project.
+    fn analyze(&mut self) -> Result<SemanticFacts, String>;
+    /// Re-reads the changed files (absolute paths; deleted files included) and returns fresh
+    /// facts for the whole project, so cross-file targets stay consistent.
+    fn update(&mut self, changed: &[PathBuf]) -> Result<SemanticFacts, String>;
 }
 
 /// Prepares an instrumented build that streams trace events to the Nodex server.

@@ -163,6 +163,7 @@ impl FlowBuilder {
             outputs: Vec::new(),
             expr: spec.expr,
             writes: Vec::new(),
+            calls: Vec::new(),
         });
         id
     }

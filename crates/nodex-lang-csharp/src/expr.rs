@@ -124,6 +124,8 @@ impl<'a> ExprLowering<'a> {
             span: span.clone(),
             flavors: Vec::new(),
             children,
+            symbol: None,
+            target: None,
         };
         let text = || truncate(&src.norm(node), 40);
 
@@ -139,6 +141,8 @@ impl<'a> ExprLowering<'a> {
                             span: src.span(*inv),
                             flavors: vec!["stage".into()],
                             children: args,
+                            symbol: None,
+                            target: None,
                         };
                         if !is_linq_stage(src, name, *inv) {
                             stage.flavors.push("custom-stage".into());
@@ -342,6 +346,8 @@ impl<'a> ExprLowering<'a> {
                             span: src.span(c),
                             flavors: vec!["arm".into()],
                             children: arm_kids,
+                            symbol: None,
+                            target: None,
                         });
                     } else {
                         kids.push(self.lower(c));
@@ -358,6 +364,8 @@ impl<'a> ExprLowering<'a> {
                         span: src.span(clause),
                         flavors: vec!["stage".into()],
                         children: Vec::new(),
+                        symbol: None,
+                        target: None,
                     })
                     .collect();
                 let mut e = mk(Concept::Pipeline, "pipeline".into(), kids);

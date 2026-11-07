@@ -10,6 +10,7 @@ pub mod canon;
 pub mod catalog;
 pub mod link;
 pub mod project;
+pub mod semantic;
 
 pub use catalog::Catalog;
 pub use project::{FileSummary, Project, ProjectSummary};

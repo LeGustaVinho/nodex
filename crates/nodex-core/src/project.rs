@@ -5,13 +5,14 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
-use nodex_ir::{Diagnostic, FileIr, FlowGraph, Language, PackageRef, StructureGraph};
+use nodex_ir::semantic::{SemanticFacts, SemanticState, SemanticStatus};
+use nodex_ir::{Diagnostic, FileIr, FlowGraph, Language, PackageRef, StructEdgeKind, StructureGraph};
 use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SourceFile};
 use rayon::prelude::*;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::link;
+use crate::{link, semantic};
 
 /// Directories never scanned (build output, dependencies, engine caches, VCS).
 pub const IGNORED_DIRS: &[&str] = &[
@@ -41,6 +42,8 @@ pub struct ProjectSummary {
     pub flavors: Vec<String>,
     pub packages: Vec<PackageRef>,
     pub files: Vec<FileSummary>,
+    /// Semantic analysis progress per language.
+    pub semantic: Vec<SemanticStatus>,
 }
 
 struct FileEntry {
@@ -54,6 +57,13 @@ pub struct Project {
     descriptors: Vec<ProjectDescriptor>,
     files: BTreeMap<String, FileEntry>,
     structure: Option<Arc<StructureGraph>>,
+    semantic: BTreeMap<Language, SemanticEntry>,
+    locator: Option<Arc<semantic::Locator>>,
+}
+
+struct SemanticEntry {
+    status: SemanticStatus,
+    facts: Option<Arc<SemanticFacts>>,
 }
 
 impl Project {
@@ -64,7 +74,15 @@ impl Project {
             bail!("{} is not a directory", root.display());
         }
         let descriptors = frontends.iter().filter_map(|f| f.detect(&root)).collect();
-        let mut project = Self { root, frontends, descriptors, files: BTreeMap::new(), structure: None };
+        let mut project = Self {
+            root,
+            frontends,
+            descriptors,
+            files: BTreeMap::new(),
+            structure: None,
+            semantic: BTreeMap::new(),
+            locator: None,
+        };
 
         let paths: Vec<PathBuf> = walkdir::WalkDir::new(&project.root)
             .into_iter()
@@ -155,7 +173,7 @@ impl Project {
         } else if self.files.remove(&rel).is_none() {
             return None;
         }
-        self.structure = None;
+        self.invalidate();
         Some(rel)
     }
 
@@ -175,6 +193,7 @@ impl Project {
             languages,
             flavors: self.descriptors.iter().flat_map(|d| d.flavors.clone()).collect(),
             packages: self.descriptors.iter().flat_map(|d| d.packages.clone()).collect(),
+            semantic: self.semantic.values().map(|e| e.status.clone()).collect(),
             files: self
                 .files
                 .iter()
@@ -200,13 +219,97 @@ impl Project {
             .iter()
             .flat_map(|d| d.packages.iter().map(move |p| (d.language, p.clone())))
             .collect();
-        let graph = Arc::new(link::link(&files, &packages));
+        let mut graph = link::link(&files, &packages);
+
+        // Semantic facts replace guesses: exact bases, calls, events.
+        let locator = Arc::new(semantic::Locator::new(&graph.symbols));
+        for (language, entry) in &self.semantic {
+            let Some(facts) = &entry.facts else { continue };
+            let derived = semantic::edges(facts, &locator, *language);
+            graph.edges.retain(|e| {
+                !(matches!(e.kind, StructEdgeKind::Inherits | StructEdgeKind::Implements) && derived.typed_bases.contains(&e.from))
+            });
+            for ext in derived.externals {
+                if !graph.symbols.iter().any(|s| s.id == ext.id) {
+                    graph.symbols.push(ext);
+                }
+            }
+            for e in derived.edges {
+                if !graph.edges.contains(&e) {
+                    graph.edges.push(e);
+                }
+            }
+        }
+        // Drop external types no edge refers to any more (name-based guesses replaced above).
+        let referenced: std::collections::HashSet<&str> =
+            graph.edges.iter().flat_map(|e| [e.from.as_str(), e.to.as_str()]).collect();
+        let orphans: Vec<String> = graph
+            .symbols
+            .iter()
+            .filter(|s| s.id.starts_with("ext:") && !referenced.contains(s.id.as_str()))
+            .map(|s| s.id.clone())
+            .collect();
+        graph.symbols.retain(|s| !orphans.contains(&s.id));
+
+        let graph = Arc::new(graph);
+        self.locator = Some(locator);
         self.structure = Some(graph.clone());
         graph
     }
 
-    pub fn flow(&self, symbol: &str) -> Option<&FlowGraph> {
-        self.files.values().flat_map(|f| f.ir.flows.iter()).find(|g| g.symbol == symbol)
+    /// The flow graph of `symbol`, enriched with semantic facts when available.
+    pub fn flow(&mut self, symbol: &str) -> Option<FlowGraph> {
+        let (language, raw) = self
+            .files
+            .values()
+            .find_map(|f| f.ir.flows.iter().find(|g| g.symbol == symbol).map(|g| (f.language, g.clone())))?;
+        let Some(facts) = self.semantic.get(&language).and_then(|e| e.facts.clone()) else {
+            return Some(raw);
+        };
+        if self.locator.is_none() {
+            self.structure();
+        }
+        let locator = self.locator.clone()?;
+        Some(semantic::enrich_flow(&raw, &facts, &locator))
+    }
+
+    /// Frontends for the languages present in the project.
+    pub fn active_frontends(&self) -> Vec<Arc<dyn LanguageFrontend>> {
+        let mut used: Vec<Language> = self.files.values().map(|f| f.language).collect();
+        used.sort();
+        used.dedup();
+        self.frontends.iter().filter(|f| used.contains(&f.id())).cloned().collect()
+    }
+
+    /// Records progress of a semantic provider (loading, unavailable).
+    pub fn set_semantic_status(&mut self, language: Language, state: SemanticState, detail: impl Into<String>) {
+        let entry = self.semantic.entry(language).or_insert_with(|| SemanticEntry {
+            status: SemanticStatus { language, state, detail: String::new(), messages: Vec::new() },
+            facts: None,
+        });
+        entry.status.state = state;
+        entry.status.detail = detail.into();
+        if state == SemanticState::Unavailable {
+            entry.facts = None;
+            self.invalidate();
+        }
+    }
+
+    /// Installs fresh facts for a language.
+    pub fn apply_semantic(&mut self, language: Language, facts: SemanticFacts) {
+        let status = SemanticStatus {
+            language,
+            state: SemanticState::Ready,
+            detail: facts.source.clone(),
+            messages: facts.messages.clone(),
+        };
+        self.semantic.insert(language, SemanticEntry { status, facts: Some(Arc::new(facts)) });
+        self.invalidate();
+    }
+
+    fn invalidate(&mut self) {
+        self.structure = None;
+        self.locator = None;
     }
 
     pub fn file_ir(&self, rel: &str) -> Option<&FileIr> {

@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Positions as SavedPositions } from "../api";
 import { typeColor } from "../catalog";
 import { BlueprintNode } from "../components/BlueprintNode";
+import { CallNode } from "../components/CallNode";
 import { ExprNode } from "../components/ExprNode";
 import { NamespaceNode, TypeCard } from "../components/StructureNodes";
 import { layoutGraph } from "../graph/layout";
@@ -28,6 +29,7 @@ const nodeTypes: NodeTypes = {
   expr: ExprNode,
   namespace: NamespaceNode,
   typeCard: TypeCard,
+  callNode: CallNode,
 };
 
 /** Visual style of each edge kind. */
@@ -48,6 +50,12 @@ export function edgeStyle(e: GEdge): Partial<Edge> {
       return { type: "smoothstep", style: { stroke: "#5d6b7d", strokeWidth: 1.2, strokeDasharray: "2 4" }, markerEnd: { type: MarkerType.Arrow, color: "#5d6b7d" } };
     case "creates":
       return { type: "smoothstep", style: { stroke: "#4fa36b", strokeWidth: 1.2, strokeDasharray: "2 4" }, markerEnd: { type: MarkerType.Arrow, color: "#4fa36b" }, label: "creates" };
+    case "calls":
+      return { style: { stroke: "#4fa36b", strokeWidth: 1.8 }, markerEnd: { type: MarkerType.ArrowClosed, color: "#4fa36b" } };
+    case "raises":
+      return { style: { stroke: "#c2185b", strokeWidth: 1.6, strokeDasharray: "6 4" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#c2185b" }, label: "raises" };
+    case "subscribes":
+      return { style: { stroke: "#c2185b", strokeWidth: 1.6, strokeDasharray: "2 4" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#c2185b" }, label: "notifies" };
     case "imports":
       return { style: { stroke: "#7b8794", strokeWidth: 1.4 }, markerEnd: { type: MarkerType.ArrowClosed, color: "#7b8794" } };
     default:

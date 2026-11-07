@@ -141,6 +141,8 @@ pub enum StructEdgeKind {
     Imports,
     Subscribes,
     DependsOn,
+    /// A function raises an event (`Handler?.Invoke(...)`).
+    Raises,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash)]
@@ -397,6 +399,13 @@ pub struct Expr {
     pub span: Span,
     pub flavors: Vec<String>,
     pub children: Vec<Expr>,
+    /// Project symbol this expression refers to (a called method, a created type), when a
+    /// semantic provider resolved it.
+    #[serde(default)]
+    pub symbol: Option<SymbolId>,
+    /// Display name of the resolved target, including external ones (`System.Console.WriteLine(string)`).
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 /// One node of a Blueprint-style flow graph.
@@ -418,6 +427,20 @@ pub struct FlowNode {
     pub expr: Option<Expr>,
     /// Local variables written by this node.
     pub writes: Vec<String>,
+    /// Functions this statement calls or types it creates, resolved by a semantic provider.
+    #[serde(default)]
+    pub calls: Vec<CallTarget>,
+}
+
+/// A resolved call or construction target of a flow node.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct CallTarget {
+    /// Project symbol, when the target is declared in the project.
+    pub symbol: Option<SymbolId>,
+    /// Display name (`OrderService.ShipAsync(int)`, `System.Console.WriteLine(string)`).
+    pub display: String,
+    pub external: bool,
 }
 
 /// Whether an edge carries control flow or a value.
@@ -467,6 +490,8 @@ impl FlowGraph {
 ///
 /// The anchor is the normalized statement header plus an ordinal among identical headers,
 /// so inserting or removing a statement does not change the ids of the other statements.
+pub mod semantic;
+
 pub fn stable_id(symbol: &str, concept: Concept, anchor: &str, ordinal: u32) -> NodeId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(symbol.as_bytes());

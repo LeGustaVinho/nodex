@@ -3,7 +3,7 @@
 Nodex turns source code into language-agnostic, Blueprint-style node graphs so a programmer can read code in a language they do not know.
 The same logic looks the same in every language: a C# `foreach`, a TypeScript `for..of` and a Rust `for x in iter` are one **For Each** node.
 
-**Status**: milestones M0–M2 — C# (plain .NET and Unity) structure and Blueprints. Live execution, TypeScript and Rust are on the roadmap.
+**Status**: milestones M0–M3 — C# (plain .NET and Unity) structure, Blueprints and Roslyn semantics with a Calls view. Live execution, TypeScript and Rust are on the roadmap.
 Full documentation lives in the Obsidian vault at `D:\MEGA\Obsidian\Default\Nodex` (start at `Nodex.md`).
 
 ## Quick start
@@ -16,6 +16,12 @@ pnpm --dir web install
 pnpm --dir web build
 ```
 
+Optional, for exact calls, events and `var` types (needs the .NET 10 SDK):
+
+```bash
+dotnet build sidecars/dotnet/Nodex.Roslyn -c Release
+```
+
 ```bash
 cargo run --release -p nodex-server -- open fixtures/csharp/Sample
 ```
@@ -26,6 +32,7 @@ The server prints a link with a session token and opens it in your browser.
 
 - **Architecture** — namespaces, imported namespaces and packages.
 - **Types** — classes, interfaces and records, with *extends*, *implements*, *uses* and *creates* edges.
+- **Calls** — callers and callees of a function, including events it raises and who handles them (needs the sidecar).
 - **Blueprint** — the statements of one function as nodes, with exec wires, data wires for locals, plain-language labels, an inspector that explains each concept, and two-way sync with the code.
 
 ## Repository layout
@@ -50,6 +57,12 @@ cargo test --workspace
 
 ```bash
 pnpm --dir web test
+```
+
+Tests that drive the real Roslyn sidecar are ignored by default; run them after building it:
+
+```bash
+cargo test -p nodex-core --test semantic -- --ignored
 ```
 
 UI development with hot reload — start the server allowing the Vite origin, then Vite:
