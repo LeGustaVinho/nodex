@@ -11,6 +11,8 @@ use crate::resolve::{Location, Resolver};
 
 /// Timeline entries beyond this are not stored (aggregates keep updating).
 pub const MAX_TIMELINE: usize = 2_000_000;
+/// Call spans beyond this are not stored.
+pub const MAX_SPANS: usize = 500_000;
 
 /// The node a thread is executing.
 #[derive(Serialize, TS, Clone, Debug, PartialEq)]
@@ -41,6 +43,9 @@ pub struct TraceFrame {
     pub values: BTreeMap<String, BTreeMap<String, String>>,
     /// Latest value of each variable: flow symbol → name → value.
     pub vars: BTreeMap<String, BTreeMap<String, String>>,
+    /// Exceptions thrown while a node ran: flow symbol → node id → count.
+    #[ts(type = "Record<string, Record<string, number>>")]
+    pub throws: BTreeMap<String, BTreeMap<String, u64>>,
     /// What every thread is executing now.
     pub active: Vec<ActiveNode>,
     pub timeline_truncated: bool,
@@ -67,6 +72,47 @@ pub struct StepsPage {
     pub steps: Vec<StepInfo>,
 }
 
+/// One execution of a function on a thread (for the flame chart).
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct CallSpan {
+    pub thread: i32,
+    pub flow: String,
+    #[ts(type = "number")]
+    pub start: i64,
+    #[ts(type = "number")]
+    pub end: i64,
+    /// Nesting depth on its thread (0 = outermost traced call).
+    pub depth: u32,
+    /// An async method or iterator resuming after a pause, not a fresh call.
+    pub resumed: bool,
+    /// The call ended because an exception left it.
+    pub threw: bool,
+    /// Still running when the recording was read.
+    pub open: bool,
+}
+
+#[derive(Serialize, TS, Clone, Debug, Default, PartialEq)]
+#[ts(export)]
+pub struct CallsPage {
+    pub total: u32,
+    #[ts(type = "number")]
+    pub start: i64,
+    #[ts(type = "number")]
+    pub end: i64,
+    pub spans: Vec<CallSpan>,
+}
+
+struct SpanRec {
+    thread: i32,
+    flow: u32,
+    start: i64,
+    end: i64,
+    depth: u32,
+    resumed: bool,
+    threw: bool,
+}
+
 enum Entry {
     Step { micros: i64, thread: i32, flow: u32, node: Option<u32> },
     Value { thread: i32, flow: u32, text: String },
@@ -80,6 +126,8 @@ struct Frame {
     flow: Option<u32>,
     last_node: Option<u32>,
     args: Vec<String>,
+    start: i64,
+    resumed: bool,
 }
 
 #[derive(Default)]
@@ -122,6 +170,11 @@ pub struct Recorder {
     changed_calls: HashSet<u32>,
     changed_values: HashSet<(u32, u32)>,
     changed_vars: HashSet<(u32, String)>,
+    throws: HashMap<(u32, u32), u64>,
+    changed_throws: HashSet<(u32, u32)>,
+    spans: Vec<SpanRec>,
+    first_micros: Option<i64>,
+    last_micros: i64,
     threads: HashMap<i32, Vec<Frame>>,
     active: HashMap<i32, (u32, Option<u32>)>,
     timeline: Vec<Entry>,
@@ -145,6 +198,11 @@ impl Recorder {
             changed_calls: HashSet::new(),
             changed_values: HashSet::new(),
             changed_vars: HashSet::new(),
+            throws: HashMap::new(),
+            changed_throws: HashSet::new(),
+            spans: Vec::new(),
+            first_micros: None,
+            last_micros: 0,
             threads: HashMap::new(),
             active: HashMap::new(),
             timeline: Vec::new(),
@@ -191,6 +249,10 @@ impl Recorder {
 
     pub fn record(&mut self, r: &Record) {
         self.events += 1;
+        if r.kind != RecordKind::Dropped {
+            self.first_micros.get_or_insert(r.micros);
+            self.last_micros = self.last_micros.max(r.micros);
+        }
         match r.kind {
             RecordKind::Enter => {
                 let flow = self.flow_of(r.method);
@@ -199,9 +261,27 @@ impl Recorder {
                     *self.calls.entry(f).or_default() += 1;
                     self.changed_calls.insert(f);
                 }
-                self.threads.entry(r.thread).or_default().push(Frame { method: r.method, flow, last_node: None, args: Vec::new() });
+                self.threads.entry(r.thread).or_default().push(Frame {
+                    method: r.method,
+                    flow,
+                    last_node: None,
+                    args: Vec::new(),
+                    start: r.micros,
+                    resumed: is_resume,
+                });
             }
             RecordKind::Step => {
+                // A step in a caller means the frames above it were unwound by an exception.
+                let unwound = self.threads.get(&r.thread).and_then(|s| {
+                    let top = s.last()?;
+                    if top.method == r.method {
+                        return None;
+                    }
+                    s.iter().rposition(|f| f.method == r.method)
+                });
+                if let Some(pos) = unwound {
+                    self.close_frames(r.thread, pos + 1, r.micros, true);
+                }
                 let Some((flow, node)) = self.point(r.method, r.arg) else { return };
                 if let Some(n) = node {
                     *self.counts.entry((flow, n)).or_default() += 1;
@@ -255,10 +335,21 @@ impl Recorder {
                     self.timeline.push(Entry::Value { thread: r.thread, flow, text });
                 }
                 if r.kind == RecordKind::Return {
-                    self.pop(r.thread, r.method);
+                    self.pop(r.thread, r.method, r.micros);
                 }
             }
-            RecordKind::Exit => self.pop(r.thread, r.method),
+            RecordKind::Exit => self.pop(r.thread, r.method, r.micros),
+            RecordKind::Throw => {
+                let current = self.threads.get(&r.thread).and_then(|s| s.last()).map(|f| (f.flow, f.last_node));
+                let Some((Some(flow), Some(node))) = current else { return };
+                *self.throws.entry((flow, node)).or_default() += 1;
+                self.changed_throws.insert((flow, node));
+                let text = format!("⚠ {}", r.text.clone().unwrap_or_else(|| "exception".into()));
+                self.set_value(flow, node, text.clone());
+                if self.timeline.len() < MAX_TIMELINE {
+                    self.timeline.push(Entry::Value { thread: r.thread, flow, text });
+                }
+            }
             RecordKind::Dropped => self.dropped += r.arg.max(0) as u64,
             RecordKind::Unknown(_) => {}
         }
@@ -268,11 +359,38 @@ impl Recorder {
         Some(self.strings.name(flow).to_owned())
     }
 
-    fn pop(&mut self, thread: i32, method: i32) {
+    /// Removes frames `from..` of a thread's stack, recording them as call spans.
+    fn close_frames(&mut self, thread: i32, from: usize, micros: i64, threw: bool) {
         let Some(stack) = self.threads.get_mut(&thread) else { return };
-        if let Some(pos) = stack.iter().rposition(|f| f.method == method) {
-            stack.truncate(pos);
+        if from >= stack.len() {
+            return;
         }
+        let removed: Vec<Frame> = stack.drain(from..).collect();
+        for (i, f) in removed.into_iter().enumerate() {
+            let Some(flow) = f.flow else { continue };
+            if self.spans.len() < MAX_SPANS {
+                self.spans.push(SpanRec {
+                    thread,
+                    flow,
+                    start: f.start,
+                    end: micros.max(f.start),
+                    depth: (from + i) as u32,
+                    resumed: f.resumed,
+                    // Only frames above the one that returned normally were unwound.
+                    threw: threw || i > 0,
+                });
+            }
+        }
+    }
+
+    fn pop(&mut self, thread: i32, method: i32, micros: i64) {
+        let Some(pos) = self.threads.get(&thread).and_then(|s| s.iter().rposition(|f| f.method == method)) else { return };
+        let above_threw = self.threads.get(&thread).is_some_and(|s| pos + 1 < s.len());
+        if above_threw {
+            self.close_frames(thread, pos + 1, micros, true);
+        }
+        self.close_frames(thread, pos, micros, false);
+        let Some(stack) = self.threads.get_mut(&thread) else { return };
         // Back in the caller: show where it resumes.
         match stack.last() {
             Some(f) => {
@@ -324,12 +442,20 @@ impl Recorder {
             let value = self.vars[&(flow, name.clone())].clone();
             frame.vars.entry(self.strings.name(flow).to_owned()).or_default().insert(name, value);
         }
+        for (flow, node) in self.changed_throws.drain() {
+            let count = self.throws[&(flow, node)];
+            frame.throws.entry(self.strings.name(flow).to_owned()).or_default().insert(self.strings.name(node).to_owned(), count);
+        }
         frame
     }
 
     /// True when `take_frame` would report anything new.
     pub fn has_changes(&self) -> bool {
-        !(self.changed_counts.is_empty() && self.changed_calls.is_empty() && self.changed_values.is_empty() && self.changed_vars.is_empty())
+        !(self.changed_counts.is_empty()
+            && self.changed_calls.is_empty()
+            && self.changed_values.is_empty()
+            && self.changed_vars.is_empty()
+            && self.changed_throws.is_empty())
     }
 
     /// Everything recorded so far (for clients that connect late).
@@ -353,7 +479,49 @@ impl Recorder {
         for ((flow, name), value) in &self.vars {
             frame.vars.entry(self.strings.name(*flow).to_owned()).or_default().insert(name.clone(), value.clone());
         }
+        for (&(flow, node), &count) in &self.throws {
+            frame.throws.entry(self.strings.name(flow).to_owned()).or_default().insert(self.strings.name(node).to_owned(), count);
+        }
         frame
+    }
+
+    /// Function executions over time, for the flame chart (finished ones plus those still
+    /// running), ordered by start time. Times are microseconds since the program started tracing.
+    pub fn calls(&self, limit: usize) -> CallsPage {
+        let mut spans: Vec<CallSpan> = self
+            .spans
+            .iter()
+            .map(|s| CallSpan {
+                thread: s.thread,
+                flow: self.strings.name(s.flow).to_owned(),
+                start: s.start,
+                end: s.end,
+                depth: s.depth,
+                resumed: s.resumed,
+                threw: s.threw,
+                open: false,
+            })
+            .collect();
+        for (&thread, stack) in &self.threads {
+            for (depth, f) in stack.iter().enumerate() {
+                if let Some(flow) = f.flow {
+                    spans.push(CallSpan {
+                        thread,
+                        flow: self.strings.name(flow).to_owned(),
+                        start: f.start,
+                        end: self.last_micros.max(f.start),
+                        depth: depth as u32,
+                        resumed: f.resumed,
+                        threw: false,
+                        open: true,
+                    });
+                }
+            }
+        }
+        spans.sort_by_key(|s| (s.start, s.depth));
+        let total = spans.len() as u32;
+        spans.truncate(limit);
+        CallsPage { total, start: self.first_micros.unwrap_or(0), end: self.last_micros, spans }
     }
 
     /// Recorded steps of one flow, in execution order, with the values written at each step.
@@ -477,5 +645,35 @@ mod tests {
         assert_eq!(page.steps[1].node.as_deref(), Some("a"));
         assert_eq!(page.steps[1].values, vec!["x = 10"]);
         assert_eq!(page.steps[0].node, None, "brace point maps to the flow only");
+
+        let calls = r.calls(100);
+        assert_eq!(calls.total, 2);
+        assert!(calls.spans.iter().all(|s| s.flow == "S.M(int)" && !s.threw && !s.open && s.depth == 0));
+    }
+
+    fn at(kind: RecordKind, method: i32, arg: i32, micros: i64, text: Option<&str>) -> Record {
+        Record { kind, thread: 1, micros, method, arg, text: text.map(str::to_owned) }
+    }
+
+    /// A callee throws; the caller catches: the callee frame closes as `threw`, the throw is
+    /// attached to the statement that was running.
+    #[test]
+    fn exceptions_mark_the_statement_and_unwind_frames() {
+        let mut r = setup();
+        r.record(&at(RecordKind::Enter, 1, 0, 0, None)); // outer M
+        r.record(&at(RecordKind::Step, 1, 1, 1, None)); // at `a`
+        r.record(&at(RecordKind::Enter, 1, 0, 2, None)); // recursive M
+        r.record(&at(RecordKind::Step, 1, 2, 3, None)); // at `b`
+        r.record(&at(RecordKind::Throw, 0, 0, 4, Some("InvalidOperationException: nope")));
+        // Execution continues in the outer frame (a catch), so the inner one was unwound.
+        // Both frames share the method id, so emulate the outer frame stepping by popping once.
+        r.record(&at(RecordKind::Exit, 1, 0, 5, None));
+        let frame = r.take_frame();
+        assert_eq!(frame.throws["S.M(int)"]["b"], 1);
+        assert_eq!(frame.values["S.M(int)"]["b"], "⚠ InvalidOperationException: nope");
+        let calls = r.calls(10);
+        assert_eq!(calls.spans.len(), 2, "one closed, one still open");
+        assert!(calls.spans.iter().any(|s| s.open && s.depth == 0));
+        assert!(calls.spans.iter().any(|s| !s.open && s.depth == 1 && s.end == 5));
     }
 }

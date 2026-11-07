@@ -7,12 +7,14 @@ import { useTrace } from "./trace";
 import { Inspector } from "./panels/Inspector";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
+import { TimelineView } from "./views/Timeline";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 
 const VIEWS: { id: View; label: string; hint: string }[] = [
   { id: "architecture", label: "Architecture", hint: "Namespaces, packages and their dependencies" },
   { id: "types", label: "Types", hint: "Classes, interfaces and how they relate" },
   { id: "calls", label: "Calls", hint: "Who calls a function, and what it calls" },
+  { id: "timeline", label: "Timeline", hint: "Every function call of the last run, over time" },
   { id: "blueprint", label: "Blueprint", hint: "The steps inside one function" },
 ];
 
@@ -150,6 +152,7 @@ export function App() {
         {view === "architecture" && <ArchitectureView />}
         {view === "types" && <TypesView />}
         {view === "calls" && <CallsView />}
+        {view === "timeline" && <TimelineView />}
         {view === "blueprint" && <BlueprintView />}
         <ConsolePanel />
       </main>

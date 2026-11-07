@@ -17,6 +17,8 @@ pub enum RecordKind {
     Local,
     Return,
     Arg,
+    /// An exception was thrown on the thread (`method` is 0: it belongs to the current statement).
+    Throw,
     Dropped,
     Unknown(u8),
 }
@@ -30,6 +32,7 @@ impl From<u8> for RecordKind {
             4 => Self::Local,
             5 => Self::Return,
             6 => Self::Arg,
+            7 => Self::Throw,
             9 => Self::Dropped,
             other => Self::Unknown(other),
         }
@@ -110,6 +113,7 @@ pub fn encode_frame(records: &[Record]) -> Vec<u8> {
             RecordKind::Local => 4,
             RecordKind::Return => 5,
             RecordKind::Arg => 6,
+            RecordKind::Throw => 7,
             RecordKind::Dropped => 9,
             RecordKind::Unknown(k) => k,
         };

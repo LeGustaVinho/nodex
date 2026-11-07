@@ -14,5 +14,5 @@ pub mod resolve;
 
 pub use map::TraceMap;
 pub use protocol::{Decoder, Record, RecordKind};
-pub use recorder::{ActiveNode, Recorder, StepInfo, StepsPage, TraceFrame};
+pub use recorder::{ActiveNode, CallSpan, CallsPage, Recorder, StepInfo, StepsPage, TraceFrame};
 pub use resolve::Resolver;

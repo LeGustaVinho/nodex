@@ -18,6 +18,7 @@ interface TraceState {
   calls: Record<string, number>;
   values: Nested<string>;
   vars: Nested<string>;
+  throws: Nested<number>;
   active: ActiveNode[];
   events: number;
   dropped: number;
@@ -41,7 +42,7 @@ const merge = <T,>(base: Nested<T>, delta: Record<string, Record<string, T> | un
   return out;
 };
 
-const empty = { counts: {}, calls: {}, values: {}, vars: {}, active: [], events: 0, dropped: 0, replay: null };
+const empty = { counts: {}, calls: {}, values: {}, vars: {}, throws: {}, active: [], events: 0, dropped: 0, replay: null };
 
 export const useTrace = create<TraceState>((set) => ({
   status: { state: "idle", detail: "", exit_code: null },
@@ -61,6 +62,7 @@ export const useTrace = create<TraceState>((set) => ({
       calls: { ...s.calls, ...(f.calls as Record<string, number>) },
       values: merge(s.values, f.values),
       vars: merge(s.vars, f.vars),
+      throws: merge(s.throws, f.throws),
       active: f.active,
       events: f.events,
       dropped: f.dropped,
@@ -75,6 +77,7 @@ export const useTrace = create<TraceState>((set) => ({
             calls: snap.trace.calls as Record<string, number>,
             values: snap.trace.values as Nested<string>,
             vars: snap.trace.vars as Nested<string>,
+            throws: snap.trace.throws,
             active: snap.status.state === "running" ? snap.trace.active : [],
             events: snap.trace.events,
             dropped: snap.trace.dropped,

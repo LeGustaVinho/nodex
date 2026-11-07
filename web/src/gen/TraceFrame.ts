@@ -30,6 +30,10 @@ values: { [key in string]: { [key in string]: string } },
  */
 vars: { [key in string]: { [key in string]: string } }, 
 /**
+ * Exceptions thrown while a node ran: flow symbol → node id → count.
+ */
+throws: Record<string, Record<string, number>>, 
+/**
  * What every thread is executing now.
  */
 active: Array<ActiveNode>, timeline_truncated: boolean, };

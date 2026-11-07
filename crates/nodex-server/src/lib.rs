@@ -92,6 +92,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/run", get(api::run_snapshot).post(api::run_start))
         .route("/api/run/stop", post(api::run_stop))
         .route("/api/trace/steps", get(api::trace_steps))
+        .route("/api/trace/calls", get(api::trace_calls))
         .route("/ws", get(api::ws))
         .route_layer(middleware::from_fn_with_state(state.clone(), security::require_token));
 

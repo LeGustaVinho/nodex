@@ -38,6 +38,7 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
   const catalog = useCatalog();
   // Live execution overlay.
   const count = useTrace((s) => s.counts[flow]?.[node.id]);
+  const throws = useTrace((s) => s.throws[flow]?.[node.id]);
   const liveValue = useTrace((s) => s.values[flow]?.[node.id]);
   const vars = useTrace((s) => s.vars[flow]);
   const active = useTrace((s) => s.active.some((a) => a.flow === flow && a.node === node.id));
@@ -55,7 +56,7 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`bp shape-${info.shape} ${selected ? "selected" : ""} ${unreachable ? "unreachable" : ""} ${active && !replaying ? "active" : ""} ${isReplayNode ? "replay-current" : ""} ${count && !replaying ? "visited" : ""} ${replaying && !isReplayNode ? "dimmed" : ""}`}
+      className={`bp shape-${info.shape} ${selected ? "selected" : ""} ${unreachable ? "unreachable" : ""} ${active && !replaying ? "active" : ""} ${isReplayNode ? "replay-current" : ""} ${count && !replaying ? "visited" : ""} ${replaying && !isReplayNode ? "dimmed" : ""} ${throws && !replaying ? "threw" : ""}`}
       style={{ "--accent": color } as React.CSSProperties}
     >
       <div className="bp-head">
@@ -64,6 +65,11 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
         {count !== undefined && !replaying && (
           <span className="bp-count" title={`ran ${count} time${count === 1 ? "" : "s"}`}>
             ×{count}
+          </span>
+        )}
+        {throws !== undefined && !replaying && (
+          <span className="bp-throws" title={`threw ${throws} exception${throws === 1 ? "" : "s"}`}>
+            ⚠ {throws}
           </span>
         )}
         {node.expr && (
@@ -81,7 +87,7 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
       </div>
       <div className="bp-label">{node.label}</div>
       {shownValue && (
-        <div className="bp-live" title={shownValue}>
+        <div className={`bp-live ${shownValue.startsWith("⚠") ? "bp-live-error" : ""}`} title={shownValue}>
           {shownValue}
         </div>
       )}

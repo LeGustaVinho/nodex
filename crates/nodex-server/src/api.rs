@@ -123,6 +123,23 @@ pub async fn trace_steps(State(state): State<Arc<AppState>>, Query(q): Query<Ste
     Ok(Json(page).into_response())
 }
 
+#[derive(Deserialize)]
+pub struct CallsQuery {
+    #[serde(default = "default_calls_limit")]
+    limit: usize,
+}
+
+fn default_calls_limit() -> usize {
+    50_000
+}
+
+/// Function executions over time, for the flame chart.
+pub async fn trace_calls(State(state): State<Arc<AppState>>, Query(q): Query<CallsQuery>) -> ApiResult {
+    let recorder = state.run.recorder().ok_or_else(|| not_found("recording"))?;
+    let page = recorder.lock().map_err(poisoned)?.calls(q.limit.min(200_000));
+    Ok(Json(page).into_response())
+}
+
 pub async fn ws(State(state): State<Arc<AppState>>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| client(socket, state))
 }

@@ -32,6 +32,7 @@ namespace Nodex.Trace
             Local = 4,
             Return = 5,
             Arg = 6,
+            Throw = 7,
             Dropped = 9,
         }
 
@@ -66,6 +67,7 @@ namespace Nodex.Trace
                 var flusher = new Thread(FlushLoop) { IsBackground = true, Name = "Nodex.Trace" };
                 flusher.Start();
                 AppDomain.CurrentDomain.ProcessExit += (_, __) => Close();
+                AppDomain.CurrentDomain.FirstChanceException += (_, e) => Thrown(e.Exception);
                 AppDomain.CurrentDomain.UnhandledException += (_, __) => Flush();
             }
             catch (Exception)
@@ -103,6 +105,35 @@ namespace Nodex.Trace
         public static void Arg(int method, int index, object? value)
         {
             if (s_on) Record(Kind.Arg, method, index, Format(value));
+        }
+
+        [ThreadStatic] private static bool t_inThrow;
+        private static readonly FieldInfo? s_messageField =
+            typeof(Exception).GetField("_message", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        /// <summary>
+        /// Every exception at the moment it is thrown (before any catch runs). The server attaches it
+        /// to the statement the thread is executing. The message is read from the base field, so a
+        /// user <c>Message</c> override never runs.
+        /// </summary>
+        private static void Thrown(Exception exception)
+        {
+            if (!s_on || t_inThrow || Thread.CurrentThread.Name == "Nodex.Trace") return;
+            t_inThrow = true;
+            try
+            {
+                var message = s_messageField?.GetValue(exception) as string;
+                var text = exception.GetType().Name + (string.IsNullOrEmpty(message) ? "" : ": " + message);
+                Record(Kind.Throw, 0, 0, Truncate(text));
+            }
+            catch (Exception)
+            {
+                // never let tracing throw
+            }
+            finally
+            {
+                t_inThrow = false;
+            }
         }
 
         private static void Record(Kind kind, int method, int arg, string? text)

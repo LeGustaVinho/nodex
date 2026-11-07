@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Span } from "./gen/Span";
 
-export type View = "architecture" | "types" | "calls" | "blueprint";
+export type View = "architecture" | "types" | "calls" | "timeline" | "blueprint";
 
 /** What the inspector and code panel show. */
 export type Selection =

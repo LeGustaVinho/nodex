@@ -1,5 +1,6 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using System.Text.RegularExpressions;
 using Mono.Cecil.Rocks;
 
 namespace Nodex.Weaver;
@@ -11,8 +12,15 @@ namespace Nodex.Weaver;
 /// - <c>T.Return(value, id)</c> or <c>T.Exit(id)</c> before every <c>ret</c>.
 /// Branches and exception-handler boundaries that pointed at a rewritten instruction are moved
 /// to the inserted probe, so probes run on every path.
-public sealed class ModuleWeaver
+public sealed partial class ModuleWeaver
 {
+    /// Slots for locals the compiler hoisted into state-machine fields start here.
+    private const int HoistedSlotBase = 1000;
+
+    /// `<order>5__2` — a local of an async method or iterator, stored as a state-machine field.
+    [GeneratedRegex(@"^<(?<name>[^>]+)>5__\d+$")]
+    private static partial Regex HoistedLocal();
+
     private readonly ModuleDefinition _module;
     private readonly SourceMaps _sources;
     private readonly List<MethodMap> _methods;
@@ -69,8 +77,36 @@ public sealed class ModuleWeaver
         var locals = new Dictionary<int, string>();
         if (debug.Scope is { } scope) CollectLocals(scope, locals);
         var kind = IsStateMachine(method.DeclaringType) ? "resume" : method.IsConstructor ? "constructor" : "method";
+        // In async methods and iterators, locals live in fields of the state machine.
+        var hoisted = new Dictionary<FieldDefinition, int>();
+        if (kind == "resume")
+        {
+            var fields = method.DeclaringType.Fields.ToList();
+            for (var f = 0; f < fields.Count; f++)
+            {
+                var m = HoistedLocal().Match(fields[f].Name);
+                if (m.Success)
+                {
+                    hoisted[fields[f]] = HoistedSlotBase + f;
+                    locals[HoistedSlotBase + f] = m.Groups["name"].Value;
+                }
+            }
+        }
         _methods.Add(new MethodMap(id, $"{method.DeclaringType.FullName}::{method.Name}", kind,
             points.Select(p => p.Map).ToList(), locals, method.Parameters.Select(p => p.Name).ToList()));
+
+        // Hoisted-local stores that belong to user statements. Stores under a hidden sequence point
+        // are compiler bookkeeping (for example clearing fields when the state machine finishes).
+        var userStores = new HashSet<Instruction>();
+        if (hoisted.Count > 0)
+        {
+            var ordered = debug.SequencePoints.OrderBy(sp => sp.Offset).ToList();
+            foreach (var ins in body.Instructions.Where(i => i.OpCode == OpCodes.Stfld))
+            {
+                var governing = ordered.LastOrDefault(sp => sp.Offset <= ins.Offset);
+                if (governing is not null && !governing.IsHidden) userStores.Add(ins);
+            }
+        }
 
         body.SimplifyMacros();
         var il = body.GetILProcessor();
@@ -99,6 +135,32 @@ public sealed class ModuleWeaver
             {
                 il.InsertAfter(after, c);
                 after = c;
+            }
+        }
+
+        // Stores to hoisted locals: `stfld <x>5__N` → reload the field and report it.
+        if (hoisted.Count > 0)
+        {
+            foreach (var store in body.Instructions.Where(userStores.Contains).ToList())
+            {
+                var field = (FieldReference)store.Operand;
+                var definition = field.Resolve();
+                if (definition is null || !hoisted.TryGetValue(definition, out var slot) || !CanBox(field.FieldType)) continue;
+                var code = new List<Instruction>
+                {
+                    il.Create(OpCodes.Ldc_I4, id),
+                    il.Create(OpCodes.Ldc_I4, slot),
+                    il.Create(OpCodes.Ldarg_0),
+                    il.Create(OpCodes.Ldfld, field),
+                };
+                if (NeedsBox(field.FieldType)) code.Add(il.Create(OpCodes.Box, field.FieldType));
+                code.Add(il.Create(OpCodes.Call, _local));
+                var after = store;
+                foreach (var c in code)
+                {
+                    il.InsertAfter(after, c);
+                    after = c;
+                }
             }
         }
 

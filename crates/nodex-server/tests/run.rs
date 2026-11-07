@@ -51,4 +51,20 @@ async fn runs_the_sample_and_records_its_execution() {
     let steps = state.run.recorder().unwrap().lock().unwrap().steps(total, 0, 1000);
     assert!(steps.total > 10);
     assert!(steps.steps.iter().any(|s| s.values.iter().any(|v| v == "total = 195")));
+
+    // Async locals live in state-machine fields and are still captured.
+    let ship = "Sample.Services.OrderService.ShipAsync(int)";
+    let ship_vars = &snapshot.vars[ship];
+    assert!(ship_vars.get("order").is_some_and(|v| v.contains("Id = 2")), "{ship_vars:?}");
+    // ShipAsync(2) throws because order 2 is not paid; the throw statement is marked.
+    let throws = &snapshot.throws[ship];
+    assert_eq!(throws.values().sum::<u64>(), 1, "{throws:?}");
+    let (node, _) = throws.iter().next().unwrap();
+    assert!(snapshot.values[ship][node].contains("InvalidOperationException: Only paid orders can ship"));
+
+    // The flame chart has the whole call tree.
+    let calls = state.run.recorder().unwrap().lock().unwrap().calls(10_000);
+    assert!(calls.spans.iter().any(|s| s.flow == total && s.depth > 0 && !s.open));
+    assert!(calls.spans.iter().any(|s| s.flow == ship));
+    assert!(calls.end > calls.start);
 }

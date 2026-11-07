@@ -3,7 +3,7 @@
 Nodex turns source code into language-agnostic, Blueprint-style node graphs so a programmer can read code in a language they do not know.
 The same logic looks the same in every language: a C# `foreach`, a TypeScript `for..of` and a Rust `for x in iter` are one **For Each** node.
 
-**Status**: milestones M0–M4 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces with replay for .NET programs. Unity Play Mode traces, TypeScript and Rust are on the roadmap.
+**Status**: milestones M0–M4.1 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces for .NET programs with replay, exceptions and a call Timeline. Unity Play Mode traces, TypeScript and Rust are on the roadmap.
 Full documentation lives in the Obsidian vault at `D:\MEGA\Obsidian\Default\Nodex` (start at `Nodex.md`).
 
 ## Quick start
@@ -39,6 +39,7 @@ The server prints a link with a session token and opens it in your browser.
 - **Architecture** — namespaces, imported namespaces and packages.
 - **Types** — classes, interfaces and records, with *extends*, *implements*, *uses* and *creates* edges.
 - **Calls** — callers and callees of a function, including events it raises and who handles them (needs the sidecar).
+- **Timeline** — after a run, every function call as a bar over time (flame chart); double-click one to replay it.
 - **▶ Run** — builds an instrumented copy of a .NET program and runs it: nodes count executions, show the values they produce and glow while running; **Replay** walks through a function step by step.
 - **Blueprint** — the statements of one function as nodes, with exec wires, data wires for locals, plain-language labels, an inspector that explains each concept, and two-way sync with the code.
 

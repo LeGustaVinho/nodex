@@ -1,3 +1,4 @@
+import type { CallsPage } from "./gen/CallsPage";
 import type { Catalog } from "./gen/Catalog";
 import type { FlowGraph } from "./gen/FlowGraph";
 import type { OutputLine } from "./gen/OutputLine";
@@ -62,6 +63,7 @@ export const api = {
   run: () => json<RunSnapshot>("/api/run"),
   runStart: () => request("/api/run", { method: "POST" }),
   runStop: () => request("/api/run/stop", { method: "POST" }),
+  traceCalls: () => json<CallsPage>("/api/trace/calls"),
   traceSteps: (symbol: string) => json<StepsPage>(`/api/trace/steps?symbol=${encodeURIComponent(symbol)}`),
   saveLayout: (key: string, positions: Positions) =>
     request(`/api/layout?key=${encodeURIComponent(key)}`, {
