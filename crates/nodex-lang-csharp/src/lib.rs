@@ -1,12 +1,16 @@
 //! # Nodex C# frontend
 //!
 //! Lowers C# (plain .NET and Unity) to the Nodex IR using tree-sitter. It needs no build and no
-//! restore: structure and flow graphs come from syntax alone. The Roslyn sidecar ([`roslyn`])
+//! restore: structure and flow graphs come from syntax alone.
+//!
+//! The tree-sitter grammar predates some syntax; [`prepare`] adapts a copy of the text for the
+//! parser without moving any byte, while labels and spans keep reading the original. The Roslyn sidecar ([`roslyn`])
 //! adds exact semantics when the .NET SDK is available.
 
 mod expr;
 mod flow;
 mod instrument;
+mod prepare;
 mod project;
 pub mod roslyn;
 mod sidecar;
@@ -49,6 +53,45 @@ impl LanguageFrontend for CSharpFrontend {
     }
 }
 
+/// Where the grammar still fails after preparation: `(line, first line of the error)`.
+/// A diagnostic aid for corpus testing.
+pub fn remaining_parse_errors(text: &str) -> Vec<(usize, String)> {
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&tree_sitter_c_sharp::LANGUAGE.into()).is_err() {
+        return Vec::new();
+    }
+    let prepared = prepare::prepare(&mut parser, text);
+    let parse_text = prepared.text.as_deref().unwrap_or(text);
+    let Some(tree) = parser.parse(parse_text, None) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(n) = stack.pop() {
+        // Report the innermost failures: an ERROR node may wrap a whole namespace.
+        let mut c = n.walk();
+        let failing_children: Vec<_> = n.children(&mut c).filter(|k| k.is_error() || k.is_missing() || k.has_error()).collect();
+        if (n.is_error() || n.is_missing()) && failing_children.is_empty() {
+            let first = text.get(n.byte_range()).and_then(|t| t.lines().find(|l| !l.trim().is_empty())).unwrap_or("").trim();
+            out.push((n.start_position().row + 1, format!("{}{}", if n.is_missing() { "missing " } else { "" }, first.chars().take(80).collect::<String>())));
+            continue;
+        }
+        if n.is_error() {
+            stack.extend(failing_children);
+            // Leaf tokens directly inside an ERROR are what the grammar could not place.
+            let mut c = n.walk();
+            if let Some(first) = n.children(&mut c).find(|k| !k.is_named() || k.kind() == "identifier") {
+                out.push((first.start_position().row + 1, format!("near `{}`", text.get(first.byte_range()).unwrap_or(""))));
+            }
+            continue;
+        }
+        if n.has_error() {
+            let mut c = n.walk();
+            stack.extend(n.children(&mut c));
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Lowers C# source text. Never fails: parse problems become diagnostics and `Opaque` nodes.
 pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     let mut parser = tree_sitter::Parser::new();
@@ -72,7 +115,10 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         });
         return ir;
     }
-    let Some(tree) = parser.parse(text, None) else {
+    // Parse a prepared copy (same length); read code and spans from the original.
+    let prepared = prepare::prepare(&mut parser, text);
+    let parse_text: &str = prepared.text.as_deref().unwrap_or(text);
+    let Some(tree) = parser.parse(parse_text, None) else {
         ir.diagnostics.push(Diagnostic {
             severity: Severity::Error,
             message: "parser returned no tree".into(),
@@ -83,6 +129,21 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
 
     let index = LineIndex::new(text);
     let root = tree.root_node();
+    for fix in &prepared.merged_directives {
+        let how = if fix.kept == "merged" {
+            "its variants are shown merged".to_owned()
+        } else {
+            format!("only the `{}` variant is shown", fix.kept)
+        };
+        ir.diagnostics.push(Diagnostic {
+            severity: Severity::Info,
+            message: format!(
+                "Conditional compilation at lines {}–{} splits a declaration or statement; {how}.",
+                fix.first, fix.last
+            ),
+            span: None,
+        });
+    }
     if root.has_error() {
         let first_error = syntax::first_error(root);
         ir.diagnostics.push(Diagnostic {
@@ -97,7 +158,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         file: rel_path,
         index: &index,
     };
-    let mut collector = structure::Collector::new(src);
+    let mut collector = structure::Collector::new(src, prepared.extension_blocks);
     collector.compilation_unit(root);
     let structure::Collected {
         mut symbols,

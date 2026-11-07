@@ -49,6 +49,26 @@ explain = "No other type may inherit from it."
 label = "read-only"
 explain = "Can only be set during construction."
 
+[async-void]
+label = "async void"
+explain = "Starts asynchronous work that callers cannot wait for; its exceptions are not visible to them. Normally only used for event handlers."
+
+[extern]
+label = "native"
+explain = "Implemented outside .NET (for example in a native DLL through [DllImport]); there is no body to show."
+
+[file]
+label = "file-local"
+explain = "Visible only inside this source file."
+
+[required]
+label = "required"
+explain = "Must be set when the object is created (in its initializer)."
+
+[init]
+label = "init-only"
+explain = "Can only be set while the object is being created."
+
 [synthesized]
 label = "generated"
 explain = "Created by the compiler; it does not appear in the source."

@@ -126,6 +126,9 @@ pub struct Symbol {
     pub has_flow: bool,
     /// True for symbols that live outside the project (referenced but not declared here).
     pub external: bool,
+    /// Documentation written by the author (C# `///` summary, JSDoc, Rust `///`), as plain text.
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 /// Relation between two symbols.
@@ -257,6 +260,8 @@ pub enum Concept {
     Break,
     Continue,
     Jump,
+    /// Conditional compilation (`#if DEBUG`, `#[cfg(...)]`): only one path exists in a build.
+    BuildSwitch,
     // Scopes
     Try,
     Scope,
@@ -311,6 +316,7 @@ impl Concept {
         Concept::Break,
         Concept::Continue,
         Concept::Jump,
+        Concept::BuildSwitch,
         Concept::Try,
         Concept::Scope,
         Concept::CriticalSection,

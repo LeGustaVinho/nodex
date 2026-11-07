@@ -3,9 +3,11 @@
 use nodex_ir::{ImportRef, Language, Symbol, SymbolId, SymbolKind, TypeRef, TypeRelation};
 use tree_sitter::Node;
 
+use std::collections::HashMap;
+
 use crate::syntax::{
-    Src, attributes, bare_type_name, children, children_of_kind, contains_kind,
-    first_child_of_kind, modifiers, named_children, type_names,
+    Src, attributes, bare_type_name, children, children_of_kind, contains_kind, doc_comment, first_child_of_kind,
+    flatten_preproc, id_types, local_function_id, modifiers, named_children, parameters, type_names,
 };
 use crate::unity;
 
@@ -20,11 +22,19 @@ pub enum BodyKind {
     Setter,
     /// Top-level statements (C# 9+ programs without `Main`).
     TopLevel,
+    /// Event `add` accessor: runs when a handler subscribes.
+    EventAdd,
+    /// Event `remove` accessor: runs when a handler unsubscribes.
+    EventRemove,
+    /// A function declared inside another function.
+    LocalFunction,
 }
 
 /// A function-like body waiting to be lowered into a flow graph.
 pub struct BodyJob<'t> {
     pub symbol: SymbolId,
+    /// The member that owns the body (local functions belong to their enclosing method).
+    pub owner: SymbolId,
     pub name: String,
     pub kind: BodyKind,
     /// The declaration node (method, constructor, accessor, property) or the compilation unit.
@@ -56,12 +66,16 @@ pub struct Collector<'a, 't> {
     usings: Vec<String>,
     namespaces: Vec<String>,
     unity_file: bool,
+    /// Build conditions (`#if DEBUG`) around the declaration being visited.
+    conditions: Vec<String>,
+    /// C# 14 `extension(T receiver)` blocks, rewritten for the grammar: start byte → receiver.
+    extension_blocks: HashMap<usize, String>,
 }
 
 const GLOBAL_NS: &str = "(global)";
 
 impl<'a, 't> Collector<'a, 't> {
-    pub fn new(src: Src<'a>) -> Self {
+    pub fn new(src: Src<'a>, extension_blocks: HashMap<usize, String>) -> Self {
         Self {
             src,
             symbols: Vec::new(),
@@ -70,7 +84,21 @@ impl<'a, 't> Collector<'a, 't> {
             usings: Vec::new(),
             namespaces: Vec::new(),
             unity_file: false,
+            conditions: Vec::new(),
+            extension_blocks,
         }
+    }
+
+    /// Visits `nodes` with `#if` branches flattened, tracking their build conditions.
+    fn each_conditional(&mut self, nodes: Vec<Node<'t>>, mut visit: impl FnMut(&mut Self, Node<'t>)) {
+        let mut flat = Vec::new();
+        flatten_preproc(self.src, nodes, &self.conditions.clone(), &mut flat);
+        let saved = self.conditions.clone();
+        for (node, conds) in flat {
+            self.conditions = conds;
+            visit(self, node);
+        }
+        self.conditions = saved;
     }
 
     pub fn finish(mut self) -> Collected<'t> {
@@ -105,23 +133,18 @@ impl<'a, 't> Collector<'a, 't> {
 
         let mut current_ns: Option<String> = None;
         let mut top_level = Vec::new();
-        for child in named_children(root) {
-            match child.kind() {
-                "file_scoped_namespace_declaration" => {
-                    let name = child
-                        .child_by_field_name("name")
-                        .map(|n| self.src.norm(n))
-                        .unwrap_or_default();
-                    self.namespace_symbol(&name, child);
-                    // Older grammars nest the members; newer ones make them siblings.
-                    self.declarations(child, Some(&name), None);
-                    current_ns = Some(name);
-                }
-                "namespace_declaration" => self.namespace(child, None),
-                "global_statement" => top_level.push(child),
-                _ => self.declaration(child, current_ns.as_deref(), None),
+        self.each_conditional(named_children(root), |this, child| match child.kind() {
+            "file_scoped_namespace_declaration" => {
+                let name = child.child_by_field_name("name").map(|n| this.src.norm(n)).unwrap_or_default();
+                this.namespace_symbol(&name, child);
+                // Older grammars nest the members; newer ones make them siblings.
+                this.declarations(child, Some(&name), None);
+                current_ns = Some(name);
             }
-        }
+            "namespace_declaration" => this.namespace(child, None),
+            "global_statement" => top_level.push(child),
+            _ => this.declaration(child, current_ns.as_deref(), None),
+        });
         if !top_level.is_empty() {
             self.top_level_program(root, current_ns.as_deref());
         }
@@ -172,6 +195,7 @@ impl<'a, 't> Collector<'a, 't> {
             type_text: None,
             has_flow: false,
             external: false,
+            doc: None,
         });
     }
 
@@ -186,21 +210,20 @@ impl<'a, 't> Collector<'a, 't> {
         };
         self.namespace_symbol(&name, node);
         if let Some(body) = node.child_by_field_name("body") {
-            for child in named_children(body) {
+            self.each_conditional(named_children(body), |this, child| {
                 if child.kind() == "namespace_declaration" {
-                    self.namespace(child, Some(&name));
+                    this.namespace(child, Some(&name));
                 } else {
-                    self.declaration(child, Some(&name), None);
+                    this.declaration(child, Some(&name), None);
                 }
-            }
+            });
         }
     }
 
     /// Visits the declarations nested directly in `node` (used for file-scoped namespaces).
     fn declarations(&mut self, node: Node<'t>, ns: Option<&str>, parent_type: Option<&TypeCtx>) {
-        for child in named_children(node) {
-            self.declaration(child, ns, parent_type);
-        }
+        let kids: Vec<Node<'t>> = named_children(node).into_iter().filter(|c| c.kind() != "qualified_name" && c.kind() != "identifier").collect();
+        self.each_conditional(kids, |this, child| this.declaration(child, ns, parent_type));
     }
 
     fn declaration(&mut self, node: Node<'t>, ns: Option<&str>, parent_type: Option<&TypeCtx>) {
@@ -217,6 +240,19 @@ impl<'a, 't> Collector<'a, 't> {
         let Some(name_node) = node.child_by_field_name("name") else {
             return;
         };
+        // C# 14 extension block (`extension(string s) { ... }`): its members extend the receiver
+        // and belong to the enclosing static class.
+        if let (Some(receiver), Some(owner)) = (self.extension_blocks.get(&node.start_byte()).cloned(), parent_type) {
+            let saved = self.conditions.clone();
+            self.conditions.push("extension".into());
+            self.conditions.push(format!("extends:{receiver}"));
+            if let Some(body) = node.child_by_field_name("body").or_else(|| first_child_of_kind(node, "declaration_list")) {
+                let members = named_children(body);
+                self.each_conditional(members, |this, member| this.member(member, owner, ns));
+            }
+            self.conditions = saved;
+            return;
+        }
         let base_name = src.norm(name_node);
         let type_params = node
             .child_by_field_name("type_parameters")
@@ -251,6 +287,9 @@ impl<'a, 't> Collector<'a, 't> {
         }
         if kind == SymbolKind::Struct {
             flavors.push("value-type".into());
+        }
+        if text_has("ref") {
+            flavors.push("ref-struct".into());
         }
         if arity > 0 {
             flavors.push("generic".into());
@@ -294,6 +333,7 @@ impl<'a, 't> Collector<'a, 't> {
             type_text: None,
             has_flow: false,
             external: false,
+            doc: doc_comment(src, node),
         });
         for base in bases {
             self.type_refs.push(TypeRef {
@@ -322,14 +362,35 @@ impl<'a, 't> Collector<'a, 't> {
                 }
             }
 
+        // Primary constructor (`class Square(double side)`, records): a constructor without a body.
+        if matches!(kind, SymbolKind::Class | SymbolKind::Struct | SymbolKind::Record)
+            && let Some(list) = first_child_of_kind(node, "parameter_list")
+        {
+            let params = parameters(src, node);
+            let ctor_id = format!("{}..ctor({})", ctx.qualified, id_types(&params).join(", "));
+            self.push_or_merge(Symbol {
+                id: ctor_id,
+                kind: SymbolKind::Constructor,
+                name: ctx.name.clone(),
+                qualified_name: format!("{}.{}", ctx.qualified, ctx.name),
+                parent: Some(ctx.id.clone()),
+                language: Language::Csharp,
+                origins: vec![src.span(list)],
+                flavors: vec!["primary-constructor".into()],
+                signature: Some(format!("{}{}", ctx.name, src.norm(list))),
+                type_text: None,
+                has_flow: false,
+                external: false,
+                doc: None,
+            });
+        }
+
         if kind == SymbolKind::Delegate {
             return;
         }
         let body = node.child_by_field_name("body").or_else(|| first_child_of_kind(node, "declaration_list"));
         let Some(body) = body else { return };
-        for member in named_children(body) {
-            self.member(member, &ctx, ns);
-        }
+        self.each_conditional(named_children(body), |this, member| this.member(member, &ctx, ns));
     }
 
     fn member(&mut self, node: Node<'t>, ty: &TypeCtx, ns: Option<&str>) {
@@ -357,7 +418,10 @@ impl<'a, 't> Collector<'a, 't> {
                 if let Some(name) = node.child_by_field_name("name") {
                     let mut flavors = modifiers(src, node);
                     flavors.extend(attributes(src, node));
-                    self.member_symbol(ty, node, SymbolKind::Event, &src.norm(name), Some(node), node.child_by_field_name("type"), flavors);
+                    let ty_node = node.child_by_field_name("type");
+                    let name = src.norm(name);
+                    let id = self.member_symbol(ty, node, SymbolKind::Event, &name, Some(node), ty_node, flavors);
+                    self.accessors(node, ty, &id, &name, ty_node.map(|t| src.norm(t)));
                 }
             }
             "enum_member_declaration_list" => {
@@ -377,35 +441,100 @@ impl<'a, 't> Collector<'a, 't> {
     }
 
     fn params(&self, node: Node) -> Vec<(String, Option<String>, Vec<String>)> {
-        let src = self.src;
-        let Some(list) = node.child_by_field_name("parameters").or_else(|| first_child_of_kind(node, "parameter_list")) else {
-            return Vec::new();
-        };
-        children_of_kind(list, "parameter")
-            .into_iter()
-            .map(|p| {
-                let name = p.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_default();
-                let ty = p.child_by_field_name("type").map(|t| src.norm(t));
-                let mods = children(p)
-                    .into_iter()
-                    .filter(|c| c.kind() == "modifier" || c.kind() == "parameter_modifier" || (!c.is_named() && matches!(src.text(*c), "this" | "ref" | "out" | "in" | "params")))
-                    .map(|c| src.norm(c))
-                    .collect();
-                (name, ty, mods)
+        parameters(self.src, node)
+    }
+
+    /// `IEnumerable.` for an explicit interface implementation (`IEnumerable.GetEnumerator()`).
+    fn explicit_interface(&self, node: Node) -> String {
+        first_child_of_kind(node, "explicit_interface_specifier")
+            .map(|s| {
+                let full = bare_type_name(self.src.text(s).trim_end_matches('.'));
+                format!("{}.", full.rsplit('.').next().unwrap_or(&full))
             })
-            .collect()
+            .unwrap_or_default()
+    }
+
+    /// Function declarations nested in a body get their own symbols and Blueprints.
+    fn local_functions(&mut self, body: Node<'t>, owner: &str, parent: &str, ty: &TypeCtx) {
+        let src = self.src;
+        let mut stack = vec![body];
+        while let Some(n) = stack.pop() {
+            for child in named_children(n) {
+                if child.kind() != "local_function_statement" {
+                    stack.push(child);
+                    continue;
+                }
+                stack.push(child);
+                let name = child.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_else(|| "?".into());
+                let Some(fn_body) = child.child_by_field_name("body").or_else(|| {
+                    named_children(child).into_iter().find(|c| matches!(c.kind(), "block" | "arrow_expression_clause"))
+                }) else {
+                    continue;
+                };
+                let id = local_function_id(src, owner, child);
+                let params = parameters(src, child);
+                let mut flavors = modifiers(src, child);
+                flavors.push("local-function".into());
+                if contains_kind(fn_body, "yield_statement") {
+                    flavors.push("iterator".into());
+                }
+                let returns = child.child_by_field_name("type").map(|t| src.norm(t));
+                let signature = src.header(child, Some(fn_body));
+                self.push_or_merge(Symbol {
+                    id: id.clone(),
+                    kind: SymbolKind::Function,
+                    name: name.clone(),
+                    qualified_name: format!("{parent}.{name}"),
+                    parent: Some(parent.to_owned()),
+                    language: Language::Csharp,
+                    origins: vec![src.span(child)],
+                    flavors: flavors.clone(),
+                    signature: Some(signature.clone()),
+                    type_text: returns.clone(),
+                    has_flow: false,
+                    external: false,
+                    doc: None,
+                });
+                self.bodies.push(BodyJob {
+                    symbol: id,
+                    owner: owner.to_owned(),
+                    name,
+                    kind: BodyKind::LocalFunction,
+                    decl: child,
+                    body: fn_body,
+                    signature,
+                    params: params.into_iter().map(|(n, t, _)| (n, t)).collect(),
+                    returns_void: returns.as_deref() == Some("void"),
+                    flavors,
+                    unity_message: None,
+                    unity: ty.unity || self.unity_file,
+                });
+            }
+        }
     }
 
     fn method(&mut self, node: Node<'t>, ty: &TypeCtx) {
         let src = self.src;
         let params = self.params(node);
-        let param_types: Vec<String> = params.iter().map(|(_, t, _)| t.clone().unwrap_or_else(|| "?".into())).collect();
+        let param_types = id_types(&params);
+        let is_static = modifiers(src, node).iter().any(|m| m == "static");
+        let explicit = self.explicit_interface(node);
         let (kind, name, id_name) = match node.kind() {
+            "constructor_declaration" if is_static => (SymbolKind::Constructor, format!("static {}", ty.name), ".cctor".to_owned()),
             "constructor_declaration" => (SymbolKind::Constructor, ty.name.clone(), ".ctor".to_owned()),
             "destructor_declaration" => (SymbolKind::Method, format!("~{}", ty.name), "Finalize".to_owned()),
             "operator_declaration" => {
-                let op = node.child_by_field_name("operator").map(|o| src.norm(o)).unwrap_or_else(|| "?".into());
-                (SymbolKind::Method, format!("operator {op}"), format!("op_{op}"))
+                let op_node = node.child_by_field_name("operator");
+                let mut op = op_node.map(|o| src.norm(o)).unwrap_or_else(|| "?".into());
+                // C# 14 `operator +=` is parsed as `+` (see prepare.rs); the original has the `=`.
+                if let Some(o) = op_node
+                    && src.text.get(o.end_byte()..o.end_byte() + 1) == Some("=")
+                {
+                    op.push('=');
+                }
+                // `operator checked +` is a distinct overload of `operator +`.
+                let checked = if children(node).iter().any(|c| src.text(*c) == "checked") { "checked " } else { "" };
+                (SymbolKind::Method, format!("operator {checked}{op}"), format!("op_{}{op}", checked.replace(' ', "_")))
             }
             "conversion_operator_declaration" => {
                 let target = node.child_by_field_name("type").map(|t| src.norm(t)).unwrap_or_default();
@@ -413,6 +542,7 @@ impl<'a, 't> Collector<'a, 't> {
             }
             _ => {
                 let name = node.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_else(|| "?".into());
+                let name = format!("{explicit}{name}");
                 (SymbolKind::Method, name.clone(), name)
             }
         };
@@ -424,8 +554,17 @@ impl<'a, 't> Collector<'a, 't> {
 
         let mut flavors = modifiers(src, node);
         flavors.extend(attributes(src, node));
+        flavors.extend(self.conditions.iter().cloned());
         if params.first().is_some_and(|(_, _, m)| m.iter().any(|m| m == "this")) {
             flavors.push("extension".into());
+        }
+        if !explicit.is_empty() {
+            flavors.push("explicit-interface".into());
+        }
+        if flavors.iter().any(|f| f == "async")
+            && returns.is_some_and(|r| src.norm(r) == "void")
+        {
+            flavors.push("async-void".into());
         }
         let unity_message = if ty.unity && kind == SymbolKind::Method {
             unity::lifecycle_message(&name)
@@ -464,6 +603,7 @@ impl<'a, 't> Collector<'a, 't> {
             type_text: type_text.clone(),
             has_flow: false,
             external: false,
+            doc: doc_comment(src, node),
         });
         for (_, t, _) in &params {
             if let Some(t) = t {
@@ -480,7 +620,9 @@ impl<'a, 't> Collector<'a, 't> {
             let returns_void = matches!(kind, SymbolKind::Constructor)
                 || node.kind() == "destructor_declaration"
                 || type_text.as_deref() == Some("void");
+            self.local_functions(body, &id, &id, ty);
             self.bodies.push(BodyJob {
+                owner: id.clone(),
                 symbol: id,
                 name,
                 kind: if kind == SymbolKind::Constructor { BodyKind::Constructor } else { BodyKind::Method },
@@ -499,10 +641,12 @@ impl<'a, 't> Collector<'a, 't> {
     fn property(&mut self, node: Node<'t>, ty: &TypeCtx) {
         let src = self.src;
         let is_indexer = node.kind() == "indexer_declaration";
+        let explicit = self.explicit_interface(node);
         let name = if is_indexer {
-            "this[]".to_owned()
+            format!("{explicit}this[]")
         } else {
-            node.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_else(|| "?".into())
+            let short = node.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_else(|| "?".into());
+            format!("{explicit}{short}")
         };
         let ty_node = node.child_by_field_name("type");
         let mut flavors = modifiers(src, node);
@@ -525,6 +669,7 @@ impl<'a, 't> Collector<'a, 't> {
             }
             self.bodies.push(BodyJob {
                 symbol: id.clone(),
+                owner: id.clone(),
                 name: name.clone(),
                 kind: BodyKind::Getter,
                 decl: node,
@@ -539,6 +684,13 @@ impl<'a, 't> Collector<'a, 't> {
             return;
         }
 
+        self.accessors(node, ty, &id, &name, type_text);
+    }
+
+    /// `get`/`set`/`init` of properties and indexers, `add`/`remove` of events: one Blueprint
+    /// per accessor that has a body.
+    fn accessors(&mut self, node: Node<'t>, ty: &TypeCtx, id: &str, name: &str, type_text: Option<String>) {
+        let src = self.src;
         let Some(accessors) = node.child_by_field_name("accessors").or_else(|| first_child_of_kind(node, "accessor_list")) else {
             return;
         };
@@ -554,7 +706,12 @@ impl<'a, 't> Collector<'a, 't> {
                 continue; // auto-accessor
             };
             let acc_id = format!("{id}.{keyword}");
-            let role = if keyword == "get" { "getter" } else { "setter" };
+            let role = match keyword {
+                "get" => "getter",
+                "add" => "event-add",
+                "remove" => "event-remove",
+                _ => "setter",
+            };
             let mut acc_flavors = modifiers(src, acc);
             acc_flavors.push(role.into());
             self.symbols.push(Symbol {
@@ -562,7 +719,7 @@ impl<'a, 't> Collector<'a, 't> {
                 kind: SymbolKind::Method,
                 name: format!("{name}.{keyword}"),
                 qualified_name: format!("{}.{}.{}", ty.qualified, name, keyword),
-                parent: Some(id.clone()),
+                parent: Some(id.to_owned()),
                 language: Language::Csharp,
                 origins: vec![src.span(acc)],
                 flavors: acc_flavors.clone(),
@@ -570,6 +727,7 @@ impl<'a, 't> Collector<'a, 't> {
                 type_text: type_text.clone(),
                 has_flow: false,
                 external: false,
+                doc: None,
             });
             let params = if keyword == "get" {
                 Vec::new()
@@ -577,9 +735,15 @@ impl<'a, 't> Collector<'a, 't> {
                 vec![("value".to_owned(), type_text.clone())]
             };
             self.bodies.push(BodyJob {
+                owner: acc_id.clone(),
                 symbol: acc_id,
                 name: format!("{name}.{keyword}"),
-                kind: if keyword == "get" { BodyKind::Getter } else { BodyKind::Setter },
+                kind: match keyword {
+                    "get" => BodyKind::Getter,
+                    "add" => BodyKind::EventAdd,
+                    "remove" => BodyKind::EventRemove,
+                    _ => BodyKind::Setter,
+                },
                 decl: acc,
                 body,
                 signature: format!("{keyword} {name}"),
@@ -627,6 +791,7 @@ impl<'a, 't> Collector<'a, 't> {
             type_text,
             has_flow: false,
             external: false,
+            doc: doc_comment(src, sig_node.unwrap_or(node)),
         });
         if let Some(t) = ty_node {
             for n in type_names(src, t) {
@@ -668,6 +833,7 @@ impl<'a, 't> Collector<'a, 't> {
                 type_text: None,
                 has_flow: false,
                 external: false,
+                doc: None,
             });
         }
         let id = format!("{qualified}.<Main>$(string[])");
@@ -684,8 +850,11 @@ impl<'a, 't> Collector<'a, 't> {
             type_text: None,
             has_flow: false,
             external: false,
+            doc: None,
         });
+        self.local_functions(root, &id, &id, &TypeCtx { id: qualified_id(&id), qualified: String::new(), name: String::new(), kind: SymbolKind::Class, unity: false });
         self.bodies.push(BodyJob {
+            owner: id.clone(),
             symbol: id,
             name: "Top-level statements".into(),
             kind: BodyKind::TopLevel,
@@ -700,8 +869,14 @@ impl<'a, 't> Collector<'a, 't> {
         });
     }
 
-    /// Adds a symbol, merging partial declarations that share an id.
-    fn push_or_merge(&mut self, symbol: Symbol) {
+    /// Adds a symbol, merging partial declarations that share an id. Build conditions around
+    /// the declaration (`#if DEBUG`) become flavors.
+    fn push_or_merge(&mut self, mut symbol: Symbol) {
+        for c in &self.conditions {
+            if !symbol.flavors.contains(c) {
+                symbol.flavors.push(c.clone());
+            }
+        }
         if let Some(existing) = self.symbols.iter_mut().find(|s| s.id == symbol.id) {
             existing.origins.extend(symbol.origins);
             for f in symbol.flavors {
@@ -713,6 +888,12 @@ impl<'a, 't> Collector<'a, 't> {
             self.symbols.push(symbol);
         }
     }
+}
+
+/// The type part of a member id (`A.B.M(int)` → `A.B`).
+fn qualified_id(member: &str) -> String {
+    let head = member.split('(').next().unwrap_or(member);
+    head.rsplit_once('.').map(|(t, _)| t.to_owned()).unwrap_or_default()
 }
 
 /// The type currently being visited.

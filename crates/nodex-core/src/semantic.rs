@@ -176,6 +176,7 @@ fn external_type(id: &str, target: &SemanticTarget, contract: bool, language: La
         type_text: None,
         has_flow: false,
         external: true,
+        doc: None,
     }
 }
 

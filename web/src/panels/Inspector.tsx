@@ -91,9 +91,16 @@ export function Inspector() {
         </div>
       );
     }
+    const owner = node.concept === "Entry" || node.concept === "EventEntry" ? index?.byId.get(flow.data.symbol) : undefined;
     return (
       <div className="inspector">
         <ConceptHeader concept={node.concept} label={node.label} />
+        {owner?.doc && (
+          <div className="insp-section">
+            <div className="section-title">Author's description</div>
+            <p className="doc">{owner.doc}</p>
+          </div>
+        )}
         {node.calls.length > 0 && (
           <div className="insp-section">
             <div className="section-title">Calls</div>
@@ -158,6 +165,7 @@ export function Inspector() {
         </span>
       </div>
       {symbol.signature && <pre className="code-snippet">{symbol.signature}</pre>}
+      {symbol.doc && <p className="doc">{symbol.doc}</p>}
       {symbol.has_flow && (
         <div className="button-row">
           <button className="primary" onClick={() => openFlow(symbol.id)}>

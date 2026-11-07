@@ -38,4 +38,8 @@ has_flow: boolean,
 /**
  * True for symbols that live outside the project (referenced but not declared here).
  */
-external: boolean, };
+external: boolean, 
+/**
+ * Documentation written by the author (C# `///` summary, JSDoc, Rust `///`), as plain text.
+ */
+doc: string | null, };

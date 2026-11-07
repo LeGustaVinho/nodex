@@ -134,3 +134,105 @@ fn rosetta_filter_map_sum_csharp() {
     let ir = lower_source("filter_map_sum.cs", &text);
     assert_eq!(canon::canonical(&ir.flows[0]).trim(), expected.replace("\r\n", "\n").trim());
 }
+
+/// Syntax coverage fixture (C# 1–14): outline snapshot per file.
+#[test]
+fn syntax_fixture_snapshot() {
+    let project = open("csharp/Syntax");
+    for file in SYNTAX_FILES {
+        let ir = project.file_ir(file).expect("file is tracked");
+        insta::assert_snapshot!(format!("syntax_{}", file.replace('.', "_")), outline_file(ir));
+    }
+}
+
+const SYNTAX_FILES: [&str; 6] = ["Declarations.cs", "Statements.cs", "Expressions.cs", "Preprocessor.cs", "Advanced.cs", "Program.cs"];
+
+fn has_opaque(e: &nodex_ir::Expr) -> bool {
+    e.concept == Concept::Opaque || e.children.iter().any(has_opaque)
+}
+
+/// The syntax fixture covers C# 1–14 and must map completely: no parse diagnostics, no
+/// `Opaque` statement or expression, and every declaration with a distinct symbol.
+#[test]
+fn syntax_fixture_is_fully_mapped() {
+    let mut project = open("csharp/Syntax");
+    for file in SYNTAX_FILES {
+        let ir = project.file_ir(file).unwrap();
+        assert!(ir.diagnostics.is_empty(), "{file}: {:?}", ir.diagnostics);
+        for flow in &ir.flows {
+            for n in &flow.nodes {
+                assert_ne!(n.concept, Concept::Opaque, "{file} {}: `{}`", flow.symbol, n.code);
+                assert!(!n.expr.as_ref().is_some_and(has_opaque), "{file} {}: opaque expression in `{}`", flow.symbol, n.code);
+            }
+        }
+    }
+
+    let graph = project.structure();
+    let sym = |id: &str| graph.symbols.iter().find(|s| s.id == id).unwrap_or_else(|| panic!("missing symbol {id}"));
+    let has = |id: &str, flavor: &str| sym(id).flavors.iter().any(|f| f == flavor);
+    let decl = "Syntax.Declarations";
+
+    // Distinct ids for static constructors and explicit interface implementations.
+    assert!(sym(&format!("{decl}.Container`1..cctor()")).has_flow);
+    assert!(sym(&format!("{decl}.Container`1..ctor()")).has_flow);
+    assert!(has(&format!("{decl}.Container`1.IEnumerable.GetEnumerator()"), "explicit-interface"));
+    // Parameter passing modes and params arrays are part of the id.
+    sym(&format!("{decl}.Container`1.Name(in int, ref int, out string, params int[])"));
+    // Event accessors and primary constructors.
+    assert!(sym(&format!("{decl}.Container`1.Changed.add")).has_flow);
+    assert!(sym(&format!("{decl}.Container`1.Changed.remove")).has_flow);
+    assert!(has(&format!("{decl}.Square..ctor(double)"), "primary-constructor"));
+    assert!(has(&format!("{decl}.Buffer"), "ref-struct"));
+    // C# 14 extension members belong to the static class and name their receiver.
+    assert!(has(&format!("{decl}.Extensions.Shout()"), "extension"));
+    assert!(has(&format!("{decl}.Extensions.Shout()"), "extends:string text"));
+    assert!(has(&format!("{decl}.Extensions.WordCount"), "extension"));
+    assert!(!graph.symbols.iter().any(|s| s.id.contains("..ctor(string)") && s.id.contains("Extensions")));
+
+    // Conditional compilation keeps every variant, tagged with its condition.
+    assert!(has("Syntax.Preprocessor.Conditional.DebugOnly()", "#if DEBUG"));
+    assert!(has("Syntax.Preprocessor.Conditional.ReleaseOnly()", "#else"));
+    let run = project.flow("Syntax.Preprocessor.Conditional.Run(int, Dictionary<string, int>, object)").unwrap();
+    let switch = run.nodes.iter().find(|n| n.concept == Concept::BuildSwitch).expect("build switch");
+    let variants: Vec<&str> = switch.outputs.iter().filter(|p| p.id.starts_with("variant:")).map(|p| p.label.as_str()).collect();
+    assert_eq!(variants, ["#if DEBUG", "#elif TRACE", "#else"]);
+    assert!(run.nodes.iter().any(|n| n.concept == Concept::BuildSwitch && n.label.contains("UNITY_EDITOR")));
+    // `out var found` and `is string text` declare locals that later statements read.
+    let uses = |name: &str| run.nodes.iter().any(|n| n.inputs.iter().any(|p| p.id == format!("use:{name}")));
+    assert!(uses("found") && uses("text"));
+
+    // Local functions get their own Blueprint, linked from the declaring node.
+    let locals_id = "Syntax.Statements.Statements.Locals()";
+    let local_fn = format!("{locals_id}.localFunction(int)");
+    assert!(project.flow(&local_fn).is_some());
+    let locals = project.flow(locals_id).unwrap();
+    assert!(locals.nodes.iter().any(|n| n.calls.iter().any(|c| c.symbol.as_deref() == Some(local_fn.as_str()))));
+    // `for (;;)` is an endless loop; deconstruction declarations are never dropped.
+    let loops = project.flow("Syntax.Statements.Statements.Loops(int[], Dictionary<string, int>)").unwrap();
+    assert!(loops.nodes.iter().any(|n| n.concept == Concept::LoopInfinite));
+    let asyncs = project.flow("Syntax.Statements.Statements.Asynchrony(IAsyncEnumerable<int>, CancellationToken)").unwrap();
+    assert!(asyncs.nodes.iter().any(|n| n.label.starts_with("unpack (a, b)") && n.writes.contains(&"a".to_owned())));
+
+    // Round 2: C# 13/14 syntax the grammar predates, operator overloads, docs, top-level code.
+    let adv = "Syntax.Advanced";
+    sym(&format!("{adv}.Money.op_+=(Money)"));
+    sym(&format!("{adv}.Money.op_checked_+(Money, Money)"));
+    sym(&format!("{adv}.Money.op_+(Money, Money)"));
+    assert_eq!(sym(&format!("{adv}.Money")).doc.as_deref(), Some("A money amount with checked arithmetic."));
+    assert!(has(&format!("{adv}.Widget.OnClick(object?, EventArgs)"), "async-void"));
+    assert!(!sym(&format!("{adv}.Widget.MessageBeep(uint)")).has_flow, "extern methods have no body");
+    assert!(has(&format!("{adv}.Inner.Hidden"), "file"));
+    sym(&format!("{adv}.Widget..ctor(int)"));
+    sym(&format!("{adv}.Widget.Shown"));
+    sym(&format!("{adv}.Widget.Hidden"));
+    let stmts = project.flow(&format!("{adv}.Advanced.Statements(Node?, int[], Span<int>, (int, int))")).unwrap();
+    let assign = stmts.nodes.iter().find(|n| n.code.starts_with("node?.Value = 5")).expect("null-conditional assignment");
+    assert!(assign.flavors.iter().any(|f| f == "safe-access"));
+    assert!(assign.label.starts_with("if node exists"));
+    assert!(stmts.nodes.iter().any(|n| n.concept == Concept::Match && n.label.starts_with("match pair")));
+    // Top-level program with a local function.
+    let main = graph.symbols.iter().find(|s| s.name == "Top-level statements").expect("top-level program");
+    let program = project.flow(&main.id).unwrap();
+    assert!(program.nodes.iter().any(|n| n.concept == Concept::Return));
+    assert!(graph.symbols.iter().any(|s| s.kind == nodex_ir::SymbolKind::Function && s.name == "Describe"));
+}

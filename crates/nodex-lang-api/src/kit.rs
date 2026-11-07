@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use nodex_ir::{
-    Concept, Expr, FlowEdge, FlowEdgeKind, FlowGraph, FlowNode, Language, NodeId, Pin, PinKind,
+    CallTarget, Concept, Expr, FlowEdge, FlowEdgeKind, FlowGraph, FlowNode, Language, NodeId, Pin, PinKind,
     Purity, Span, SymbolId, stable_id,
 };
 
@@ -75,6 +75,8 @@ pub struct NodeSpec {
     pub expr: Option<Expr>,
     /// Pure nodes have no exec pins.
     pub purity: Purity,
+    /// Targets known from syntax alone (for example a local function's own Blueprint).
+    pub calls: Vec<CallTarget>,
 }
 
 impl NodeSpec {
@@ -87,7 +89,13 @@ impl NodeSpec {
             flavors: Vec::new(),
             expr: None,
             purity: Purity::Impure,
+            calls: Vec::new(),
         }
+    }
+
+    pub fn call(mut self, target: CallTarget) -> Self {
+        self.calls.push(target);
+        self
     }
 
     pub fn flavor(mut self, flavor: impl Into<String>) -> Self {
@@ -163,7 +171,7 @@ impl FlowBuilder {
             outputs: Vec::new(),
             expr: spec.expr,
             writes: Vec::new(),
-            calls: Vec::new(),
+            calls: spec.calls,
         });
         id
     }
@@ -280,6 +288,20 @@ impl FlowBuilder {
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
             self.scopes.pop();
+        }
+    }
+
+    /// Number of nodes created so far (use with [`FlowBuilder::add_flavor_at`]).
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Adds a flavor to the node created at position `index`, if it exists.
+    pub fn add_flavor_at(&mut self, index: usize, flavor: &str) {
+        if let Some(n) = self.nodes.get_mut(index)
+            && !n.flavors.iter().any(|f| f == flavor)
+        {
+            n.flavors.push(flavor.to_owned());
         }
     }
 

@@ -229,6 +229,53 @@ impl<'a> ExprLowering<'a> {
                 let kids = node.child_by_field_name("expression").map(|e| vec![self.lower(e)]).unwrap_or_default();
                 mk(Concept::TypeCheck, truncate(&format!("is {pattern}"), 40), kids)
             }
+            "postfix_unary_expression" if children(node).iter().any(|c| !c.is_named() && src.text(*c) == "!") => {
+                // `x!` (null-forgiving) changes nothing at run time: show the operand.
+                let inner = named_children(node).into_iter().next().unwrap_or(node);
+                let mut e = self.lower(inner);
+                e.flavors.push("null-forgiving".into());
+                e
+            }
+            "ref_expression" | "checked_expression" => {
+                let inner = named_children(node).into_iter().next();
+                let flavor = match node.kind() {
+                    "ref_expression" => "ref",
+                    _ if children(node).iter().any(|c| src.text(*c) == "unchecked") => "unchecked",
+                    _ => "checked",
+                };
+                match inner {
+                    Some(i) => {
+                        let mut e = self.lower(i);
+                        e.flavors.push(flavor.into());
+                        e
+                    }
+                    None => mk(Concept::Opaque, text(), Vec::new()),
+                }
+            }
+            "range_expression" => {
+                let kids = named_children(node).into_iter().map(|c| self.lower(c)).collect();
+                let mut e = mk(Concept::Compose, format!("range {}", text()), kids);
+                e.flavors.push("range".into());
+                e
+            }
+            "as_expression" => {
+                let ty = node.child_by_field_name("right").or_else(|| named_children(node).into_iter().last()).map(|t| src.norm(t)).unwrap_or_default();
+                let kids = node.child_by_field_name("left").or_else(|| named_children(node).into_iter().next()).map(|v| vec![self.lower(v)]).unwrap_or_default();
+                let mut e = mk(Concept::Convert, format!("as {ty}"), kids);
+                e.flavors.push("safe-cast".into());
+                e
+            }
+            "is_expression" => {
+                let ty = node.child_by_field_name("right").map(|t| src.norm(t)).unwrap_or_default();
+                let kids = node.child_by_field_name("left").map(|v| vec![self.lower(v)]).unwrap_or_default();
+                mk(Concept::TypeCheck, format!("is {ty}"), kids)
+            }
+            "spread_element" => {
+                let kids = named_children(node).into_iter().map(|c| self.lower(c)).collect();
+                let mut e = mk(Concept::Compose, "all items of".into(), kids);
+                e.flavors.push("spread".into());
+                e
+            }
             "prefix_unary_expression" | "postfix_unary_expression" => {
                 let op = children(node).into_iter().find(|c| !c.is_named()).map(|c| src.norm(c)).unwrap_or_default();
                 let kids = named_children(node).into_iter().map(|c| self.lower(c)).collect();
@@ -276,7 +323,7 @@ impl<'a> ExprLowering<'a> {
                 let kids = named_children(node)
                     .into_iter()
                     .filter(|c| !c.kind().ends_with("type") && c.kind() != "array_rank_specifier")
-                    .map(|c| self.lower(c))
+                    .map(|c| self.lower_element(c))
                     .collect();
                 mk(Concept::Compose, compose_label(node.kind()).into(), kids)
             }
@@ -297,7 +344,27 @@ impl<'a> ExprLowering<'a> {
                 mk(Concept::Literal, text(), Vec::new())
             }
             "identifier" | "this" | "base" | "this_expression" | "base_expression" | "generic_name"
-            | "qualified_name" | "predefined_type" => mk(Concept::Var, text(), Vec::new()),
+            | "qualified_name" | "predefined_type" | "alias_qualified_name" | "member_binding_expression_name" => {
+                mk(Concept::Var, text(), Vec::new())
+            }
+            "implicit_stackalloc_expression" => {
+                let kids = named_children(node).into_iter().map(|c| self.lower_element(c)).collect();
+                mk(Concept::Compose, "stack array".into(), kids)
+            }
+            "makeref_expression" | "reftype_expression" | "refvalue_expression" => {
+                let kids = named_children(node).into_iter().map(|c| self.lower(c)).collect();
+                mk(Concept::Call, text(), kids)
+            }
+            // `#if` inside an initializer or argument list: all variants, tagged compile-time.
+            "preproc_if" | "preproc_elif" | "preproc_else" => {
+                let mut kids: Vec<Expr> = crate::syntax::preproc_body(node).into_iter().map(|c| self.lower_element(c)).collect();
+                if let Some(alt) = node.child_by_field_name("alternative") {
+                    kids.push(self.lower(alt));
+                }
+                let mut e = mk(Concept::Compose, crate::syntax::preproc_label(src, node), kids);
+                e.flavors.push("compile-time".into());
+                e
+            }
             "declaration_expression" => {
                 let mut e = mk(Concept::Var, text(), Vec::new());
                 e.flavors.push("out-declaration".into());
@@ -386,7 +453,40 @@ impl<'a> ExprLowering<'a> {
                     mk(Concept::Compose, "declarations".into(), values)
                 }
             }
-            _ => mk(Concept::Opaque, text(), Vec::new()),
+            _ => {
+                let mut e = mk(Concept::Opaque, text(), Vec::new());
+                e.flavors.push(format!("syntax:{}", node.kind()));
+                e
+            }
+        }
+    }
+
+    /// An element of a tuple, collection or initializer; `argument` wrappers (`Name: value`) are
+    /// unwrapped and their name kept in the label.
+    fn lower_element(&mut self, node: Node) -> Expr {
+        // `[.. xs, 4]`: collection_element → spread_element / expression_element → value.
+        if matches!(node.kind(), "collection_element" | "expression_element") {
+            return match named_children(node).into_iter().next() {
+                Some(inner) => self.lower_element(inner),
+                None => self.lower(node),
+            };
+        }
+        if node.kind() != "argument" {
+            return self.lower(node);
+        }
+        let name = node
+            .child_by_field_name("name")
+            .or_else(|| first_child_of_kind(node, "name_colon"))
+            .map(|n| self.src.norm(n).trim_end_matches(':').trim().to_owned());
+        match named_children(node).into_iter().rfind(|c| c.kind() != "name_colon") {
+            Some(value) => {
+                let mut e = self.lower(value);
+                if let Some(n) = name {
+                    e.label = format!("{n}: {}", e.label);
+                }
+                e
+            }
+            None => self.lower(node),
         }
     }
 

@@ -1,0 +1,144 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Syntax.Statements.Statements.Branching(int)
+Entry — when Branching(x) is called
+Branch — if x < 0
+  true:
+    Return — return -1
+  false:
+    Branch — if x == 0
+      true:
+        Return — return 0
+      false:
+        Assign — decrease x by 1
+Match — match x
+  case:
+  case:
+    Assign — add 10 to x
+  case:
+    Jump — jump to case 1
+  case:
+    Return — return n
+  case:
+    Jump — jump to default_label
+Return — return x
+== Syntax.Statements.Statements.Loops(int[], Dictionary<string, int>)
+Entry — when Loops(items, map) is called
+Var — total = 0
+Loop.Range — repeat: start int i = 0, j = items.Length - 1; while i < j; step i++
+  body:
+    Assign — add items[i] * items[j] to total
+Loop.Infinite — repeat forever
+  body:
+    Branch — if total > 10
+      true:
+        Break — leave the loop
+      false:
+    Assign — increase total by 1
+Loop.ForEach — for each (key, value) in map
+  body:
+    Assign — add key.Length + value to total
+Loop.ForEach — for each item in items
+  body:
+    Assign — add item to total
+Loop.While — while total > 100
+  body:
+    Assign — divide total by 2
+Loop.While — repeat, then check total > 50
+  body:
+    Assign — decrease total by 1
+    Branch — if total % 3 == 0
+      true:
+        Continue — skip to the next iteration
+      false:
+Return — return total
+== Syntax.Statements.Statements.Asynchrony(IAsyncEnumerable<int>, CancellationToken)
+Entry — when Asynchrony(stream, token) is called
+Var — sum = 0
+Loop.ForEach — for each value in stream.WithCancellation(token)
+  body:
+    Assign — add value to sum
+Var — res = new AsyncResource()
+Await — wait for Task.Yield()
+Await — unpack (a, b) from await TwoAsync()
+Return — return sum + a + b
+== Syntax.Statements.Statements.TwoAsync()
+Entry — when TwoAsync() is called
+Return — return Task.FromResult((1, 2))
+== Syntax.Statements.Statements.Produce()
+Entry — when Produce() is called
+Loop.Range — repeat: start var i = 0; while i < 3; step i++
+  body:
+    Await — wait for Task.Delay(1)
+    Yield — produce i
+Return — stop producing values
+== Syntax.Statements.Statements.Iterate()
+Entry — when Iterate() is called
+Yield — produce 1
+Yield — produce 2
+== Syntax.Statements.Statements.Scopes()
+Entry — when Scopes() is called
+CriticalSection — lock _gate: one thread at a time
+  body:
+    Call — Console.WriteLine("locked")
+Scope — use var a = new Resource(), then dispose it
+  body:
+    Scope — use var b = new Resource(), then dispose it
+      body:
+        Call — Console.WriteLine("nested using")
+Var — c = new Resource()
+Scope — checked region: arithmetic overflow fails
+  body:
+    Var — big = int.MaxValue
+    Assign — increase big by 1
+Scope — unchecked region: arithmetic overflow wraps around
+  body:
+    Var — wrap = int.MaxValue + 1
+Try — try; handle errors below
+  try:
+    Throw — fail with new InvalidOperationException("boom")
+  catch:
+    Call — Console.WriteLine(ex.Message)
+    Throw — rethrow the current error
+  catch:
+  catch:
+  finally:
+    Call — Console.WriteLine("finally")
+== Syntax.Statements.Statements.Pointers(int[])
+Entry — when Pointers(values) is called
+Scope — pin int* p = values in memory
+  body:
+    Var — q = p + 1
+    SetMember — set *q to 42
+    Return — return *p + q[0]
+== Syntax.Statements.Statements.Locals().localFunction(int)
+Entry — when local function localFunction(v) is called
+Return — return v * 2
+== Syntax.Statements.Statements.Locals().StaticLocal(int)
+Entry — when local function StaticLocal(v) is called
+Return — return v + 1
+== Syntax.Statements.Statements.Locals().AsyncLocal()
+Entry — when local function AsyncLocal() is called
+Return — return await Task.Delay(1)
+== Syntax.Statements.Statements.Locals()
+Entry — when Locals() is called
+Var — Limit = 10
+Var — arr = { 1, 2, 3 }
+Var — first = ref arr[0]
+Var — second = ref arr[1]
+Assign — set first to 5
+Destructure — set (int x, int y) to (1, 2)
+Destructure — set (x, y) to (y, x)
+Destructure — unpack (_, z) from (3, 4)
+Var — stack = stackalloc int[Limit]
+Lambda — define local function localFunction(int v)
+Lambda — define local function StaticLocal(int v)
+Lambda — define local function AsyncLocal()
+Assign — set x to localFunction(x) + StaticLocal(y)
+== Syntax.Statements.Resource.Dispose()
+Entry — when Dispose() is called
+== Syntax.Statements.AsyncResource.DisposeAsync()
+Entry — when DisposeAsync() is called
+Return — return ValueTask.CompletedTask

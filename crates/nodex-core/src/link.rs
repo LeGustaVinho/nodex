@@ -138,6 +138,7 @@ fn external_symbol(id: &str, kind: SymbolKind, name: &str, language: Language) -
         type_text: None,
         has_flow: false,
         external: true,
+        doc: None,
     }
 }
 

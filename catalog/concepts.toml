@@ -133,6 +133,12 @@ category = "control"
 shape = "terminal"
 explain = "Transfers execution to a labeled place in the same function (goto). Rare and usually avoided."
 
+[concepts.BuildSwitch]
+title = "Build variant"
+category = "control"
+shape = "branch"
+explain = "Only one of these paths is compiled, chosen by build settings (for example DEBUG, a target platform or UNITY_EDITOR). The program never chooses at run time: in a given build the other paths do not exist."
+
 # --- Scopes ---------------------------------------------------------------------------------
 
 [concepts.Try]

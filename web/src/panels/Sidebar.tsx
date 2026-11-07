@@ -155,7 +155,7 @@ function TreeRow(props: { symbol: Symbol; depth: number; caret?: string; onCaret
       >
         {caret ?? ""}
       </span>
-      <button className="row-main" onClick={onClick} title={symbol.signature ?? symbol.qualified_name}>
+      <button className="row-main" onClick={onClick} title={[symbol.signature ?? symbol.qualified_name, symbol.doc].filter(Boolean).join("\n\n")}>
         <span className={`sym-icon sym-${symbol.kind.toLowerCase()}`}>{ICON[symbol.kind] ?? "·"}</span>
         <span className="sym-name">{symbol.kind === "Namespace" ? symbol.qualified_name : symbol.name}</span>
         {symbol.has_flow && <span className="sym-flow">▶</span>}

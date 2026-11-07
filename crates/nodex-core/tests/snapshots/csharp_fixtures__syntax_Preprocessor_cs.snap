@@ -1,0 +1,32 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Syntax.Preprocessor.Conditional.DebugOnly()
+Entry — when DebugOnly() is called
+Return — return 1
+== Syntax.Preprocessor.Conditional.ReleaseOnly()
+Entry — when ReleaseOnly() is called
+Return — return 2
+== Syntax.Preprocessor.Conditional.Run(int, Dictionary<string, int>, object)
+Entry — when Run(x, map, o) is called
+BuildSwitch — build variant: #if DEBUG / #elif TRACE / #else
+  variant:
+    Call — Console.WriteLine("debug")
+  variant:
+    Call — Console.WriteLine("trace")
+  variant:
+    Call — Console.WriteLine("release")
+Assign — increase x by 1
+Var — declare unused
+Branch — if map.TryGetValue("a", out var found)
+  true:
+    Call — Console.WriteLine(found)
+  false:
+Branch — if o is string text && text.Length > 0
+  true:
+    Call — Console.WriteLine(text)
+  false:
+BuildSwitch — build variant: #if UNITY_EDITOR
+  variant:
+    Call — Console.WriteLine("editor only")

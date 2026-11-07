@@ -74,7 +74,7 @@ function TypeCardImpl({ data, selected }: NodeProps) {
             <li key={m.id}>
               <button
                 className={`member nodrag ${m.has_flow ? "has-flow" : ""}`}
-                title={m.signature ?? m.name}
+                title={[m.signature ?? m.name, m.doc].filter(Boolean).join("\n\n")}
                 onClick={(e) => {
                   e.stopPropagation();
                   select({ kind: "symbol", id: m.id }, m.origins[0] ?? null);

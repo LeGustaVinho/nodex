@@ -29,6 +29,12 @@ export function flavorInfo(catalog: Catalog | undefined, flavor: string, languag
   const common = catalog.flavors["common"]?.[flavor];
   if (common) return common;
   if (flavor.startsWith("attr:")) return { label: `[${flavor.slice(5)}]`, explain: "An attribute (annotation) attached to the declaration." };
+  if (flavor.startsWith("#if ") || flavor.startsWith("#elif ") || flavor === "#else")
+    return { label: flavor, explain: "Only compiled when this build condition holds (for example DEBUG or UNITY_EDITOR); other builds do not contain this code." };
+  if (flavor.startsWith("extends:"))
+    return { label: `extends ${flavor.slice(8)}`, explain: "A member added to an existing type from outside it; it is called as if it belonged to that type." };
+  if (flavor.startsWith("label:"))
+    return { label: `label ${flavor.slice(6)}`, explain: "A jump target: `goto` statements can continue here." };
   return undefined;
 }
 

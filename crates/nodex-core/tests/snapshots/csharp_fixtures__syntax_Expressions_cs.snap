@@ -1,0 +1,82 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Syntax.Expressions.Expressions.Patterns(object, int[], Person)
+Entry — when Patterns(o, values, p) is called
+Var — a = o is string { Length: > 3 } s ? s : "short"
+Var — b = o is not null and not int
+Var — c = values is [1, .., var last] ? last : -1
+Var — d = match p (5 cases)
+Var — e = match o (4 cases)
+Return — return a + b + c + d + e
+== Syntax.Expressions.Expressions.Operators(int[], string?, Person?)
+Entry — when Operators(arr, text, p) is called
+Var — last = arr[^1]
+Var — slice = arr[1..^1]
+Var — all = arr[..]
+Var — len = text?.Length ?? 0
+Var — first = p?.Home?.City
+Var — element = arr?[0]
+Var — forced = text!.Trim()
+Assign — if text is null, set it to "default"
+Var — shifted = len << 2 >> 1 >>> 1
+Var — cond = len > 3 ? "long" : "short"
+Var — cast = (long)len
+Var — safe = p as object
+Var — size = sizeof(int)
+Var — type = typeof(List<>)
+Var — def = default(DateTime)
+Var — name = nameof(Operators)
+Var — check = checked(len + 1)
+Var — idx = Index.FromEnd(1)
+Return — return (last, slice, all, first, element, forced, shifted, cond, cast, safe, size, type, def, n…
+== Syntax.Expressions.Expressions.Creation(Person)
+Entry — when Creation(p) is called
+Var — list = new List<int> { 1, 2, 3 }
+Var — dict = new Dictionary<string, int> { ["a"] = 1, ["b"] = 2 }
+Var — spread = [.. list, 4, 5]
+Var — empty = []
+Var — anon = new { p.Name, Total = 3 }
+Var — q = new("Ann", 30, null)
+Var — older = p with { Age = p.Age + 1 }
+Var — tuple = (Name: "x", Count: 2)
+Var — arr2 = new int[,] { { 1, 2 }, { 3, 4 } }
+Var — jagged = new int[2][]
+Var — implicitArray = new[] { 1, 2 }
+Var — sb = new StringBuilder() → Append("x") → Append(1)
+== Syntax.Expressions.Expressions.Strings(string, int)
+Entry — when Strings(name, count) is called
+Var — interp = $"Hello {name}, you have {count,5:N0} items"
+Var — verbatim = @"C:\path\to"
+Var — raw = """ {"name": "raw"} """
+Var — rawInterp = $$"""{"name": "{{name}}"}"""
+Var — utf8 = "bytes"u8.ToArray()
+Var — ch = 'x'
+Var — escaped = "tab\there"
+Return — return interp + verbatim + raw + rawInterp + utf8.Length + ch + escaped
+== Syntax.Expressions.Expressions.Linq(IEnumerable<Person>, IEnumerable<Address>)
+Entry — when Linq(people, addresses) is called
+Var — query = from person in people let city = person.Home?.City ?? "?" join address in addresses on …
+Var — method = people → Where(x => x.Age > 1) → Select(x => x.Name) → OrderBy(n => n) → ToList()
+Return — return query.Concat(method)
+== Syntax.Expressions.Expressions.Lambdas()
+Entry — when Lambdas() is called
+Var — square = x => x * x
+Var — add = (a, b) => a + b
+Var — parse = static (string s) => int.Parse(s)
+Var — typed = int (string s) => s.Length
+Var — withDefault = (int x = 2) => x + 1
+Var — asyncLambda = async x => { await Task.Delay(x); return x; }
+Var — block = () => { Console.WriteLine("block"); }
+Var — anonymous = delegate (int v) { Console.WriteLine(v); }
+Call — block()
+Call — anonymous(square(add(1, 2)))
+== Syntax.Expressions.Expressions.PointerExpressions()
+Entry — when PointerExpressions() is called
+Var — value = 1
+Var — p = &value
+SetMember — set *p to 2
+Var — point = new Point2()
+Var — pp = &point
+SetMember — set pp->X to 3

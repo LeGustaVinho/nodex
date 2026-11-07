@@ -145,6 +145,50 @@ explain = "Arithmetic overflow raises an error inside this region."
 label = "unsafe"
 explain = "The compiler's memory-safety guarantees are relaxed inside this region."
 
+[ref]
+label = "by reference"
+explain = "An alias to another variable's storage, not a copy: writing through it changes the original."
+
+[range]
+label = "range"
+explain = "A slice of positions, from a start to an end (`^1` counts from the end)."
+
+[spread]
+label = "spread"
+explain = "Inserts every item of another collection at this position."
+
+[safe-cast]
+label = "safe cast"
+explain = "Converts if the value has the type, otherwise produces null instead of failing."
+
+[null-forgiving]
+label = "not null"
+explain = "The author asserts the value is not null; the compiler stops warning, nothing is checked at run time."
+
+[primary-constructor]
+label = "primary constructor"
+explain = "Constructor parameters declared next to the type name; they are available in the whole type body."
+
+[explicit-interface]
+label = "explicit interface"
+explain = "Implements an interface member that is only reachable through the interface, not through the type itself."
+
+[event-add]
+label = "add accessor"
+explain = "Custom code that runs when a handler subscribes (`+=`) to this event."
+
+[event-remove]
+label = "remove accessor"
+explain = "Custom code that runs when a handler unsubscribes (`-=`) from this event."
+
+[ref-struct]
+label = "ref struct"
+explain = "A value type that can only live on the stack (like Span<T>): it cannot be boxed, captured by lambdas or stored in fields of classes."
+
+[compile-time]
+label = "compile time"
+explain = "Decided when the program is built, not while it runs."
+
 [fixed]
 label = "pinned"
 explain = "Memory is pinned so the garbage collector does not move it while the body runs."

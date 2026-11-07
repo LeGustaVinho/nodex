@@ -1,0 +1,19 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Program.<Main>$(string[]).Describe(int)
+Entry — when local function Describe(value) is called
+Return — return $"total = {value}"
+== Program.<Main>$(string[])
+Entry — when the program starts
+Var — total = UsesHidden.Read()
+Branch — if args.Length > 0
+  true:
+    Assign — add args.Length to total
+  false:
+Call — Console.WriteLine(Describe(total))
+Await — wait for Task.Delay(1)
+Return — return total > 0 ? 0 : 1
+unreachable:
+  Lambda — define local function Describe(int value)

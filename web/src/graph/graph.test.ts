@@ -70,7 +70,7 @@ describe("flowToGraph", () => {
 
 const sym = (id: string, kind: Symbol["kind"], parent: string | null, extra: Partial<Symbol> = {}): Symbol => ({
   id, kind, name: id.split(".").pop()!, qualified_name: id.replace(/^ns:/, ""), parent, language: "csharp",
-  origins: [span], flavors: [], signature: null, type_text: null, has_flow: false, external: false, ...extra,
+  origins: [span], flavors: [], signature: null, type_text: null, has_flow: false, external: false, doc: null, ...extra,
 });
 
 const structure: StructureGraph = {

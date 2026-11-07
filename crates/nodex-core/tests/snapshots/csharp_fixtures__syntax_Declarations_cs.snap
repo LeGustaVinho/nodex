@@ -1,0 +1,98 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Syntax.Declarations.IShape.Name
+Entry — when Name is read
+Return — return GetType().Name
+== Syntax.Declarations.IShape.Describe(IShape)
+Entry — when Describe(s) is called
+Return — return $"{s.Name}: {s.Area}"
+== Syntax.Declarations.Point.Length
+Entry — when Length is read
+Return — return Sqrt(X * X + Y * Y)
+== Syntax.Declarations.Point.op_+(Point, Point)
+Entry — when operator +(a, b) is called
+Return — return new(a.X + b.X, a.Y + b.Y)
+== Syntax.Declarations.Point.op_Convert_(double, double)(Point)
+Entry — when operator (double, double)(p) is called
+Return — return (p.X, p.Y)
+== Syntax.Declarations.Point.op_Convert_Point(double)
+Entry — when operator Point(v) is called
+Return — return new(v, v)
+== Syntax.Declarations.Dog.Sound()
+Entry — when Sound() is called
+Return — return "woof"
+== Syntax.Declarations.Square.Area
+Entry — when Area is read
+Return — return side * side
+== Syntax.Declarations.Square.Unit
+Entry — when Unit is read
+Return — return new Square(1)
+== Syntax.Declarations.Buffer..ctor(Span<byte>)
+Entry — when a new Buffer is created
+SetMember — set Data to data
+== Syntax.Declarations.Container`1.Title.get
+Entry — when Title is read
+Return — return field ?? "untitled"
+== Syntax.Declarations.Container`1.Title.set
+Entry — when Title is assigned
+SetMember — set field to value?.Trim()
+== Syntax.Declarations.Container`1.this[].get
+Entry — when this[] is read
+Return — return _items[index]
+== Syntax.Declarations.Container`1.this[].set
+Entry — when this[] is assigned
+Assign — set _items[index] to value
+Assign — increase _version by 1
+== Syntax.Declarations.Container`1.Changed.add
+Entry — when a handler subscribes to Changed
+CriticalSection — lock s_lock: one thread at a time
+  body:
+    SetMember — add value to _changed
+== Syntax.Declarations.Container`1.Changed.remove
+Entry — when a handler unsubscribes from Changed
+CriticalSection — lock s_lock: one thread at a time
+  body:
+    SetMember — subtract value from _changed
+== Syntax.Declarations.Container`1..ctor()
+Entry — when a new Container is created
+== Syntax.Declarations.Container`1..cctor()
+Entry — when a new static Container is created
+== Syntax.Declarations.Container`1.Finalize()
+Entry — when ~Container() is called
+== Syntax.Declarations.Container`1.Add(T)
+Entry — when Add(item) is called
+Call — _items.Add(item)
+== Syntax.Declarations.Container`1.Nested.Hook(int)
+Entry — when Hook(value) is called
+Call — Console.WriteLine(value)
+== Syntax.Declarations.Container`1.GetEnumerator()
+Entry — when GetEnumerator() is called
+Return — return _items.GetEnumerator()
+== Syntax.Declarations.Container`1.IEnumerable.GetEnumerator()
+Entry — when IEnumerable.GetEnumerator() is called
+Return — return GetEnumerator()
+== Syntax.Declarations.Container`1.Map(Func<T, TOut>)
+Entry — when Map(map) is called
+Return — return map(_items[0])
+== Syntax.Declarations.Container`1.Name(in int, ref int, out string, params int[])
+Entry — when Name(id, counter, text, rest) is called
+Assign — increase counter by 1
+Assign — set text to id.ToString()
+Return — return text
+== Syntax.Declarations.Extensions.IsBlank(string?)
+Entry — when IsBlank(text) is called
+Return — return string.IsNullOrWhiteSpace(text)
+== Syntax.Declarations.Extensions.WordCount
+Entry — when WordCount is read
+Return — return text.Split(' ').Length
+== Syntax.Declarations.Extensions.Shout()
+Entry — when Shout() is called
+Return — return text.ToUpperInvariant() + "!"
+== Syntax.Declarations.Split.Part.get
+Entry — when Part is read
+Return — return _part
+== Syntax.Declarations.Split.Part.set
+Entry — when Part is assigned
+SetMember — set _part to value

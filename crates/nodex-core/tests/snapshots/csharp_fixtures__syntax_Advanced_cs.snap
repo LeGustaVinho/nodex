@@ -1,0 +1,93 @@
+---
+source: crates/nodex-core/tests/csharp_fixtures.rs
+expression: outline_file(ir)
+---
+== Syntax.Advanced.Inner.UsesHidden.Read()
+Entry — when Read() is called
+Return — return new Hidden { Value = 3 }.Value
+== Syntax.Advanced.Money..ctor(decimal)
+Entry — when a new Money is created
+SetMember — set Amount to amount
+== Syntax.Advanced.Money.op_+(Money, Money)
+Entry — when operator +(a, b) is called
+Return — return new(a.Amount + b.Amount)
+== Syntax.Advanced.Money.op_checked_+(Money, Money)
+Entry — when operator checked +(a, b) is called
+Return — return new(checked(a.Amount + b.Amount))
+== Syntax.Advanced.Money.op_true(Money)
+Entry — when operator true(m) is called
+Return — return m.Amount != 0
+== Syntax.Advanced.Money.op_false(Money)
+Entry — when operator false(m) is called
+Return — return m.Amount == 0
+== Syntax.Advanced.Money.op_+=(Money)
+Entry — when operator +=(other) is called
+Subscribe — on Amount, run other.Amount
+== Syntax.Advanced.Money.ToString()
+Entry — when ToString() is called
+Return — return $"{Amount:C}"
+== Syntax.Advanced.Grid`1.this[]
+Entry — when this[] is read
+Return — return ref _cells[x * 4 + y]
+== Syntax.Advanced.Grid`1.First()
+Entry — when First() is called
+Return — return ref _cells[0]
+== Syntax.Advanced.Grid`1.Measure(scoped TValue)
+Entry — when Measure(value) is called
+Return — return 0
+== Syntax.Advanced.Widget..ctor(int)
+Entry — when a new Widget is created
+SetMember — set _size to size
+== Syntax.Advanced.Widget.Resized.add
+Entry — when a handler subscribes to Resized
+SetMember — add value to _resized
+== Syntax.Advanced.Widget.Resized.remove
+Entry — when a handler unsubscribes from Resized
+SetMember — subtract value from _resized
+== Syntax.Advanced.Widget.OnClick(object?, EventArgs)
+Entry — when OnClick(sender, e) is called
+Await — wait for Task.Yield()
+== Syntax.Advanced.Advanced.Statements(Node?, int[], Span<int>, (int, int))
+Entry — when Statements(node, values, span, pair) is called
+Call — node?.Items.Add(1)
+Call — node?.Next?.Items.Clear()
+SetMember — if node exists, set node?.Value to 5
+Assign — values[0] |= 0b1010
+Assign — values[1] <<= 2
+Assign — values[2] >>>= 1
+Var — big = 1_000_000L + 0x1F + 10UL.GetHashCode() + (int)1e3
+Call — global::System.Console.WriteLine(big)
+Match — match pair
+  case:
+    Return — return 0
+  case:
+    Jump — jump to the default case
+  case:
+Loop.ForEach — for each cell in span
+  body:
+    Assign — increase cell by 1
+Try — try; handle errors below
+  try:
+    Assign — set values[0] to 1
+  finally:
+    Assign — set values[1] to 2
+Var — p = (1, 2)
+Var — pick = ref (p.Left > 0 ? ref values[0] : ref values[1])
+Var — buffer = stackalloc[] { (byte)1, (byte)2 }
+Var — twice = &Twice
+Var — group = Twice
+Var — attributed = [Obsolete] (int x) => x
+Var — loose = 3
+Var — maybe = default
+Var — defaulted = default
+Return — return twice(pick) + group(buffer.Length) + loose + defaulted
+== Syntax.Advanced.Advanced.Twice(int)
+Entry — when Twice(x) is called
+Return — return x * 2
+== Syntax.Advanced.Advanced.GuardedIterator()
+Entry — when GuardedIterator() is called
+Try — try; handle errors below
+  try:
+    Yield — produce 1
+  finally:
+    Call — Console.WriteLine("cleanup")
