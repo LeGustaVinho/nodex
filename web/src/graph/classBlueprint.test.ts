@@ -102,4 +102,21 @@ describe("class Blueprint", () => {
     });
     expect(graph.edges.filter((e) => e.kind === "changes").map((e) => e.source)).toEqual(["Submit::n1", "Submit::n3"]);
   });
+
+  it("recognizes global and namespace qualifiers on a generic C# type", () => {
+    const genericIndex = new StructureIndex({ ...index.graph, symbols: [
+      { ...symbol("ns:Shop", "Namespace", null, 1), qualified_name: "Shop" },
+      ...index.graph.symbols.map((s) =>
+        s.id === "count" ? { ...s, flavors: ["static"] }
+          : s.id === "Order" ? { ...s, parent: "ns:Shop", name: "Order<T>", qualified_name: "Shop.Order`1" } : s),
+    ] });
+    const write = (id: string, receiver: Expr) => node(id, "SetMember", { expr: increment(expr("GetMember", ".count", [receiver])) });
+    const graph = classBlueprintGraph(genericIndex, "Order", [flow("Submit", [
+      node("entry", "Entry"),
+      write("n1", expr("GetMember", ".Order<T>", [expr("Var", "global::Shop")])),
+      write("n2", expr("GetMember", ".Order<T>", [expr("Var", "Shop")])),
+      write("n3", expr("Var", "global::Order<T>")),
+    ])], { open: new Set(["Submit"]), expanded: {}, showDataWires: true });
+    expect(graph.edges.filter((e) => e.kind === "changes").map((e) => e.source)).toEqual(["Submit::n1", "Submit::n2"]);
+  });
 });

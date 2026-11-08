@@ -37,6 +37,19 @@ describe("project context", () => {
     expect(contextSymbols(index, [{ kind: "symbol", id: "dir:web/src" }])).toEqual(new Set(["module", "fetch"]));
   });
 
+  it("includes separately declared subnamespaces of a real namespace", () => {
+    const nested = new StructureIndex({ symbols: [
+      { ...symbol("ns:Shop", "Namespace", "A.cs", null, "Shop"), language: "csharp" },
+      { ...symbol("ns:Shop.Tools", "Namespace", "B.cs", null, "Shop.Tools"), language: "csharp" },
+      { ...symbol("Shop.Tools.Tool", "Class", "B.cs", "ns:Shop.Tools"), language: "csharp" },
+      { ...symbol("ns:Shopper", "Namespace", "C.cs", null, "Shopper"), language: "csharp" },
+      symbol("ts:Shop.Tools", "Namespace", "src/tool.ts", null, "Shop.Tools"),
+      { ...symbol("mod:Shop.Worker", "Module", "Worker.cs", null, "Shop.Worker"), language: "csharp" },
+    ], edges: [] });
+    expect(contextSymbols(nested, [{ kind: "symbol", id: "ns:Shop" }]))
+      .toEqual(new Set(["ns:Shop", "ns:Shop.Tools", "Shop.Tools.Tool"]));
+  });
+
   it("uses the compacted folder as a hierarchy root when its ancestor folder is selected", () => {
     const hierarchy = new Hierarchy(index);
     const covered = contextSymbols(index, [{ kind: "folder", path: "web" }])!;

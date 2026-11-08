@@ -9,6 +9,7 @@ import { isTypeKind } from "../graph/structureGraph";
 import { monaco } from "../monaco";
 import { useUi } from "../store";
 import { useStructure } from "../views/Views";
+import { useClassFlows } from "../views/useClassFlows";
 import { Loading, LoadingOverlay } from "../components/Loading";
 
 type Editor = Parameters<OnMount>[0];
@@ -56,18 +57,15 @@ function umlOfSelection(editor: Editor, file: string) {
 }
 
 export function CodePanel() {
-  const { codeFocus, flowSymbol, view, selection } = useUi();
+  const { codeFocus, flowSymbol, view } = useUi();
   const { index } = useStructure();
   const active = flowSymbol ? index?.byId.get(flowSymbol) : undefined;
-  const selectedFlow = selection?.kind === "symbol" ? selection.id
-    : selection?.kind === "flow-node" || selection?.kind === "expr" ? selection.flow : null;
-  const member = selectedFlow ? index?.byId.get(selectedFlow) : undefined;
-  const codeFlow = active && isTypeKind(active.kind)
-    ? member?.has_flow && index?.owningType(member.id)?.id === active.id ? member.id : null
-    : flowSymbol;
+  const classId = view === "blueprint" && active && isTypeKind(active.kind) ? active.id : null;
+  const codeFlow = view === "blueprint" && !classId ? flowSymbol : null;
   const file = codeFocus?.file ?? null;
   const source = useQuery({ queryKey: ["source", file], queryFn: () => api.source(file!), enabled: !!file });
   const flow = useQuery({ queryKey: ["flow", codeFlow], queryFn: () => api.flow(codeFlow!), enabled: !!codeFlow });
+  const { ids, query: classFlows } = useClassFlows(index, classId);
   const editorRef = useRef<Editor | null>(null);
   const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const debugDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
@@ -78,9 +76,9 @@ export function CodePanel() {
   fileRef.current = codeFocus?.file ?? null;
   const suppressCursor = useRef(false);
   // The cursor listener is registered once; read the latest data through refs.
-  const flowRef = useRef(flow.data);
+  const flowsRef = useRef({ classId, ids, flows: classFlows.data ?? (flow.data ? [flow.data] : []) });
   const indexRef = useRef(index);
-  flowRef.current = flow.data;
+  flowsRef.current = { classId, ids, flows: classFlows.data ?? (flow.data ? [flow.data] : []) };
   indexRef.current = index;
 
   // Highlight and reveal the focused span.
@@ -140,16 +138,22 @@ export function CodePanel() {
       const { lineNumber: line, column: col } = e.position;
       const state = useUi.getState();
       const currentFile = state.codeFocus?.file;
-      const flowData = flowRef.current;
+      const { classId, ids, flows } = flowsRef.current;
       const index = indexRef.current;
       if (!currentFile) return;
-      if (state.view === "blueprint" && flowData && flowData.span.file === currentFile) {
-        let best: FlowNode | null = null;
-        for (const n of flowData.nodes) {
-          if (contains(n.span, line, col) && (!best || size(n.span) < size(best.span))) best = n;
+      if (state.view === "blueprint") {
+        let best: { flow: string; node: FlowNode } | undefined;
+        for (const flow of flows) {
+          if (flow.span.file !== currentFile) continue;
+          for (const node of flow.nodes) {
+            if (node.span.file === currentFile && contains(node.span, line, col) && (!best || size(node.span) < size(best.node.span))) {
+              best = { flow: flow.symbol, node };
+            }
+          }
         }
         if (best) {
-          state.select({ kind: "flow-node", flow: flowData.symbol, id: best.id });
+          if (classId && !(state.classOpen[best.flow] ?? ids.length <= 4)) state.setClassOpen([best.flow], true);
+          state.select({ kind: "flow-node", flow: best.flow, id: best.node.id });
           return;
         }
       }

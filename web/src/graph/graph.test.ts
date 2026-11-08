@@ -281,6 +281,15 @@ describe("structure graphs", () => {
     expect(g.nodes.map((n) => n.id)).toEqual(["App.Shape", "ext:MonoBehaviour"]);
     expect(g.edges).toEqual([expect.objectContaining({ source: "App.Shape", target: "ext:MonoBehaviour" })]);
   });
+
+  it("types hides uncovered members and edges originating from them", () => {
+    const g = typesGraph(index, null, true, new Set(["App.Circle", "App.Circle.Area()", "App.Shape"]));
+    expect(g.nodes.find((n) => n.id === "App.Circle")?.data).toMatchObject({
+      members: [expect.objectContaining({ id: "App.Circle.Area()" })],
+    });
+    expect(g.edges.some((e) => e.kind === "uses")).toBe(false);
+    expect(g.edges).toContainEqual(expect.objectContaining({ source: "App.Circle", target: "App.Shape", kind: "inherits" }));
+  });
 });
 
 describe("callGraph", () => {

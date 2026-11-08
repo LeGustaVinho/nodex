@@ -31,9 +31,13 @@ export class StructureIndex {
   }
 
   namespaceOf(id: string): string | null {
+    return this.namespaceSymbolOf(id)?.qualified_name ?? null;
+  }
+
+  namespaceSymbolOf(id: string): Symbol | undefined {
     let cur = this.byId.get(id);
     while (cur && !isScopeKind(cur.kind)) cur = cur.parent ? this.byId.get(cur.parent) : undefined;
-    return cur ? cur.qualified_name : null;
+    return cur;
   }
 
   /** Members (non-type children) of a type, in declaration order. */
@@ -211,7 +215,7 @@ export function typesGraph(index: StructureIndex, namespace: string | null, show
   const addType = (s: Symbol) => {
     if (included.has(s.id)) return;
     included.add(s.id);
-    const members = index.members(s.id);
+    const members = index.members(s.id).filter((member) => !scope || scope.has(member.id));
     nodes.push({
       id: s.id,
       type: "typeCard",
@@ -230,7 +234,7 @@ export function typesGraph(index: StructureIndex, namespace: string | null, show
     else if (e.kind === "Implements") kind = "implements";
     else if (e.kind === "Compatible") kind = "compatible";
     else if (showUses && (e.kind === "References" || e.kind === "Instantiates")) kind = e.kind === "Instantiates" ? "creates" : "uses";
-    if (!kind) continue;
+    if (!kind || (scope && !scope.has(e.from))) continue;
     const from = index.owningType(e.from);
     const to = index.byId.get(e.to);
     if (!from || !to || from.id === to.id || !included.has(from.id) || (scope && !scope.has(from.id))) continue;

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use nodex_ir::{Symbol, SymbolKind};
+use nodex_ir::{Language, Symbol, SymbolKind};
 
 use crate::index::Index;
 use crate::{UmlError, UmlScope};
@@ -116,21 +116,16 @@ impl Scoped {
         if let Some(ns) = id.strip_prefix("grp:ns:") {
             self.title = format!("Namespace {ns}");
             self.broad = true;
-            for s in index.graph.symbols.iter().filter(|s| !s.external) {
-                let in_ns = index.namespace_of(&s.id).is_some_and(|n| {
-                    let q = n.qualified_name.as_str();
-                    q == ns || q.strip_prefix(ns).is_some_and(|r| r.starts_with('.') || r.starts_with("::") || r.starts_with('/'))
-                });
-                if in_ns {
-                    self.symbols.insert(s.id.clone());
-                }
-            }
+            self.namespace(index, ns, None);
             return Ok(());
         }
         let s = index.get(id).filter(|s| !s.external).ok_or_else(|| UmlError::NotFound(format!("symbol {id}")))?;
         self.title = format!("{:?} {}", s.kind, s.name);
         if matches!(s.kind, SymbolKind::Namespace | SymbolKind::Module | SymbolKind::Package) {
             self.broad = true;
+        }
+        if s.kind == SymbolKind::Namespace {
+            self.namespace(index, &s.qualified_name, Some(s.language));
         }
         let mut stack = vec![s];
         while let Some(cur) = stack.pop() {
@@ -142,6 +137,25 @@ impl Scoped {
         Ok(())
     }
 
+    fn namespace(&mut self, index: &Index, name: &str, language: Option<Language>) {
+        for s in index.graph.symbols.iter().filter(|s| !s.external) {
+            let namespace = if matches!(s.kind, SymbolKind::Namespace | SymbolKind::Module) {
+                Some(s)
+            } else {
+                index.namespace_of(&s.id)
+            };
+            if namespace.is_some_and(|n| {
+                if language.is_some_and(|l| n.kind != SymbolKind::Namespace || n.language != l) {
+                    return false;
+                }
+                let q = n.qualified_name.as_str();
+                q == name || q.strip_prefix(name).is_some_and(|r| r.starts_with('.') || r.starts_with("::") || r.starts_with('/'))
+            }) {
+                self.symbols.insert(s.id.clone());
+            }
+        }
+    }
+
     /// The scope is a file, a selection or a single symbol: diagrams show details.
     pub fn narrow(&self) -> bool {
         !self.broad
@@ -150,4 +164,26 @@ impl Scoped {
 
 fn in_folder(file: &str, folder: &str) -> bool {
     folder.is_empty() || file.strip_prefix(folder).is_some_and(|rest| rest.starts_with('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nodex_ir::StructureGraph;
+    use nodex_ir::knowledge::ProjectKnowledge;
+
+    #[test]
+    fn real_namespace_includes_subnamespaces_without_structural_parents() {
+        let ir = nodex_lang_csharp::lower_source(
+            "Test.cs",
+            "namespace Shop { class Root {} } namespace Shop.Tools { class Tool {} } namespace Shopper { class Other {} }",
+        );
+        let graph = StructureGraph { symbols: ir.symbols, edges: Vec::new() };
+        let knowledge = ProjectKnowledge::default();
+        let index = Index::new(&graph, &knowledge);
+        assert!(index.get("ns:Shop.Tools").unwrap().parent.is_none());
+        let scope = Scoped::resolve(&index, &UmlScope::Symbol { id: "ns:Shop".into() }).unwrap();
+        assert!(scope.symbols.contains("ns:Shop.Tools"));
+        assert_eq!(scope.types, BTreeSet::from(["Shop.Root".into(), "Shop.Tools.Tool".into()]));
+    }
 }

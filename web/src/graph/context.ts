@@ -1,4 +1,5 @@
 import type { FileSummary } from "../gen/FileSummary";
+import type { Language } from "../gen/Language";
 import type { UmlScope } from "../gen/UmlScope";
 import type { StructureIndex } from "./structureGraph";
 
@@ -23,16 +24,19 @@ export function contextSymbols(index: StructureIndex, items: readonly ContextIte
   if (!items.length) return null;
   const covered = new Set<string>();
   const folders: string[] = [];
-  const namespaces: string[] = [];
+  const namespaces: { name: string; language?: Language }[] = [];
   for (const item of items) {
     const folder = folderOf(item);
     if (folder !== undefined) folders.push(folder);
     else if (item.kind === "symbol") {
       if (item.id.startsWith("grp:ns:")) {
-        namespaces.push(item.id.slice(7));
+        namespaces.push({ name: item.id.slice(7) });
         continue;
       }
       const symbol = index.byId.get(item.id);
+      if (symbol?.kind === "Namespace" && !symbol.external) {
+        namespaces.push({ name: symbol.qualified_name, language: symbol.language });
+      }
       const stack = symbol ? [symbol] : [];
       while (stack.length) {
         const s = stack.pop()!;
@@ -45,11 +49,13 @@ export function contextSymbols(index: StructureIndex, items: readonly ContextIte
   if (folders.length || namespaces.length) {
     for (const s of index.graph.symbols) {
       if (s.external || covered.has(s.id)) continue;
-      const ns = namespaces.length ? index.namespaceOf(s.id) : null;
-      if (s.origins.some((o) => folders.some((f) => inFolder(o.file, f))) ||
-          (ns !== null && namespaces.some((p) => ns === p || [".", "::", "/"].some((sep) => ns.startsWith(p + sep))))) {
-        covered.add(s.id);
-      }
+      const ns = namespaces.length ? index.namespaceSymbolOf(s.id) : undefined;
+      const inNamespace = ns && namespaces.some(({ name, language }) => {
+        if (language && (ns.kind !== "Namespace" || ns.language !== language)) return false;
+        const qualified = ns.qualified_name;
+        return qualified === name || [".", "::", "/"].some((sep) => qualified.startsWith(name + sep));
+      });
+      if (inNamespace || s.origins.some((o) => folders.some((f) => inFolder(o.file, f)))) covered.add(s.id);
     }
   }
   return covered;

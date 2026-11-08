@@ -6,7 +6,7 @@ import type { Symbol } from "../gen/Symbol";
 import type { SymbolInfo } from "../gen/SymbolInfo";
 import { type DetailLevel, flowToGraph } from "./flowGraph";
 import type { GEdge, GGraph, GNode } from "./model";
-import type { StructureIndex } from "./structureGraph";
+import { isTypeKind, type StructureIndex } from "./structureGraph";
 
 export const CLASS_IN = "class-in";
 export const CLASS_OUT = "class-out";
@@ -22,7 +22,28 @@ function qualifiedReceiver(expr: Expr): { name: string; root: string } | undefin
   }
 }
 
-function writtenMember(node: FlowNode, owner: Symbol, fields: ReadonlyMap<string, Symbol>): string | undefined {
+function typeQualifiers(index: StructureIndex, owner: Symbol): ReadonlySet<string> {
+  const names = new Set([owner.name, owner.qualified_name]);
+  if (owner.language === "csharp") {
+    // C# IDs encode generic arity. Build the source spelling from each declaring type's name.
+    const types = [owner.name];
+    for (let id = owner.parent; id;) {
+      const parent = index.byId.get(id);
+      if (!parent || !isTypeKind(parent.kind)) break;
+      types.unshift(parent.name);
+      id = parent.parent;
+    }
+    const local = types.join(".");
+    const namespace = index.namespaceOf(owner.id);
+    const qualified = namespace && namespace !== "(global)" ? `${namespace}.${local}` : local;
+    names.add(local);
+    names.add(qualified);
+    names.add(`global::${qualified}`);
+  }
+  return new Set([...names].map((name) => name.replace(/\s+/g, "")));
+}
+
+function writtenMember(node: FlowNode, owner: Symbol, fields: ReadonlyMap<string, Symbol>, qualifiers: ReadonlySet<string>): string | undefined {
   const expr = node.expr;
   if (!expr || (expr.concept !== "Assign" && !expr.flavors.some((f) => f === "prefix" || f === "postfix"))) return;
   const target = expr.children[0];
@@ -35,7 +56,7 @@ function writtenMember(node: FlowNode, owner: Symbol, fields: ReadonlyMap<string
     if (!fields.get(name)?.flavors.includes("static")) return;
     const qualifier = qualifiedReceiver(receiver);
     // A local receiver already has a data pin, even when it shadows the type name.
-    if (qualifier && (qualifier.name === owner.name || qualifier.name === owner.qualified_name) &&
+    if (qualifier && qualifiers.has(qualifier.name.replace(/\s+/g, "")) &&
         !node.inputs.some((p) => p.id === `use:${qualifier.root}`)) return name;
   }
 }
@@ -107,6 +128,7 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
   const fields = index.members(typeId).filter((s) => s.kind === "Field" || s.kind === "Event" ||
     (s.kind === "Property" && !s.has_flow && !(index.children.get(s.id) ?? []).some((a) => a.has_flow)));
   const fieldsByName = new Map(fields.map((s) => [s.name, s]));
+  const qualifiers = typeQualifiers(index, type);
   const fieldsId = `fields:${typeId}`;
   const ordered = members.map((s) => s.id);
   if (fields.length) ordered.push(fieldsId);
@@ -160,7 +182,7 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
         const target = entries.get(symbol);
         if (target) wire(source, target, "calls");
       }
-      const field = writtenMember(node, type, fieldsByName);
+      const field = writtenMember(node, type, fieldsByName, qualifiers);
       if (field && fieldsByName.has(field)) {
         wire(source, fieldsId, "changes");
       }
