@@ -6,12 +6,17 @@ import { CodePanel } from "./panels/CodePanel";
 import { ConsolePanel, RunButton } from "./panels/RunPanel";
 import { useTrace } from "./trace";
 import { Inspector } from "./panels/Inspector";
+import { Palette } from "./panels/Palette";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
 import { TimelineView } from "./views/Timeline";
+import { RELATION_GROUPS } from "./graph/hierarchy";
+import { HierarchyView, OverviewView } from "./views/Knowledge";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 
 const VIEWS: { id: View; label: string; hint: string }[] = [
+  { id: "overview", label: "Overview", hint: "What the project is: entry points, routes, hotspots, data models" },
+  { id: "hierarchy", label: "Hierarchy", hint: "Folders, namespaces, types and members as boxes you can open" },
   { id: "architecture", label: "Architecture", hint: "Namespaces, modules, packages and their dependencies" },
   { id: "types", label: "Types", hint: "Classes, interfaces and how they relate" },
   { id: "calls", label: "Calls", hint: "Who calls a function, and what it calls" },
@@ -34,7 +39,8 @@ function useLiveUpdates() {
           else if (event.type === "run-output") trace.appendOutput(event.data.lines);
           else if (event.type === "trace-frame") trace.applyFrame(event.data);
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
-            const keys = event.type === "graph-changed" ? ["structure", "project", "flow", "source"] : ["structure", "project", "flow"];
+            const keys =
+              event.type === "graph-changed" ? ["structure", "knowledge", "project", "flow", "source"] : ["structure", "knowledge", "project", "flow"];
             for (const key of keys) {
               void queryClient.invalidateQueries({ queryKey: [key] });
             }
@@ -70,6 +76,26 @@ function TopBar() {
         ))}
       </nav>
       <div className="context">
+        {ui.view === "hierarchy" && (
+          <>
+            <div className="segmented" role="group" aria-label="Relations">
+              {RELATION_GROUPS.map((g) => (
+                <button
+                  key={g.id}
+                  className={ui.relations.includes(g.id) ? "on" : ""}
+                  aria-pressed={ui.relations.includes(g.id)}
+                  title={`Show ${g.label} relations`}
+                  onClick={() => ui.toggleRelation(g.id)}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={ui.collapseTree} title="Close every box">
+              Collapse all
+            </button>
+          </>
+        )}
         {ui.view === "types" && (
           <>
             <span className="chip">
@@ -126,6 +152,9 @@ function TopBar() {
           </>
         )}
       </div>
+      <button className="palette-button" onClick={() => ui.setPaletteOpen(true)} title="Search symbols and commands (Ctrl+K)">
+        Search <kbd>Ctrl K</kbd>
+      </button>
       <RunButton />
       <SemanticBadge />
       <span className={`status ${ui.connected ? "on" : "off"}`} title={ui.connected ? "Live: updates on save" : "Disconnected"}>
@@ -169,6 +198,8 @@ export function App() {
       <TopBar />
       <Sidebar />
       <main className="main">
+        {view === "overview" && <OverviewView />}
+        {view === "hierarchy" && <HierarchyView />}
         {view === "architecture" && <ArchitectureView />}
         {view === "types" && <TypesView />}
         {view === "calls" && <CallsView />}
@@ -180,6 +211,7 @@ export function App() {
         <Inspector />
         <CodePanel />
       </section>
+      <Palette />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Span } from "./gen/Span";
 import type { DetailLevel } from "./graph/flowGraph";
 
-export type View = "architecture" | "types" | "calls" | "timeline" | "blueprint";
+export type View = "overview" | "hierarchy" | "architecture" | "types" | "calls" | "timeline" | "blueprint";
 
 /** What the inspector and code panel show. */
 export type Selection =
@@ -32,7 +32,18 @@ interface UiState {
   /** localStorage key for `detail` (per project root). */
   detailKey: string | null;
   connected: boolean;
+  /** Containers open in the Hierarchy view. */
+  treeExpanded: Record<string, boolean>;
+  /** Relation groups drawn by the Hierarchy view (`calls`, `types`, `imports`, `knowledge`). */
+  relations: string[];
+  paletteOpen: boolean;
   setView: (v: View) => void;
+  toggleTree: (id: string) => void;
+  /** Opens every container in `ids` (revealing an item opens its ancestors). */
+  expandTree: (ids: string[]) => void;
+  collapseTree: () => void;
+  toggleRelation: (group: string) => void;
+  setPaletteOpen: (open: boolean) => void;
   openFlow: (symbol: string) => void;
   setNamespace: (ns: string | null) => void;
   showCalls: (symbol: string) => void;
@@ -64,7 +75,7 @@ function writeHash(view: View, flowSymbol: string | null) {
 const startFlow = initialFlow();
 
 export const useUi = create<UiState>((set) => ({
-  view: startFlow ? "blueprint" : "architecture",
+  view: startFlow ? "blueprint" : "overview",
   flowSymbol: startFlow,
   namespace: null,
   callFocus: null,
@@ -77,6 +88,15 @@ export const useUi = create<UiState>((set) => ({
   detail: "statements",
   detailKey: null,
   connected: false,
+  treeExpanded: {},
+  relations: ["calls", "types", "knowledge"],
+  paletteOpen: false,
+  toggleTree: (id) => set((s) => ({ treeExpanded: { ...s.treeExpanded, [id]: !s.treeExpanded[id] } })),
+  expandTree: (ids) => set((s) => ({ treeExpanded: { ...s.treeExpanded, ...Object.fromEntries(ids.map((id) => [id, true])) } })),
+  collapseTree: () => set({ treeExpanded: {} }),
+  toggleRelation: (group) =>
+    set((s) => ({ relations: s.relations.includes(group) ? s.relations.filter((g) => g !== group) : [...s.relations, group] })),
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setView: (view) =>
     set((s) => {
       writeHash(view, s.flowSymbol);

@@ -6,7 +6,98 @@ import type { Concept } from "../gen/Concept";
 import type { Expr } from "../gen/Expr";
 import type { Language } from "../gen/Language";
 import { useUi } from "../store";
+import { useKnowledge } from "../views/Knowledge";
 import { useStructure } from "../views/Views";
+import type { StructEdge } from "../gen/StructEdge";
+import type { StructureIndex } from "../graph/structureGraph";
+
+const KNOWLEDGE_KINDS = new Set(["HttpCalls", "ResolvesDi", "Tests", "Throws", "CaughtBy", "Mutates"]);
+
+const VERB: Record<string, [string, string]> = {
+  HttpCalls: ["sends HTTP requests to", "receives HTTP requests from"],
+  ResolvesDi: ["is provided by", "provides"],
+  Tests: ["tests", "is tested by"],
+  Throws: ["throws", "is thrown by"],
+  CaughtBy: ["is caught by", "catches errors of"],
+  Mutates: ["changes", "is changed by"],
+};
+
+/** Knowledge about a symbol: why it runs, what it does to the world, and the evidence. */
+function KnowledgeSection({ id, index }: { id: string; index: StructureIndex }) {
+  const knowledge = useKnowledge();
+  const focusCode = useUi((s) => s.focusCode);
+  const select = useUi((s) => s.select);
+  const info = knowledge.data?.symbols.find((s) => s.symbol === id);
+  const routes = knowledge.data?.routes.filter((r) => r.handler === id) ?? [];
+  const model = knowledge.data?.models.find((m) => m.symbol === id)?.model;
+  const edges = index.graph.edges.filter((e) => KNOWLEDGE_KINDS.has(e.kind) && (e.from === id || e.to === id));
+  if (!info && routes.length === 0 && !model && edges.length === 0) return null;
+  const name = (other: string) => index.byId.get(other)?.name ?? other.replace(/^ext:/, "");
+  const row = (e: StructEdge) => {
+    const out = e.from === id;
+    const other = out ? e.to : e.from;
+    const [verbOut, verbIn] = VERB[e.kind] ?? [e.kind, e.kind];
+    return (
+      <div key={`${e.kind}:${e.from}:${e.to}`} className="evidence">
+        <div className="value-row">
+          <span>{out ? verbOut : verbIn}</span>
+          <button className="link" onClick={() => select({ kind: "symbol", id: other }, index.byId.get(other)?.origins[0] ?? null)}>
+            {name(other)}
+          </button>
+          {e.confidence && <span className={`conf conf-${e.confidence.toLowerCase()}`}>{e.confidence.toLowerCase()}</span>}
+        </div>
+        {(e.evidence || e.site) && (
+          <div className="evidence-detail">
+            {e.evidence && <span>{e.evidence}</span>}
+            {e.site && (
+              <button className="link muted" onClick={() => focusCode(e.site!)}>
+                {e.site.file}:{e.site.start_line}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+  return (
+    <div className="insp-section">
+      <div className="section-title">Knowledge</div>
+      {info && (
+        <div className="value-row">
+          {info.entry && <span className="badge" title="Runs without being called by project code">entry: {info.entry.label}</span>}
+          {info.test && <span className="badge">test</span>}
+          {info.complexity > 0 && <span className="badge" title="Cyclomatic complexity: 1 + the decisions it makes">complexity {info.complexity}</span>}
+          {info.capabilities.map((c) => (
+            <span key={c} className="badge small cap">
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+      {routes.map((r) => (
+        <div key={`${r.method} ${r.path}`} className="value-row">
+          <span className={`method method-${r.method.toLowerCase()}`}>{r.method}</span>
+          <code>{r.path}</code>
+          <span className="muted">{r.framework}</span>
+        </div>
+      ))}
+      {model && (
+        <table className="model-fields">
+          <tbody>
+            {model.fields.map((f) => (
+              <tr key={f.name}>
+                <td className={f.primary_key ? "pk" : ""}>{f.name}</td>
+                <td className="muted">{f.ty}</td>
+                <td className="muted">{f.target ? `-> ${f.target}` : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {edges.map(row)}
+    </div>
+  );
+}
 
 function Flavors({ flavors, language }: { flavors: string[]; language?: Language }) {
   const catalog = useCatalog();
@@ -228,8 +319,9 @@ export function Inspector() {
 
   const symbol = index?.byId.get(selection.id);
   if (!symbol || !index) return <div className="inspector">…</div>;
-  const outgoing = index.graph.edges.filter((e) => e.from === symbol.id && e.kind !== "Contains");
-  const incoming = index.graph.edges.filter((e) => e.to === symbol.id && e.kind !== "Contains");
+  const structural = (e: StructEdge) => e.kind !== "Contains" && !KNOWLEDGE_KINDS.has(e.kind);
+  const outgoing = index.graph.edges.filter((e) => e.from === symbol.id && structural(e));
+  const incoming = index.graph.edges.filter((e) => e.to === symbol.id && structural(e));
   const name = (id: string) => index.byId.get(id)?.qualified_name ?? id;
   return (
     <div className="inspector">
@@ -250,6 +342,7 @@ export function Inspector() {
           <button onClick={() => showCalls(symbol.id)}>Show calls</button>
         </div>
       )}
+      <KnowledgeSection id={symbol.id} index={index} />
       <Flavors flavors={symbol.flavors} language={symbol.language} />
       {(outgoing.length > 0 || incoming.length > 0) && (
         <div className="insp-section">

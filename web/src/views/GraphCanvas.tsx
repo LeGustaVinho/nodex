@@ -22,6 +22,7 @@ import { BlueprintNode } from "../components/BlueprintNode";
 import { CallNode } from "../components/CallNode";
 import { ExprNode } from "../components/ExprNode";
 import { OwnershipEdge } from "../components/OwnershipEdge";
+import { HierarchyGroup, HierarchyNode } from "../components/HierarchyNodes";
 import { NamespaceNode, TypeCard } from "../components/StructureNodes";
 import { layoutGraph } from "../graph/layout";
 import type { GEdge, GGraph } from "../graph/model";
@@ -32,12 +33,43 @@ const nodeTypes: NodeTypes = {
   namespace: NamespaceNode,
   typeCard: TypeCard,
   callNode: CallNode,
+  hnode: HierarchyNode,
+  hgroup: HierarchyGroup,
 };
 
 const edgeTypes: EdgeTypes = { ownership: OwnershipEdge };
 
-/** Visual style of each edge kind. */
+/** Colors of the knowledge relations (also used by legends). */
+export const KNOWLEDGE_COLORS: Record<string, string> = {
+  httpcalls: "#f0883e",
+  resolvesdi: "#39c5bb",
+  tests: "#a371f7",
+  throws: "#e5534b",
+  caughtby: "#e5534b",
+  mutates: "#58a6ff",
+};
+
+/** Visual style of an edge: its kind, then its confidence and how many relations it stands for. */
 export function edgeStyle(e: GEdge): Partial<Edge> {
+  const base = kindStyle(e);
+  const style = { ...(base.style ?? {}) };
+  if (e.weight && e.weight > 1) {
+    style.strokeWidth = Math.min(7, Number(style.strokeWidth ?? 1.4) + Math.log2(e.weight) * 0.9);
+    base.label = base.label ? `${base.label} ×${e.weight}` : `×${e.weight}`;
+  }
+  if (e.confidence === "Inferred") {
+    style.strokeDasharray = "7 5";
+    style.opacity = 0.8;
+  } else if (e.confidence === "Unresolved") {
+    style.stroke = "#e5534b";
+    style.strokeDasharray = "1 5";
+    style.strokeLinecap = "round";
+    if (base.markerEnd && typeof base.markerEnd === "object") base.markerEnd = { ...base.markerEnd, color: "#e5534b" };
+  }
+  return { ...base, style };
+}
+
+function kindStyle(e: GEdge): Partial<Edge> {
   const ty = (e.data as { ty?: string | null } | undefined)?.ty;
   switch (e.kind) {
     case "exec":
@@ -68,6 +100,17 @@ export function edgeStyle(e: GEdge): Partial<Edge> {
       return { style: { stroke: "#c2185b", strokeWidth: 1.6, strokeDasharray: "2 4" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#c2185b" }, label: "notifies" };
     case "imports":
       return { style: { stroke: "#7b8794", strokeWidth: 1.4 }, markerEnd: { type: MarkerType.ArrowClosed, color: "#7b8794" } };
+    case "httpcalls":
+    case "resolvesdi":
+    case "tests":
+    case "throws":
+    case "caughtby":
+    case "mutates": {
+      const color = KNOWLEDGE_COLORS[e.kind];
+      const label = { httpcalls: "HTTP", resolvesdi: "provides", tests: "tests", throws: "throws", caughtby: "caught by", mutates: "changes" }[e.kind];
+      const dash = e.kind === "caughtby" || e.kind === "tests" ? "4 3" : undefined;
+      return { style: { stroke: color, strokeWidth: e.kind === "httpcalls" ? 2.4 : 1.7, strokeDasharray: dash }, markerEnd: { type: MarkerType.ArrowClosed, color }, label };
+    }
     default:
       return {};
   }
@@ -83,13 +126,15 @@ interface Props {
   emptyText?: string;
   /** Fit only the first N nodes initially (keeps long flows readable). */
   fitFirst?: number;
+  /** Remember positions the user drags nodes to (off for views whose shape changes often). */
+  savePositions?: boolean;
 }
 
-function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, emptyText, fitFirst }: Props) {
+function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, emptyText, fitFirst, savePositions = true }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [busy, setBusy] = useState(false);
-  const { fitView, getNode, getViewport, setCenter } = useReactFlow();
+  const { fitView, getInternalNode, getViewport, setCenter } = useReactFlow();
   const queryClient = useQueryClient();
   const saved = useQuery({ queryKey: ["layout", layoutKey], queryFn: () => api.layout(layoutKey) });
   const manual = useRef<SavedPositions>({});
@@ -116,16 +161,22 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
     layoutGraph(graph)
       .then((positions) => {
         if (cancelled) return;
-        const overrides = saved.data ?? {};
+        const overrides = savePositions ? (saved.data ?? {}) : {};
         setNodes(
-          graph.nodes.map((n) => ({
-            id: n.id,
-            type: n.type,
-            data: n.data as Record<string, unknown>,
-            position: overrides[n.id] ?? positions.get(n.id) ?? { x: 0, y: 0 },
-            width: n.width,
-            selected: n.id === selectedId,
-          })),
+          graph.nodes.map((n) => {
+            const laid = positions.get(n.id);
+            // Containers take the size their children need; their own position is not saved.
+            const sized = n.container && laid?.width ? { width: laid.width, height: laid.height, style: { width: laid.width, height: laid.height } } : { width: n.width };
+            return {
+              id: n.id,
+              type: n.type,
+              data: n.data as Record<string, unknown>,
+              position: (!n.container && overrides[n.id]) || (laid ? { x: laid.x, y: laid.y } : { x: 0, y: 0 }),
+              ...sized,
+              ...(n.parent ? { parentId: n.parent } : {}),
+              selected: n.id === selectedId,
+            };
+          }),
         );
         setEdges(
           graph.edges.map((e) => ({
@@ -156,20 +207,22 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
     setNodes((ns) => ns.map((n) => (n.selected === (n.id === selectedId) ? n : { ...n, selected: n.id === selectedId })));
     // Bring the selected node into view (for selections made from the code or the sidebar).
     if (!selectedId) return;
-    const node = getNode(selectedId);
+    const node = getInternalNode(selectedId);
     const pane = document.querySelector(".canvas .react-flow");
     if (!node || !pane) return;
     const { x, y, zoom } = getViewport();
     const rect = pane.getBoundingClientRect();
+    // Nodes inside containers have positions relative to them.
+    const abs = node.internals.positionAbsolute;
     const w = (node.measured?.width ?? node.width ?? 200) * zoom;
     const h = (node.measured?.height ?? 80) * zoom;
-    const sx = node.position.x * zoom + x;
-    const sy = node.position.y * zoom + y;
+    const sx = abs.x * zoom + x;
+    const sy = abs.y * zoom + y;
     const visible = sx >= 0 && sy >= 0 && sx + w <= rect.width && sy + h <= rect.height;
     if (!visible) {
-      void setCenter(node.position.x + w / zoom / 2, node.position.y + h / zoom / 2, { zoom: Math.max(zoom, 0.6), duration: 300 });
+      void setCenter(abs.x + w / zoom / 2, abs.y + h / zoom / 2, { zoom: Math.max(zoom, 0.6), duration: 300 });
     }
-  }, [selectedId, setNodes, getNode, getViewport, setCenter]);
+  }, [selectedId, setNodes, getInternalNode, getViewport, setCenter]);
 
   const persist = useCallback(
     (moved: Node[]) => {
@@ -199,7 +252,7 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         onNodesChange={onNodesChange}
         onNodeClick={(_, n) => onNodeClick?.(n)}
         onNodeDoubleClick={(_, n) => onNodeDoubleClick?.(n)}
-        onNodeDragStop={(_, __, moved) => persist(moved)}
+        onNodeDragStop={(_, __, moved) => savePositions && persist(moved)}
         nodesConnectable={false}
         zoomOnDoubleClick={false}
         edgesFocusable={false}
@@ -215,7 +268,7 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
       </ReactFlow>
       <div className="canvas-tools">
         {busy && <span className="muted">laying out…</span>}
-        {Object.keys(saved.data ?? {}).length > 0 && (
+        {savePositions && Object.keys(saved.data ?? {}).length > 0 && (
           <button onClick={resetLayout} title="Discard manually moved positions">
             Reset layout
           </button>

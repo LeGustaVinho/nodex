@@ -44,6 +44,13 @@
       "url": "http://127.0.0.1:7470"
     },
     {
+      "name": "m9-csharp",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/csharp/Sample", "--no-browser", "--port", "7491"],
+      "port": 7491,
+      "url": "http://127.0.0.1:7491"
+    },
+    {
       "name": "web-dev",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "web", "dev"],

@@ -21,6 +21,10 @@ export interface GNode<D = unknown> {
   box?: { width: number; height: number; offsetX: number };
   /** Nodes placed relative to another node instead of by the layout engine. */
   attach?: { to: string; dx: number; dy: number };
+  /** Enclosing container node: the node is laid out and drawn inside it. */
+  parent?: string;
+  /** A container whose size comes from the layout of its children. */
+  container?: boolean;
 }
 
 export interface GEdge<D = unknown> {
@@ -33,6 +37,10 @@ export interface GEdge<D = unknown> {
   kind: string;
   /** Edges excluded from layout are drawn but do not influence positions. */
   layout: boolean;
+  /** Knowledge relations no compiler proves: drawn dashed (inferred) or dotted red (unresolved). */
+  confidence?: "Exact" | "Inferred" | "Unresolved" | null;
+  /** How many relations a rolled-up edge stands for (drawn thicker, with a count). */
+  weight?: number;
   data?: D;
 }
 
