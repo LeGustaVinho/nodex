@@ -1,0 +1,1421 @@
+---
+source: crates/nodex-core/tests/project_graph.rs
+expression: "digest(\"knowledge/fullstack\")"
+---
+149 symbols, 205 edges
+
+# symbols
+{"id":"Program","kind":"Class","name":"Program","qualified_name":"Program","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet/Program.cs","start_byte":0,"end_byte":675,"start_line":1,"start_col":1,"end_line":23,"end_col":1}],"flavors":["static","synthesized"],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Program.<Main>$(string[])","kind":"Method","name":"Top-level statements","qualified_name":"Program.<Main>$","parent":"Program","language":"csharp","origins":[{"file":"backend-dotnet/Program.cs","start_byte":0,"end_byte":675,"start_line":1,"start_col":1,"end_line":23,"end_col":1}],"flavors":["static","top-level"],"signature":"top-level statements","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Controllers.OrdersController","kind":"Class","name":"OrdersController","qualified_name":"Shop.Controllers.OrdersController","parent":"ns:Shop.Controllers","language":"csharp","origins":[{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":228,"end_byte":1368,"start_line":10,"start_col":5,"end_line":49,"end_col":6}],"flavors":["public","attr:ApiController","attr:Route","attr:Authorize"],"signature":"[ApiController] [Route(\"api/[controller]\")] [Authorize] public class OrdersController : ControllerBase","type_text":null,"has_flow":false,"external":false,"doc":"HTTP API for orders."}
+{"id":"Shop.Controllers.OrdersController..ctor(IOrderService)","kind":"Constructor","name":"OrdersController","qualified_name":"Shop.Controllers.OrdersController.OrdersController","parent":"Shop.Controllers.OrdersController","language":"csharp","origins":[{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":419,"end_byte":535,"start_line":17,"start_col":9,"end_line":20,"end_col":10}],"flavors":["public"],"signature":"public OrdersController(IOrderService orderService)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Controllers.OrdersController.Cancel(Guid)","kind":"Method","name":"Cancel","qualified_name":"Shop.Controllers.OrdersController.Cancel","parent":"Shop.Controllers.OrdersController","language":"csharp","origins":[{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":741,"end_byte":1137,"start_line":29,"start_col":9,"end_line":41,"end_col":10}],"flavors":["public","async","attr:HttpPost"],"signature":"[HttpPost(\"{id}/cancel\")] public async Task<IActionResult> Cancel(Guid id)","type_text":"Task<IActionResult>","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Controllers.OrdersController.Create(Order)","kind":"Method","name":"Create","qualified_name":"Shop.Controllers.OrdersController.Create","parent":"Shop.Controllers.OrdersController","language":"csharp","origins":[{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":1149,"end_byte":1361,"start_line":43,"start_col":9,"end_line":48,"end_col":10}],"flavors":["public","async","attr:HttpPost"],"signature":"[HttpPost] public async Task<IActionResult> Create([FromBody] Order order)","type_text":"Task<IActionResult>","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Controllers.OrdersController.GetOrders()","kind":"Method","name":"GetOrders","qualified_name":"Shop.Controllers.OrdersController.GetOrders","parent":"Shop.Controllers.OrdersController","language":"csharp","origins":[{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":547,"end_byte":729,"start_line":22,"start_col":9,"end_line":27,"end_col":10}],"flavors":["public","async","attr:HttpGet"],"signature":"[HttpGet] public async Task<IActionResult> GetOrders()","type_text":"Task<IActionResult>","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Controllers.OrdersController._orderService","kind":"Field","name":"_orderService","qualified_name":"Shop.Controllers.OrdersController._orderService","parent":"Shop.Controllers.OrdersController","language":"csharp","origins":[{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":393,"end_byte":406,"start_line":15,"start_col":40,"end_line":15,"end_col":53}],"flavors":["private","readonly"],"signature":"private readonly IOrderService _orderService","type_text":"IOrderService","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Data.AppDbContext","kind":"Class","name":"AppDbContext","qualified_name":"Shop.Data.AppDbContext","parent":"ns:Shop.Data","language":"csharp","origins":[{"file":"backend-dotnet/Data/AppDbContext.cs","start_byte":88,"end_byte":303,"start_line":6,"start_col":5,"end_line":11,"end_col":6}],"flavors":["public"],"signature":"public class AppDbContext : DbContext","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Data.AppDbContext.Customers","kind":"Property","name":"Customers","qualified_name":"Shop.Data.AppDbContext.Customers","parent":"Shop.Data.AppDbContext","language":"csharp","origins":[{"file":"backend-dotnet/Data/AppDbContext.cs","start_byte":192,"end_byte":238,"start_line":9,"start_col":9,"end_line":9,"end_col":55}],"flavors":["public"],"signature":"public DbSet<Customer> Customers","type_text":"DbSet<Customer>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Data.AppDbContext.OrderItems","kind":"Property","name":"OrderItems","qualified_name":"Shop.Data.AppDbContext.OrderItems","parent":"Shop.Data.AppDbContext","language":"csharp","origins":[{"file":"backend-dotnet/Data/AppDbContext.cs","start_byte":248,"end_byte":296,"start_line":10,"start_col":9,"end_line":10,"end_col":57}],"flavors":["public"],"signature":"public DbSet<OrderItem> OrderItems","type_text":"DbSet<OrderItem>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Data.AppDbContext.Orders","kind":"Property","name":"Orders","qualified_name":"Shop.Data.AppDbContext.Orders","parent":"Shop.Data.AppDbContext","language":"csharp","origins":[{"file":"backend-dotnet/Data/AppDbContext.cs","start_byte":142,"end_byte":182,"start_line":8,"start_col":9,"end_line":8,"end_col":49}],"flavors":["public"],"signature":"public DbSet<Order> Orders","type_text":"DbSet<Order>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Exceptions.OrderNotFoundException","kind":"Class","name":"OrderNotFoundException","qualified_name":"Shop.Exceptions.OrderNotFoundException","parent":"ns:Shop.Exceptions","language":"csharp","origins":[{"file":"backend-dotnet/Exceptions/OrderNotFoundException.cs","start_byte":34,"end_byte":170,"start_line":3,"start_col":5,"end_line":6,"end_col":6}],"flavors":["public"],"signature":"public class OrderNotFoundException : Exception","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Exceptions.OrderNotFoundException..ctor(string)","kind":"Constructor","name":"OrderNotFoundException","qualified_name":"Shop.Exceptions.OrderNotFoundException.OrderNotFoundException","parent":"Shop.Exceptions.OrderNotFoundException","language":"csharp","origins":[{"file":"backend-dotnet/Exceptions/OrderNotFoundException.cs","start_byte":98,"end_byte":163,"start_line":5,"start_col":9,"end_line":5,"end_col":74}],"flavors":["public"],"signature":"public OrderNotFoundException(string message) : base(message)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Handlers.Dispatcher","kind":"Class","name":"Dispatcher","qualified_name":"Shop.Handlers.Dispatcher","parent":"ns:Shop.Handlers","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":436,"end_byte":842,"start_line":23,"start_col":5,"end_line":39,"end_col":6}],"flavors":["public"],"signature":"public class Dispatcher","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Handlers.Dispatcher.Broadcast(string)","kind":"Method","name":"Broadcast","qualified_name":"Shop.Handlers.Dispatcher.Broadcast","parent":"Shop.Handlers.Dispatcher","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":665,"end_byte":835,"start_line":32,"start_col":9,"end_line":38,"end_col":10}],"flavors":["public"],"signature":"public void Broadcast(string message)","type_text":"void","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Handlers.Dispatcher.Dispatch(IHandler, string)","kind":"Method","name":"Dispatch","qualified_name":"Shop.Handlers.Dispatcher.Dispatch","parent":"Shop.Handlers.Dispatcher","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":538,"end_byte":653,"start_line":27,"start_col":9,"end_line":30,"end_col":10}],"flavors":["public"],"signature":"public void Dispatch(IHandler handler, string message)","type_text":"void","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Handlers.Dispatcher._handlers","kind":"Field","name":"_handlers","qualified_name":"Shop.Handlers.Dispatcher._handlers","parent":"Shop.Handlers.Dispatcher","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":508,"end_byte":525,"start_line":25,"start_col":41,"end_line":25,"end_col":58}],"flavors":["private","readonly"],"signature":"private readonly List<IHandler> _handlers = new()","type_text":"List<IHandler>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Handlers.EmailHandler","kind":"Class","name":"EmailHandler","qualified_name":"Shop.Handlers.EmailHandler","parent":"ns:Shop.Handlers","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":118,"end_byte":217,"start_line":8,"start_col":5,"end_line":11,"end_col":6}],"flavors":["public"],"signature":"public class EmailHandler : IHandler","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Handlers.EmailHandler.Execute(string)","kind":"Method","name":"Execute","qualified_name":"Shop.Handlers.EmailHandler.Execute","parent":"Shop.Handlers.EmailHandler","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":171,"end_byte":210,"start_line":10,"start_col":9,"end_line":10,"end_col":48}],"flavors":["public"],"signature":"public void Execute(string message)","type_text":"void","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Handlers.IHandler","kind":"Interface","name":"IHandler","qualified_name":"Shop.Handlers.IHandler","parent":"ns:Shop.Handlers","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":32,"end_byte":110,"start_line":3,"start_col":5,"end_line":6,"end_col":6}],"flavors":["public"],"signature":"public interface IHandler","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Handlers.IHandler.Execute(string)","kind":"Method","name":"Execute","qualified_name":"Shop.Handlers.IHandler.Execute","parent":"Shop.Handlers.IHandler","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":74,"end_byte":103,"start_line":5,"start_col":9,"end_line":5,"end_col":38}],"flavors":["abstract"],"signature":"void Execute(string message)","type_text":"void","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Handlers.PushHandler","kind":"Class","name":"PushHandler","qualified_name":"Shop.Handlers.PushHandler","parent":"ns:Shop.Handlers","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":330,"end_byte":428,"start_line":18,"start_col":5,"end_line":21,"end_col":6}],"flavors":["public"],"signature":"public class PushHandler : IHandler","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Handlers.PushHandler.Execute(string)","kind":"Method","name":"Execute","qualified_name":"Shop.Handlers.PushHandler.Execute","parent":"Shop.Handlers.PushHandler","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":382,"end_byte":421,"start_line":20,"start_col":9,"end_line":20,"end_col":48}],"flavors":["public"],"signature":"public void Execute(string message)","type_text":"void","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Handlers.SmsHandler","kind":"Class","name":"SmsHandler","qualified_name":"Shop.Handlers.SmsHandler","parent":"ns:Shop.Handlers","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":225,"end_byte":322,"start_line":13,"start_col":5,"end_line":16,"end_col":6}],"flavors":["public"],"signature":"public class SmsHandler : IHandler","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Handlers.SmsHandler.Execute(string)","kind":"Method","name":"Execute","qualified_name":"Shop.Handlers.SmsHandler.Execute","parent":"Shop.Handlers.SmsHandler","language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":276,"end_byte":315,"start_line":15,"start_col":9,"end_line":15,"end_col":48}],"flavors":["public"],"signature":"public void Execute(string message)","type_text":"void","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Models.Customer","kind":"Class","name":"Customer","qualified_name":"Shop.Models.Customer","parent":"ns:Shop.Models","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":484,"end_byte":656,"start_line":18,"start_col":5,"end_line":23,"end_col":6}],"flavors":["public"],"signature":"public class Customer","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Customer.Email","kind":"Property","name":"Email","qualified_name":"Shop.Models.Customer.Email","parent":"Shop.Models.Customer","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":560,"end_byte":593,"start_line":21,"start_col":9,"end_line":21,"end_col":42}],"flavors":["public"],"signature":"public string Email","type_text":"string","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Customer.Id","kind":"Property","name":"Id","qualified_name":"Shop.Models.Customer.Id","parent":"Shop.Models.Customer","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":522,"end_byte":550,"start_line":20,"start_col":9,"end_line":20,"end_col":37}],"flavors":["public"],"signature":"public Guid Id","type_text":"Guid","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Customer.Orders","kind":"Property","name":"Orders","qualified_name":"Shop.Models.Customer.Orders","parent":"Shop.Models.Customer","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":603,"end_byte":649,"start_line":22,"start_col":9,"end_line":22,"end_col":55}],"flavors":["public"],"signature":"public ICollection<Order> Orders","type_text":"ICollection<Order>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Order","kind":"Class","name":"Order","qualified_name":"Shop.Models.Order","parent":"ns:Shop.Models","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":138,"end_byte":476,"start_line":7,"start_col":5,"end_line":16,"end_col":6}],"flavors":["public"],"signature":"public class Order","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Order.CreatedAt","kind":"Property","name":"CreatedAt","qualified_name":"Shop.Models.Order.CreatedAt","parent":"Shop.Models.Order","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":430,"end_byte":469,"start_line":15,"start_col":9,"end_line":15,"end_col":48}],"flavors":["public"],"signature":"public DateTime CreatedAt","type_text":"DateTime","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Order.Customer","kind":"Property","name":"Customer","qualified_name":"Shop.Models.Order.Customer","parent":"Shop.Models.Order","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":272,"end_byte":310,"start_line":12,"start_col":9,"end_line":12,"end_col":47}],"flavors":["public"],"signature":"public Customer Customer","type_text":"Customer","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Order.CustomerId","kind":"Property","name":"CustomerId","qualified_name":"Shop.Models.Order.CustomerId","parent":"Shop.Models.Order","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":226,"end_byte":262,"start_line":11,"start_col":9,"end_line":11,"end_col":45}],"flavors":["public"],"signature":"public Guid CustomerId","type_text":"Guid","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Order.Id","kind":"Property","name":"Id","qualified_name":"Shop.Models.Order.Id","parent":"Shop.Models.Order","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":173,"end_byte":216,"start_line":9,"start_col":9,"end_line":10,"end_col":37}],"flavors":["public","attr:Key"],"signature":"[Key] public Guid Id","type_text":"Guid","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Order.Items","kind":"Property","name":"Items","qualified_name":"Shop.Models.Order.Items","parent":"Shop.Models.Order","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":320,"end_byte":371,"start_line":13,"start_col":9,"end_line":13,"end_col":60}],"flavors":["public"],"signature":"public List<OrderItem> Items","type_text":"List<OrderItem>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.Order.Status","kind":"Property","name":"Status","qualified_name":"Shop.Models.Order.Status","parent":"Shop.Models.Order","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":381,"end_byte":420,"start_line":14,"start_col":9,"end_line":14,"end_col":48}],"flavors":["public"],"signature":"public OrderStatus Status","type_text":"OrderStatus","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderItem","kind":"Class","name":"OrderItem","qualified_name":"Shop.Models.OrderItem","parent":"ns:Shop.Models","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":664,"end_byte":906,"start_line":25,"start_col":5,"end_line":32,"end_col":6}],"flavors":["public"],"signature":"public class OrderItem","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderItem.Id","kind":"Property","name":"Id","qualified_name":"Shop.Models.OrderItem.Id","parent":"Shop.Models.OrderItem","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":703,"end_byte":730,"start_line":27,"start_col":9,"end_line":27,"end_col":36}],"flavors":["public"],"signature":"public int Id","type_text":"int","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderItem.Order","kind":"Property","name":"Order","qualified_name":"Shop.Models.OrderItem.Order","parent":"Shop.Models.OrderItem","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":783,"end_byte":815,"start_line":29,"start_col":9,"end_line":29,"end_col":41}],"flavors":["public"],"signature":"public Order Order","type_text":"Order","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderItem.OrderId","kind":"Property","name":"OrderId","qualified_name":"Shop.Models.OrderItem.OrderId","parent":"Shop.Models.OrderItem","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":740,"end_byte":773,"start_line":28,"start_col":9,"end_line":28,"end_col":42}],"flavors":["public"],"signature":"public Guid OrderId","type_text":"Guid","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderItem.Quantity","kind":"Property","name":"Quantity","qualified_name":"Shop.Models.OrderItem.Quantity","parent":"Shop.Models.OrderItem","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":866,"end_byte":899,"start_line":31,"start_col":9,"end_line":31,"end_col":42}],"flavors":["public"],"signature":"public int Quantity","type_text":"int","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderItem.Sku","kind":"Property","name":"Sku","qualified_name":"Shop.Models.OrderItem.Sku","parent":"Shop.Models.OrderItem","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":825,"end_byte":856,"start_line":30,"start_col":9,"end_line":30,"end_col":40}],"flavors":["public"],"signature":"public string Sku","type_text":"string","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderStatus","kind":"Enum","name":"OrderStatus","qualified_name":"Shop.Models.OrderStatus","parent":"ns:Shop.Models","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":78,"end_byte":130,"start_line":5,"start_col":5,"end_line":5,"end_col":57}],"flavors":["public"],"signature":"public enum OrderStatus","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderStatus.Cancelled","kind":"EnumMember","name":"Cancelled","qualified_name":"Shop.Models.OrderStatus.Cancelled","parent":"Shop.Models.OrderStatus","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":119,"end_byte":128,"start_line":5,"start_col":46,"end_line":5,"end_col":55}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderStatus.Paid","kind":"EnumMember","name":"Paid","qualified_name":"Shop.Models.OrderStatus.Paid","parent":"Shop.Models.OrderStatus","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":113,"end_byte":117,"start_line":5,"start_col":40,"end_line":5,"end_col":44}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Models.OrderStatus.Pending","kind":"EnumMember","name":"Pending","qualified_name":"Shop.Models.OrderStatus.Pending","parent":"Shop.Models.OrderStatus","language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":104,"end_byte":111,"start_line":5,"start_col":31,"end_line":5,"end_col":38}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.IClock","kind":"Interface","name":"IClock","qualified_name":"Shop.Services.IClock","parent":"ns:Shop.Services","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":273,"end_byte":335,"start_line":12,"start_col":5,"end_line":15,"end_col":6}],"flavors":["public"],"signature":"public interface IClock","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.IClock.Now()","kind":"Method","name":"Now","qualified_name":"Shop.Services.IClock.Now","parent":"Shop.Services.IClock","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":313,"end_byte":328,"start_line":14,"start_col":9,"end_line":14,"end_col":24}],"flavors":["abstract"],"signature":"DateTime Now()","type_text":"DateTime","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.IOrderService","kind":"Interface","name":"IOrderService","qualified_name":"Shop.Services.IOrderService","parent":"ns:Shop.Services","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":54,"end_byte":265,"start_line":5,"start_col":5,"end_line":10,"end_col":6}],"flavors":["public"],"signature":"public interface IOrderService","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.IOrderService.CancelOrderAsync(Guid, string)","kind":"Method","name":"CancelOrderAsync","qualified_name":"Shop.Services.IOrderService.CancelOrderAsync","parent":"Shop.Services.IOrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":212,"end_byte":258,"start_line":9,"start_col":9,"end_line":9,"end_col":55}],"flavors":["abstract"],"signature":"Task CancelOrderAsync(Guid id, string reason)","type_text":"Task","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.IOrderService.ListOrdersAsync()","kind":"Method","name":"ListOrdersAsync","qualified_name":"Shop.Services.IOrderService.ListOrdersAsync","parent":"Shop.Services.IOrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":101,"end_byte":137,"start_line":7,"start_col":9,"end_line":7,"end_col":45}],"flavors":["abstract"],"signature":"Task<List<Order>> ListOrdersAsync()","type_text":"Task<List<Order>>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.IOrderService.PlaceOrderAsync(Order, int)","kind":"Method","name":"PlaceOrderAsync","qualified_name":"Shop.Services.IOrderService.PlaceOrderAsync","parent":"Shop.Services.IOrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":147,"end_byte":202,"start_line":8,"start_col":9,"end_line":8,"end_col":64}],"flavors":["abstract"],"signature":"Task<Order> PlaceOrderAsync(Order order, int priority)","type_text":"Task<Order>","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService","kind":"Class","name":"OrderService","qualified_name":"Shop.Services.OrderService","parent":"ns:Shop.Services","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":134,"end_byte":2021,"start_line":8,"start_col":5,"end_line":68,"end_col":6}],"flavors":["public"],"signature":"public class OrderService : IOrderService","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService..ctor(AppDbContext, IClock)","kind":"Constructor","name":"OrderService","qualified_name":"Shop.Services.OrderService.OrderService","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":356,"end_byte":480,"start_line":15,"start_col":9,"end_line":19,"end_col":10}],"flavors":["public"],"signature":"public OrderService(AppDbContext db, IClock clock)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService.Audit(Order, string)","kind":"Method","name":"Audit","qualified_name":"Shop.Services.OrderService.Audit","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":1882,"end_byte":2014,"start_line":64,"start_col":9,"end_line":67,"end_col":10}],"flavors":["private"],"signature":"private void Audit(Order order, string reason)","type_text":"void","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService.CancelOrderAsync(Guid, string)","kind":"Method","name":"CancelOrderAsync","qualified_name":"Shop.Services.OrderService.CancelOrderAsync","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":1466,"end_byte":1870,"start_line":52,"start_col":9,"end_line":62,"end_col":10}],"flavors":["public","async"],"signature":"public async Task CancelOrderAsync(Guid id, string reason)","type_text":"Task","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService.ListOrdersAsync()","kind":"Method","name":"ListOrdersAsync","qualified_name":"Shop.Services.OrderService.ListOrdersAsync","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":492,"end_byte":636,"start_line":21,"start_col":9,"end_line":24,"end_col":10}],"flavors":["public","async"],"signature":"public async Task<List<Order>> ListOrdersAsync()","type_text":"Task<List<Order>>","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService.MaxItems","kind":"Field","name":"MaxItems","qualified_name":"Shop.Services.OrderService.MaxItems","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":210,"end_byte":223,"start_line":10,"start_col":27,"end_line":10,"end_col":40}],"flavors":["private","const"],"signature":"private const int MaxItems = 50","type_text":"int","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService.PlaceOrderAsync(Order, int)","kind":"Method","name":"PlaceOrderAsync","qualified_name":"Shop.Services.OrderService.PlaceOrderAsync","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":648,"end_byte":1454,"start_line":26,"start_col":9,"end_line":50,"end_col":10}],"flavors":["public","async"],"signature":"public async Task<Order> PlaceOrderAsync(Order order, int priority)","type_text":"Task<Order>","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService._clock","kind":"Field","name":"_clock","qualified_name":"Shop.Services.OrderService._clock","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":302,"end_byte":308,"start_line":12,"start_col":33,"end_line":12,"end_col":39}],"flavors":["private","readonly"],"signature":"private readonly IClock _clock","type_text":"IClock","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService._db","kind":"Field","name":"_db","qualified_name":"Shop.Services.OrderService._db","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":264,"end_byte":267,"start_line":11,"start_col":39,"end_line":11,"end_col":42}],"flavors":["private","readonly"],"signature":"private readonly AppDbContext _db","type_text":"AppDbContext","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.OrderService._placedCount","kind":"Field","name":"_placedCount","qualified_name":"Shop.Services.OrderService._placedCount","parent":"Shop.Services.OrderService","language":"csharp","origins":[{"file":"backend-dotnet/Services/OrderService.cs","start_byte":331,"end_byte":343,"start_line":13,"start_col":21,"end_line":13,"end_col":33}],"flavors":["private"],"signature":"private int _placedCount","type_text":"int","has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.SystemClock","kind":"Class","name":"SystemClock","qualified_name":"Shop.Services.SystemClock","parent":"ns:Shop.Services","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":343,"end_byte":441,"start_line":17,"start_col":5,"end_line":20,"end_col":6}],"flavors":["public"],"signature":"public class SystemClock : IClock","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Services.SystemClock.Now()","kind":"Method","name":"Now","qualified_name":"Shop.Services.SystemClock.Now","parent":"Shop.Services.SystemClock","language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":393,"end_byte":434,"start_line":19,"start_col":9,"end_line":19,"end_col":50}],"flavors":["public"],"signature":"public DateTime Now()","type_text":"DateTime","has_flow":true,"external":false,"doc":null}
+{"id":"Shop.Tests.OrderServiceTests","kind":"Class","name":"OrderServiceTests","qualified_name":"Shop.Tests.OrderServiceTests","parent":"ns:Shop.Tests","language":"csharp","origins":[{"file":"backend-dotnet.Tests/OrderServiceTests.cs","start_byte":87,"end_byte":403,"start_line":7,"start_col":5,"end_line":15,"end_col":6}],"flavors":["public"],"signature":"public class OrderServiceTests","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"Shop.Tests.OrderServiceTests.PlaceOrder_RejectsEmptyOrders()","kind":"Method","name":"PlaceOrder_RejectsEmptyOrders","qualified_name":"Shop.Tests.OrderServiceTests.PlaceOrder_RejectsEmptyOrders","parent":"Shop.Tests.OrderServiceTests","language":"csharp","origins":[{"file":"backend-dotnet.Tests/OrderServiceTests.cs","start_byte":134,"end_byte":396,"start_line":9,"start_col":9,"end_line":14,"end_col":10}],"flavors":["public","async","attr:Fact"],"signature":"[Fact] public async Task PlaceOrder_RejectsEmptyOrders()","type_text":"Task","has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/app.module.AppModule","kind":"Class","name":"AppModule","qualified_name":"backend-nest/src/app.module.AppModule","parent":"ns:backend-nest/src/app.module","language":"typescript","origins":[{"file":"backend-nest/src/app.module.ts","start_byte":381,"end_byte":399,"start_line":10,"start_col":8,"end_line":10,"end_col":26}],"flavors":["export","attr:Module"],"signature":"class AppModule","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.controller.InvoicesController","kind":"Class","name":"InvoicesController","qualified_name":"backend-nest/src/invoices/invoices.controller.InvoicesController","parent":"ns:backend-nest/src/invoices/invoices.controller","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.controller.ts","start_byte":211,"end_byte":550,"start_line":6,"start_col":8,"end_line":19,"end_col":2}],"flavors":["export","attr:Controller"],"signature":"class InvoicesController","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.controller.InvoicesController.constructor","kind":"Constructor","name":"InvoicesController","qualified_name":"backend-nest/src/invoices/invoices.controller.InvoicesController.constructor","parent":"backend-nest/src/invoices/invoices.controller.InvoicesController","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.controller.ts","start_byte":241,"end_byte":306,"start_line":7,"start_col":3,"end_line":7,"end_col":68}],"flavors":[],"signature":"constructor(private readonly invoicesService: InvoicesService)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.controller.InvoicesController.findOne","kind":"Method","name":"findOne","qualified_name":"backend-nest/src/invoices/invoices.controller.InvoicesController.findOne","parent":"backend-nest/src/invoices/invoices.controller.InvoicesController","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.controller.ts","start_byte":327,"end_byte":412,"start_line":10,"start_col":3,"end_line":12,"end_col":4}],"flavors":["attr:Get"],"signature":"findOne(@Param(\"id\") id: string)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.controller.InvoicesController.invoicesService","kind":"Field","name":"invoicesService","qualified_name":"backend-nest/src/invoices/invoices.controller.InvoicesController.invoicesService","parent":"backend-nest/src/invoices/invoices.controller.InvoicesController","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.controller.ts","start_byte":253,"end_byte":302,"start_line":7,"start_col":15,"end_line":7,"end_col":64}],"flavors":["private","readonly","parameter-property"],"signature":"private readonly invoicesService: InvoicesService","type_text":"InvoicesService","has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.controller.InvoicesController.pay","kind":"Method","name":"pay","qualified_name":"backend-nest/src/invoices/invoices.controller.InvoicesController.pay","parent":"backend-nest/src/invoices/invoices.controller.InvoicesController","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.controller.ts","start_byte":470,"end_byte":547,"start_line":16,"start_col":3,"end_line":18,"end_col":4}],"flavors":["attr:Post","attr:UseGuards"],"signature":"pay(@Param(\"id\") id: string)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.service.InvoicesService","kind":"Class","name":"InvoicesService","qualified_name":"backend-nest/src/invoices/invoices.service.InvoicesService","parent":"ns:backend-nest/src/invoices/invoices.service","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":200,"end_byte":791,"start_line":6,"start_col":8,"end_line":24,"end_col":2}],"flavors":["export","attr:Injectable","angular:service"],"signature":"class InvoicesService","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.service.InvoicesService.constructor","kind":"Constructor","name":"InvoicesService","qualified_name":"backend-nest/src/invoices/invoices.service.InvoicesService.constructor","parent":"backend-nest/src/invoices/invoices.service.InvoicesService","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":269,"end_byte":352,"start_line":9,"start_col":3,"end_line":9,"end_col":86}],"flavors":[],"signature":"constructor(@Inject(\"PAYMENT_GATEWAY\") private readonly gateway: PaymentGateway)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.service.InvoicesService.findOne","kind":"Method","name":"findOne","qualified_name":"backend-nest/src/invoices/invoices.service.InvoicesService.findOne","parent":"backend-nest/src/invoices/invoices.service.InvoicesService","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":358,"end_byte":580,"start_line":11,"start_col":3,"end_line":17,"end_col":4}],"flavors":["async"],"signature":"async findOne(id: string)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.service.InvoicesService.gateway","kind":"Field","name":"gateway","qualified_name":"backend-nest/src/invoices/invoices.service.InvoicesService.gateway","parent":"backend-nest/src/invoices/invoices.service.InvoicesService","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":281,"end_byte":348,"start_line":9,"start_col":15,"end_line":9,"end_col":82}],"flavors":["private","readonly","attr:Inject","parameter-property","angular:inject"],"signature":"@Inject(\"PAYMENT_GATEWAY\") private readonly gateway: PaymentGateway","type_text":"PaymentGateway","has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.service.InvoicesService.pay","kind":"Method","name":"pay","qualified_name":"backend-nest/src/invoices/invoices.service.InvoicesService.pay","parent":"backend-nest/src/invoices/invoices.service.InvoicesService","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":586,"end_byte":788,"start_line":19,"start_col":3,"end_line":23,"end_col":4}],"flavors":["async"],"signature":"async pay(id: string)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/invoices/invoices.service.InvoicesService.prisma","kind":"Field","name":"prisma","qualified_name":"backend-nest/src/invoices/invoices.service.InvoicesService.prisma","parent":"backend-nest/src/invoices/invoices.service.InvoicesService","language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":227,"end_byte":262,"start_line":7,"start_col":3,"end_line":7,"end_col":38}],"flavors":["private"],"signature":"private prisma","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/main.(module)","kind":"Function","name":"Module top-level","qualified_name":"backend-nest/src/main.(module)","parent":"ns:backend-nest/src/main","language":"typescript","origins":[{"file":"backend-nest/src/main.ts","start_byte":0,"end_byte":269,"start_line":1,"start_col":1,"end_line":11,"end_col":1}],"flavors":["top-level"],"signature":"top-level statements","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/main.bootstrap","kind":"Function","name":"bootstrap","qualified_name":"backend-nest/src/main.bootstrap","parent":"ns:backend-nest/src/main","language":"typescript","origins":[{"file":"backend-nest/src/main.ts","start_byte":90,"end_byte":251,"start_line":4,"start_col":1,"end_line":8,"end_col":2}],"flavors":["async"],"signature":"async function bootstrap()","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"backend-nest/src/payments/payment.PaymentGateway","kind":"Interface","name":"PaymentGateway","qualified_name":"backend-nest/src/payments/payment.PaymentGateway","parent":"ns:backend-nest/src/payments/payment","language":"typescript","origins":[{"file":"backend-nest/src/payments/payment.ts","start_byte":7,"end_byte":81,"start_line":1,"start_col":8,"end_line":3,"end_col":2}],"flavors":["export","type-only"],"signature":"interface PaymentGateway","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/payments/payment.PaymentGateway.charge","kind":"Method","name":"charge","qualified_name":"backend-nest/src/payments/payment.PaymentGateway.charge","parent":"backend-nest/src/payments/payment.PaymentGateway","language":"typescript","origins":[{"file":"backend-nest/src/payments/payment.ts","start_byte":37,"end_byte":77,"start_line":2,"start_col":3,"end_line":2,"end_col":43}],"flavors":["abstract"],"signature":"charge(amount: number): Promise<boolean>","type_text":"Promise<boolean>","has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/payments/payment.StripeGateway","kind":"Class","name":"StripeGateway","qualified_name":"backend-nest/src/payments/payment.StripeGateway","parent":"ns:backend-nest/src/payments/payment","language":"typescript","origins":[{"file":"backend-nest/src/payments/payment.ts","start_byte":92,"end_byte":320,"start_line":5,"start_col":8,"end_line":10,"end_col":2}],"flavors":["export"],"signature":"class StripeGateway implements PaymentGateway","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"backend-nest/src/payments/payment.StripeGateway.charge","kind":"Method","name":"charge","qualified_name":"backend-nest/src/payments/payment.StripeGateway.charge","parent":"backend-nest/src/payments/payment.StripeGateway","language":"typescript","origins":[{"file":"backend-nest/src/payments/payment.ts","start_byte":143,"end_byte":317,"start_line":6,"start_col":3,"end_line":9,"end_col":4}],"flavors":["async"],"signature":"async charge(amount: number): Promise<boolean>","type_text":"Promise<boolean>","has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/__tests__/auth.test.(module)","kind":"Function","name":"Module top-level","qualified_name":"frontend-react/src/__tests__/auth.test.(module)","parent":"ns:frontend-react/src/__tests__/auth.test","language":"typescript","origins":[{"file":"frontend-react/src/__tests__/auth.test.ts","start_byte":0,"end_byte":249,"start_line":1,"start_col":1,"end_line":10,"end_col":1}],"flavors":["top-level"],"signature":"top-level statements","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/__tests__/auth.test.(module).describe callback","kind":"Function","name":"describe callback","qualified_name":"frontend-react/src/__tests__/auth.test.(module).describe callback","parent":"frontend-react/src/__tests__/auth.test.(module)","language":"typescript","origins":[{"file":"frontend-react/src/__tests__/auth.test.ts","start_byte":68,"end_byte":245,"start_line":3,"start_col":23,"end_line":9,"end_col":2}],"flavors":["callback","arrow","local-function"],"signature":"() =>","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/__tests__/auth.test.(module).describe callback.it callback","kind":"Function","name":"it callback","qualified_name":"frontend-react/src/__tests__/auth.test.(module).describe callback.it callback","parent":"frontend-react/src/__tests__/auth.test.(module).describe callback","language":"typescript","origins":[{"file":"frontend-react/src/__tests__/auth.test.ts","start_byte":110,"end_byte":240,"start_line":4,"start_col":34,"end_line":8,"end_col":4}],"flavors":["callback","arrow","local-function"],"signature":"() =>","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/api/orders.OrderDto","kind":"Interface","name":"OrderDto","qualified_name":"frontend-react/src/api/orders.OrderDto","parent":"ns:frontend-react/src/api/orders","language":"typescript","origins":[{"file":"frontend-react/src/api/orders.ts","start_byte":76,"end_byte":133,"start_line":4,"start_col":8,"end_line":7,"end_col":2}],"flavors":["export","type-only"],"signature":"interface OrderDto","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/api/orders.OrderDto.id","kind":"Property","name":"id","qualified_name":"frontend-react/src/api/orders.OrderDto.id","parent":"frontend-react/src/api/orders.OrderDto","language":"typescript","origins":[{"file":"frontend-react/src/api/orders.ts","start_byte":100,"end_byte":110,"start_line":5,"start_col":3,"end_line":5,"end_col":13}],"flavors":[],"signature":"id: string","type_text":"string","has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/api/orders.OrderDto.status","kind":"Property","name":"status","qualified_name":"frontend-react/src/api/orders.OrderDto.status","parent":"frontend-react/src/api/orders.OrderDto","language":"typescript","origins":[{"file":"frontend-react/src/api/orders.ts","start_byte":115,"end_byte":129,"start_line":6,"start_col":3,"end_line":6,"end_col":17}],"flavors":[],"signature":"status: string","type_text":"string","has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/api/orders.cancelOrder","kind":"Function","name":"cancelOrder","qualified_name":"frontend-react/src/api/orders.cancelOrder","parent":"ns:frontend-react/src/api/orders","language":"typescript","origins":[{"file":"frontend-react/src/api/orders.ts","start_byte":385,"end_byte":492,"start_line":18,"start_col":8,"end_line":20,"end_col":2}],"flavors":["export","async"],"signature":"async function cancelOrder(id: string): Promise<void>","type_text":"Promise<void>","has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/api/orders.getOrders","kind":"Function","name":"getOrders","qualified_name":"frontend-react/src/api/orders.getOrders","parent":"ns:frontend-react/src/api/orders","language":"typescript","origins":[{"file":"frontend-react/src/api/orders.ts","start_byte":187,"end_byte":374,"start_line":10,"start_col":8,"end_line":16,"end_col":2}],"flavors":["export","async"],"signature":"async function getOrders(): Promise<OrderDto[]>","type_text":"Promise<OrderDto[]>","has_flow":true,"external":false,"doc":"Loads all orders from the backend."}
+{"id":"frontend-react/src/api/orders.getProfile","kind":"Function","name":"getProfile","qualified_name":"frontend-react/src/api/orders.getProfile","parent":"ns:frontend-react/src/api/orders","language":"typescript","origins":[{"file":"frontend-react/src/api/orders.ts","start_byte":503,"end_byte":597,"start_line":22,"start_col":8,"end_line":24,"end_col":2}],"flavors":["export","async"],"signature":"async function getProfile(): Promise<unknown>","type_text":"Promise<unknown>","has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderList.OrderList","kind":"Function","name":"OrderList","qualified_name":"frontend-react/src/components/OrderList.OrderList","parent":"ns:frontend-react/src/components/OrderList","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderList.tsx","start_byte":169,"end_byte":765,"start_line":5,"start_col":8,"end_line":34,"end_col":2}],"flavors":["export","react:component"],"signature":"function OrderList()","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderList.OrderList.effect","kind":"Function","name":"effect","qualified_name":"frontend-react/src/components/OrderList.OrderList.effect","parent":"frontend-react/src/components/OrderList.OrderList","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderList.tsx","start_byte":264,"end_byte":310,"start_line":8,"start_col":13,"end_line":10,"end_col":4}],"flavors":["react:effect","arrow","local-function"],"signature":"() =>","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderList.OrderList.onCancel","kind":"Function","name":"onCancel","qualified_name":"frontend-react/src/components/OrderList.OrderList.onCancel","parent":"frontend-react/src/components/OrderList.OrderList","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderList.tsx","start_byte":328,"end_byte":459,"start_line":12,"start_col":9,"end_line":18,"end_col":4}],"flavors":["async","arrow","local-function"],"signature":"const onCancel = async (id: string) =>","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderList.OrderList.refresh","kind":"Function","name":"refresh","qualified_name":"frontend-react/src/components/OrderList.OrderList.refresh","parent":"frontend-react/src/components/OrderList.OrderList","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderList.tsx","start_byte":472,"end_byte":535,"start_line":20,"start_col":9,"end_line":22,"end_col":4}],"flavors":["async","arrow","local-function"],"signature":"const refresh = async () =>","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderRow.OrderRow","kind":"Function","name":"OrderRow","qualified_name":"frontend-react/src/components/OrderRow.OrderRow","parent":"ns:frontend-react/src/components/OrderRow","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderRow.tsx","start_byte":155,"end_byte":407,"start_line":6,"start_col":14,"end_line":14,"end_col":2}],"flavors":["export","const","arrow","react:component"],"signature":"const OrderRow = ({ order, onCancel }: Props) =>","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderRow.Props","kind":"TypeAlias","name":"Props","qualified_name":"frontend-react/src/components/OrderRow.Props","parent":"ns:frontend-react/src/components/OrderRow","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderRow.tsx","start_byte":73,"end_byte":138,"start_line":4,"start_col":1,"end_line":4,"end_col":66}],"flavors":["type-only"],"signature":"type Props = { order: OrderDto; onCancel: (id: string) => void }","type_text":"{ order: OrderDto; onCancel: (id: string) => void }","has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderRow.Props.onCancel","kind":"Property","name":"onCancel","qualified_name":"frontend-react/src/components/OrderRow.Props.onCancel","parent":"frontend-react/src/components/OrderRow.Props","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderRow.tsx","start_byte":105,"end_byte":135,"start_line":4,"start_col":33,"end_line":4,"end_col":63}],"flavors":[],"signature":"onCancel: (id: string) => void","type_text":"(id: string) => void","has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/components/OrderRow.Props.order","kind":"Property","name":"order","qualified_name":"frontend-react/src/components/OrderRow.Props.order","parent":"frontend-react/src/components/OrderRow.Props","language":"typescript","origins":[{"file":"frontend-react/src/components/OrderRow.tsx","start_byte":88,"end_byte":103,"start_line":4,"start_col":16,"end_line":4,"end_col":31}],"flavors":[],"signature":"order: OrderDto","type_text":"OrderDto","has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/config.API_BASE","kind":"Field","name":"API_BASE","qualified_name":"frontend-react/src/config.API_BASE","parent":"ns:frontend-react/src/config","language":"typescript","origins":[{"file":"frontend-react/src/config.ts","start_byte":13,"end_byte":83,"start_line":1,"start_col":14,"end_line":1,"end_col":84}],"flavors":["export","const"],"signature":"const API_BASE","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/config.IS_PROD","kind":"Field","name":"IS_PROD","qualified_name":"frontend-react/src/config.IS_PROD","parent":"ns:frontend-react/src/config","language":"typescript","origins":[{"file":"frontend-react/src/config.ts","start_byte":99,"end_byte":146,"start_line":2,"start_col":14,"end_line":2,"end_col":61}],"flavors":["export","const"],"signature":"const IS_PROD","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/auth.AuthStore","kind":"Class","name":"AuthStore","qualified_name":"frontend-react/src/utils/auth.AuthStore","parent":"ns:frontend-react/src/utils/auth","language":"typescript","origins":[{"file":"frontend-react/src/utils/auth.ts","start_byte":84,"end_byte":375,"start_line":5,"start_col":8,"end_line":18,"end_col":2}],"flavors":["export"],"signature":"class AuthStore","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/auth.AuthStore.login","kind":"Method","name":"login","qualified_name":"frontend-react/src/utils/auth.AuthStore.login","parent":"frontend-react/src/utils/auth.AuthStore","language":"typescript","origins":[{"file":"frontend-react/src/utils/auth.ts","start_byte":146,"end_byte":296,"start_line":8,"start_col":3,"end_line":12,"end_col":4}],"flavors":[],"signature":"login(user: string, password: string): string","type_text":"string","has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/auth.AuthStore.logout","kind":"Method","name":"logout","qualified_name":"frontend-react/src/utils/auth.AuthStore.logout","parent":"frontend-react/src/utils/auth.AuthStore","language":"typescript","origins":[{"file":"frontend-react/src/utils/auth.ts","start_byte":302,"end_byte":372,"start_line":14,"start_col":3,"end_line":17,"end_col":4}],"flavors":[],"signature":"logout(): void","type_text":"void","has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/auth.AuthStore.user","kind":"Field","name":"user","qualified_name":"frontend-react/src/utils/auth.AuthStore.user","parent":"frontend-react/src/utils/auth.AuthStore","language":"typescript","origins":[{"file":"frontend-react/src/utils/auth.ts","start_byte":105,"end_byte":139,"start_line":6,"start_col":3,"end_line":6,"end_col":37}],"flavors":["private"],"signature":"private user: string | null","type_text":"string | null","has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/auth.currentToken","kind":"Field","name":"currentToken","qualified_name":"frontend-react/src/utils/auth.currentToken","parent":"ns:frontend-react/src/utils/auth","language":"typescript","origins":[{"file":"frontend-react/src/utils/auth.ts","start_byte":38,"end_byte":72,"start_line":3,"start_col":5,"end_line":3,"end_col":39}],"flavors":["let"],"signature":"let currentToken: string | null","type_text":"string | null","has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/hash.HASH_ROUNDS","kind":"Field","name":"HASH_ROUNDS","qualified_name":"frontend-react/src/utils/hash.HASH_ROUNDS","parent":"ns:frontend-react/src/utils/hash","language":"typescript","origins":[{"file":"frontend-react/src/utils/hash.ts","start_byte":13,"end_byte":29,"start_line":1,"start_col":14,"end_line":1,"end_col":30}],"flavors":["export","const"],"signature":"const HASH_ROUNDS","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/hash.hash","kind":"Function","name":"hash","qualified_name":"frontend-react/src/utils/hash.hash","parent":"ns:frontend-react/src/utils/hash","language":"typescript","origins":[{"file":"frontend-react/src/utils/hash.ts","start_byte":41,"end_byte":204,"start_line":3,"start_col":8,"end_line":9,"end_col":2}],"flavors":["export"],"signature":"function hash(value: string, rounds: number = HASH_ROUNDS): string","type_text":"string","has_flow":true,"external":false,"doc":null}
+{"id":"frontend-react/src/utils/hash.unusedHelper","kind":"Function","name":"unusedHelper","qualified_name":"frontend-react/src/utils/hash.unusedHelper","parent":"ns:frontend-react/src/utils/hash","language":"typescript","origins":[{"file":"frontend-react/src/utils/hash.ts","start_byte":208,"end_byte":258,"start_line":11,"start_col":1,"end_line":13,"end_col":2}],"flavors":[],"signature":"function unusedHelper(): number","type_text":"number","has_flow":true,"external":false,"doc":null}
+{"id":"ns:Shop.Controllers","kind":"Namespace","name":"Shop.Controllers","qualified_name":"Shop.Controllers","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":144,"end_byte":1371,"start_line":7,"start_col":1,"end_line":50,"end_col":2}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:Shop.Data","kind":"Namespace","name":"Shop.Data","qualified_name":"Shop.Data","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet/Data/AppDbContext.cs","start_byte":60,"end_byte":306,"start_line":4,"start_col":1,"end_line":12,"end_col":2}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:Shop.Exceptions","kind":"Namespace","name":"Shop.Exceptions","qualified_name":"Shop.Exceptions","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet/Exceptions/OrderNotFoundException.cs","start_byte":0,"end_byte":173,"start_line":1,"start_col":1,"end_line":7,"end_col":2}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:Shop.Handlers","kind":"Namespace","name":"Shop.Handlers","qualified_name":"Shop.Handlers","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet/Handlers/Dispatcher.cs","start_byte":0,"end_byte":845,"start_line":1,"start_col":1,"end_line":40,"end_col":2}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:Shop.Models","kind":"Namespace","name":"Shop.Models","qualified_name":"Shop.Models","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet/Models/Order.cs","start_byte":48,"end_byte":909,"start_line":3,"start_col":1,"end_line":33,"end_col":2}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:Shop.Services","kind":"Namespace","name":"Shop.Services","qualified_name":"Shop.Services","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet/Services/IOrderService.cs","start_byte":22,"end_byte":444,"start_line":3,"start_col":1,"end_line":21,"end_col":2},{"file":"backend-dotnet/Services/OrderService.cs","start_byte":102,"end_byte":2024,"start_line":6,"start_col":1,"end_line":69,"end_col":2}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:Shop.Tests","kind":"Namespace","name":"Shop.Tests","qualified_name":"Shop.Tests","parent":null,"language":"csharp","origins":[{"file":"backend-dotnet.Tests/OrderServiceTests.cs","start_byte":58,"end_byte":406,"start_line":5,"start_col":1,"end_line":16,"end_col":2}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:backend-nest/src/app.module","kind":"Module","name":"app.module.ts","qualified_name":"backend-nest/src/app.module","parent":null,"language":"typescript","origins":[{"file":"backend-nest/src/app.module.ts","start_byte":0,"end_byte":401,"start_line":1,"start_col":1,"end_line":11,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:backend-nest/src/invoices/invoices.controller","kind":"Module","name":"invoices.controller.ts","qualified_name":"backend-nest/src/invoices/invoices.controller","parent":null,"language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.controller.ts","start_byte":0,"end_byte":552,"start_line":1,"start_col":1,"end_line":20,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:backend-nest/src/invoices/invoices.service","kind":"Module","name":"invoices.service.ts","qualified_name":"backend-nest/src/invoices/invoices.service","parent":null,"language":"typescript","origins":[{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":0,"end_byte":793,"start_line":1,"start_col":1,"end_line":25,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:backend-nest/src/main","kind":"Module","name":"main.ts","qualified_name":"backend-nest/src/main","parent":null,"language":"typescript","origins":[{"file":"backend-nest/src/main.ts","start_byte":0,"end_byte":269,"start_line":1,"start_col":1,"end_line":11,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:backend-nest/src/payments/payment","kind":"Module","name":"payment.ts","qualified_name":"backend-nest/src/payments/payment","parent":null,"language":"typescript","origins":[{"file":"backend-nest/src/payments/payment.ts","start_byte":0,"end_byte":322,"start_line":1,"start_col":1,"end_line":11,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:frontend-react/src/__tests__/auth.test","kind":"Module","name":"auth.test.ts","qualified_name":"frontend-react/src/__tests__/auth.test","parent":null,"language":"typescript","origins":[{"file":"frontend-react/src/__tests__/auth.test.ts","start_byte":0,"end_byte":249,"start_line":1,"start_col":1,"end_line":10,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:frontend-react/src/api/orders","kind":"Module","name":"orders.ts","qualified_name":"frontend-react/src/api/orders","parent":null,"language":"typescript","origins":[{"file":"frontend-react/src/api/orders.ts","start_byte":0,"end_byte":599,"start_line":1,"start_col":1,"end_line":25,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:frontend-react/src/components/OrderList","kind":"Module","name":"OrderList.tsx","qualified_name":"frontend-react/src/components/OrderList","parent":null,"language":"typescript","origins":[{"file":"frontend-react/src/components/OrderList.tsx","start_byte":0,"end_byte":767,"start_line":1,"start_col":1,"end_line":35,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:frontend-react/src/components/OrderRow","kind":"Module","name":"OrderRow.tsx","qualified_name":"frontend-react/src/components/OrderRow","parent":null,"language":"typescript","origins":[{"file":"frontend-react/src/components/OrderRow.tsx","start_byte":0,"end_byte":410,"start_line":1,"start_col":1,"end_line":15,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:frontend-react/src/config","kind":"Module","name":"config.ts","qualified_name":"frontend-react/src/config","parent":null,"language":"typescript","origins":[{"file":"frontend-react/src/config.ts","start_byte":0,"end_byte":149,"start_line":1,"start_col":1,"end_line":3,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:frontend-react/src/utils/auth","kind":"Module","name":"auth.ts","qualified_name":"frontend-react/src/utils/auth","parent":null,"language":"typescript","origins":[{"file":"frontend-react/src/utils/auth.ts","start_byte":0,"end_byte":377,"start_line":1,"start_col":1,"end_line":19,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:frontend-react/src/utils/hash","kind":"Module","name":"hash.ts","qualified_name":"frontend-react/src/utils/hash","parent":null,"language":"typescript","origins":[{"file":"frontend-react/src/utils/hash.ts","start_byte":0,"end_byte":260,"start_line":1,"start_col":1,"end_line":14,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ext:ControllerBase","kind":"Class","name":"ControllerBase","qualified_name":"ControllerBase","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ext:DbContext","kind":"Class","name":"DbContext","qualified_name":"DbContext","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ext:Exception","kind":"Class","name":"Exception","qualified_name":"Exception","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ns:(global)","kind":"Namespace","name":"(global)","qualified_name":"(global)","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:Microsoft.AspNetCore.Authorization","kind":"Namespace","name":"Authorization","qualified_name":"Microsoft.AspNetCore.Authorization","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ns:Microsoft.AspNetCore.Mvc","kind":"Namespace","name":"Mvc","qualified_name":"Microsoft.AspNetCore.Mvc","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ns:Microsoft.EntityFrameworkCore","kind":"Namespace","name":"EntityFrameworkCore","qualified_name":"Microsoft.EntityFrameworkCore","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ns:System.ComponentModel.DataAnnotations","kind":"Namespace","name":"DataAnnotations","qualified_name":"System.ComponentModel.DataAnnotations","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ns:Xunit","kind":"Namespace","name":"Xunit","qualified_name":"Xunit","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"pkg:@nestjs/common","kind":"Package","name":"@nestjs/common","qualified_name":"@nestjs/common","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"pkg:@nestjs/core","kind":"Package","name":"@nestjs/core","qualified_name":"@nestjs/core","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"pkg:@nestjs/passport","kind":"Package","name":"@nestjs/passport","qualified_name":"@nestjs/passport","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"pkg:@prisma/client","kind":"Package","name":"@prisma/client","qualified_name":"@prisma/client","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"pkg:axios","kind":"Package","name":"axios","qualified_name":"axios","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"pkg:react","kind":"Package","name":"react","qualified_name":"react","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ext:ArgumentException","kind":"Class","name":"ArgumentException","qualified_name":"ArgumentException","parent":null,"language":"csharp","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ext:Error","kind":"Class","name":"Error","qualified_name":"Error","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"ext:NotFoundException","kind":"Class","name":"NotFoundException","qualified_name":"NotFoundException","parent":null,"language":"typescript","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+
+# edges
+{"from":"Program","to":"Program.<Main>$(string[])","kind":"Contains"}
+{"from":"Shop.Controllers.OrdersController","to":"Shop.Controllers.OrdersController..ctor(IOrderService)","kind":"Contains"}
+{"from":"Shop.Controllers.OrdersController","to":"Shop.Controllers.OrdersController.Cancel(Guid)","kind":"Contains"}
+{"from":"Shop.Controllers.OrdersController","to":"Shop.Controllers.OrdersController.Create(Order)","kind":"Contains"}
+{"from":"Shop.Controllers.OrdersController","to":"Shop.Controllers.OrdersController.GetOrders()","kind":"Contains"}
+{"from":"Shop.Controllers.OrdersController","to":"Shop.Controllers.OrdersController._orderService","kind":"Contains"}
+{"from":"Shop.Controllers.OrdersController","to":"ext:ControllerBase","kind":"Inherits"}
+{"from":"Shop.Controllers.OrdersController..ctor(IOrderService)","to":"Shop.Services.IOrderService","kind":"References"}
+{"from":"Shop.Controllers.OrdersController.Create(Order)","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Controllers.OrdersController._orderService","to":"Shop.Services.IOrderService","kind":"References"}
+{"from":"Shop.Data.AppDbContext","to":"Shop.Data.AppDbContext.Customers","kind":"Contains"}
+{"from":"Shop.Data.AppDbContext","to":"Shop.Data.AppDbContext.OrderItems","kind":"Contains"}
+{"from":"Shop.Data.AppDbContext","to":"Shop.Data.AppDbContext.Orders","kind":"Contains"}
+{"from":"Shop.Data.AppDbContext","to":"ext:DbContext","kind":"Inherits"}
+{"from":"Shop.Data.AppDbContext.Customers","to":"Shop.Models.Customer","kind":"References"}
+{"from":"Shop.Data.AppDbContext.OrderItems","to":"Shop.Models.OrderItem","kind":"References"}
+{"from":"Shop.Data.AppDbContext.Orders","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Exceptions.OrderNotFoundException","to":"Shop.Exceptions.OrderNotFoundException..ctor(string)","kind":"Contains"}
+{"from":"Shop.Exceptions.OrderNotFoundException","to":"ext:Exception","kind":"Inherits"}
+{"from":"Shop.Handlers.Dispatcher","to":"Shop.Handlers.Dispatcher.Broadcast(string)","kind":"Contains"}
+{"from":"Shop.Handlers.Dispatcher","to":"Shop.Handlers.Dispatcher.Dispatch(IHandler, string)","kind":"Contains"}
+{"from":"Shop.Handlers.Dispatcher","to":"Shop.Handlers.Dispatcher._handlers","kind":"Contains"}
+{"from":"Shop.Handlers.Dispatcher.Dispatch(IHandler, string)","to":"Shop.Handlers.IHandler","kind":"References"}
+{"from":"Shop.Handlers.Dispatcher._handlers","to":"Shop.Handlers.IHandler","kind":"References"}
+{"from":"Shop.Handlers.EmailHandler","to":"Shop.Handlers.EmailHandler.Execute(string)","kind":"Contains"}
+{"from":"Shop.Handlers.EmailHandler","to":"Shop.Handlers.IHandler","kind":"Implements"}
+{"from":"Shop.Handlers.IHandler","to":"Shop.Handlers.IHandler.Execute(string)","kind":"Contains"}
+{"from":"Shop.Handlers.PushHandler","to":"Shop.Handlers.IHandler","kind":"Implements"}
+{"from":"Shop.Handlers.PushHandler","to":"Shop.Handlers.PushHandler.Execute(string)","kind":"Contains"}
+{"from":"Shop.Handlers.SmsHandler","to":"Shop.Handlers.IHandler","kind":"Implements"}
+{"from":"Shop.Handlers.SmsHandler","to":"Shop.Handlers.SmsHandler.Execute(string)","kind":"Contains"}
+{"from":"Shop.Models.Customer","to":"Shop.Models.Customer.Email","kind":"Contains"}
+{"from":"Shop.Models.Customer","to":"Shop.Models.Customer.Id","kind":"Contains"}
+{"from":"Shop.Models.Customer","to":"Shop.Models.Customer.Orders","kind":"Contains"}
+{"from":"Shop.Models.Customer.Orders","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Models.Order","to":"Shop.Models.Order.CreatedAt","kind":"Contains"}
+{"from":"Shop.Models.Order","to":"Shop.Models.Order.Customer","kind":"Contains"}
+{"from":"Shop.Models.Order","to":"Shop.Models.Order.CustomerId","kind":"Contains"}
+{"from":"Shop.Models.Order","to":"Shop.Models.Order.Id","kind":"Contains"}
+{"from":"Shop.Models.Order","to":"Shop.Models.Order.Items","kind":"Contains"}
+{"from":"Shop.Models.Order","to":"Shop.Models.Order.Status","kind":"Contains"}
+{"from":"Shop.Models.Order.Customer","to":"Shop.Models.Customer","kind":"References"}
+{"from":"Shop.Models.Order.Items","to":"Shop.Models.OrderItem","kind":"References"}
+{"from":"Shop.Models.Order.Status","to":"Shop.Models.OrderStatus","kind":"References"}
+{"from":"Shop.Models.OrderItem","to":"Shop.Models.OrderItem.Id","kind":"Contains"}
+{"from":"Shop.Models.OrderItem","to":"Shop.Models.OrderItem.Order","kind":"Contains"}
+{"from":"Shop.Models.OrderItem","to":"Shop.Models.OrderItem.OrderId","kind":"Contains"}
+{"from":"Shop.Models.OrderItem","to":"Shop.Models.OrderItem.Quantity","kind":"Contains"}
+{"from":"Shop.Models.OrderItem","to":"Shop.Models.OrderItem.Sku","kind":"Contains"}
+{"from":"Shop.Models.OrderItem.Order","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Models.OrderStatus","to":"Shop.Models.OrderStatus.Cancelled","kind":"Contains"}
+{"from":"Shop.Models.OrderStatus","to":"Shop.Models.OrderStatus.Paid","kind":"Contains"}
+{"from":"Shop.Models.OrderStatus","to":"Shop.Models.OrderStatus.Pending","kind":"Contains"}
+{"from":"Shop.Services.IClock","to":"Shop.Services.IClock.Now()","kind":"Contains"}
+{"from":"Shop.Services.IOrderService","to":"Shop.Services.IOrderService.CancelOrderAsync(Guid, string)","kind":"Contains"}
+{"from":"Shop.Services.IOrderService","to":"Shop.Services.IOrderService.ListOrdersAsync()","kind":"Contains"}
+{"from":"Shop.Services.IOrderService","to":"Shop.Services.IOrderService.PlaceOrderAsync(Order, int)","kind":"Contains"}
+{"from":"Shop.Services.IOrderService.ListOrdersAsync()","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Services.IOrderService.PlaceOrderAsync(Order, int)","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.IOrderService","kind":"Implements"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService..ctor(AppDbContext, IClock)","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService.Audit(Order, string)","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService.CancelOrderAsync(Guid, string)","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService.ListOrdersAsync()","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService.MaxItems","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService.PlaceOrderAsync(Order, int)","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService._clock","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService._db","kind":"Contains"}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.OrderService._placedCount","kind":"Contains"}
+{"from":"Shop.Services.OrderService..ctor(AppDbContext, IClock)","to":"Shop.Data.AppDbContext","kind":"References"}
+{"from":"Shop.Services.OrderService..ctor(AppDbContext, IClock)","to":"Shop.Services.IClock","kind":"References"}
+{"from":"Shop.Services.OrderService.Audit(Order, string)","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Services.OrderService.CancelOrderAsync(Guid, string)","to":"Shop.Exceptions.OrderNotFoundException","kind":"Instantiates"}
+{"from":"Shop.Services.OrderService.ListOrdersAsync()","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Services.OrderService.PlaceOrderAsync(Order, int)","to":"Shop.Models.Order","kind":"References"}
+{"from":"Shop.Services.OrderService._clock","to":"Shop.Services.IClock","kind":"References"}
+{"from":"Shop.Services.OrderService._db","to":"Shop.Data.AppDbContext","kind":"References"}
+{"from":"Shop.Services.SystemClock","to":"Shop.Services.IClock","kind":"Implements"}
+{"from":"Shop.Services.SystemClock","to":"Shop.Services.SystemClock.Now()","kind":"Contains"}
+{"from":"Shop.Tests.OrderServiceTests","to":"Shop.Tests.OrderServiceTests.PlaceOrder_RejectsEmptyOrders()","kind":"Contains"}
+{"from":"Shop.Tests.OrderServiceTests.PlaceOrder_RejectsEmptyOrders()","to":"Shop.Models.Order","kind":"Instantiates"}
+{"from":"Shop.Tests.OrderServiceTests.PlaceOrder_RejectsEmptyOrders()","to":"Shop.Services.OrderService","kind":"Instantiates"}
+{"from":"Shop.Tests.OrderServiceTests.PlaceOrder_RejectsEmptyOrders()","to":"Shop.Services.SystemClock","kind":"Instantiates"}
+{"from":"backend-nest/src/invoices/invoices.controller.InvoicesController","to":"backend-nest/src/invoices/invoices.controller.InvoicesController.constructor","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.controller.InvoicesController","to":"backend-nest/src/invoices/invoices.controller.InvoicesController.findOne","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.controller.InvoicesController","to":"backend-nest/src/invoices/invoices.controller.InvoicesController.invoicesService","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.controller.InvoicesController","to":"backend-nest/src/invoices/invoices.controller.InvoicesController.pay","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.controller.InvoicesController.constructor","to":"backend-nest/src/invoices/invoices.service.InvoicesService","kind":"References"}
+{"from":"backend-nest/src/invoices/invoices.controller.InvoicesController.invoicesService","to":"backend-nest/src/invoices/invoices.service.InvoicesService","kind":"References"}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService","to":"backend-nest/src/invoices/invoices.service.InvoicesService.constructor","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService","to":"backend-nest/src/invoices/invoices.service.InvoicesService.findOne","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService","to":"backend-nest/src/invoices/invoices.service.InvoicesService.gateway","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService","to":"backend-nest/src/invoices/invoices.service.InvoicesService.pay","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService","to":"backend-nest/src/invoices/invoices.service.InvoicesService.prisma","kind":"Contains"}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService.constructor","to":"backend-nest/src/payments/payment.PaymentGateway","kind":"References"}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService.gateway","to":"backend-nest/src/payments/payment.PaymentGateway","kind":"References"}
+{"from":"backend-nest/src/payments/payment.PaymentGateway","to":"backend-nest/src/payments/payment.PaymentGateway.charge","kind":"Contains"}
+{"from":"backend-nest/src/payments/payment.StripeGateway","to":"backend-nest/src/payments/payment.PaymentGateway","kind":"Implements"}
+{"from":"backend-nest/src/payments/payment.StripeGateway","to":"backend-nest/src/payments/payment.StripeGateway.charge","kind":"Contains"}
+{"from":"frontend-react/src/__tests__/auth.test.(module)","to":"frontend-react/src/__tests__/auth.test.(module).describe callback","kind":"Contains"}
+{"from":"frontend-react/src/__tests__/auth.test.(module).describe callback","to":"frontend-react/src/__tests__/auth.test.(module).describe callback.it callback","kind":"Contains"}
+{"from":"frontend-react/src/__tests__/auth.test.(module).describe callback.it callback","to":"frontend-react/src/utils/auth.AuthStore","kind":"Instantiates"}
+{"from":"frontend-react/src/api/orders.OrderDto","to":"frontend-react/src/api/orders.OrderDto.id","kind":"Contains"}
+{"from":"frontend-react/src/api/orders.OrderDto","to":"frontend-react/src/api/orders.OrderDto.status","kind":"Contains"}
+{"from":"frontend-react/src/api/orders.getOrders","to":"frontend-react/src/api/orders.OrderDto","kind":"References"}
+{"from":"frontend-react/src/components/OrderList.OrderList","to":"frontend-react/src/components/OrderList.OrderList.effect","kind":"Contains"}
+{"from":"frontend-react/src/components/OrderList.OrderList","to":"frontend-react/src/components/OrderList.OrderList.onCancel","kind":"Contains"}
+{"from":"frontend-react/src/components/OrderList.OrderList","to":"frontend-react/src/components/OrderList.OrderList.refresh","kind":"Contains"}
+{"from":"frontend-react/src/components/OrderRow.OrderRow","to":"frontend-react/src/components/OrderRow.Props","kind":"References"}
+{"from":"frontend-react/src/components/OrderRow.Props","to":"frontend-react/src/components/OrderRow.Props.onCancel","kind":"Contains"}
+{"from":"frontend-react/src/components/OrderRow.Props","to":"frontend-react/src/components/OrderRow.Props.order","kind":"Contains"}
+{"from":"frontend-react/src/components/OrderRow.Props.order","to":"frontend-react/src/api/orders.OrderDto","kind":"References"}
+{"from":"frontend-react/src/utils/auth.AuthStore","to":"frontend-react/src/utils/auth.AuthStore.login","kind":"Contains"}
+{"from":"frontend-react/src/utils/auth.AuthStore","to":"frontend-react/src/utils/auth.AuthStore.logout","kind":"Contains"}
+{"from":"frontend-react/src/utils/auth.AuthStore","to":"frontend-react/src/utils/auth.AuthStore.user","kind":"Contains"}
+{"from":"ns:(global)","to":"ns:Shop.Data","kind":"Imports"}
+{"from":"ns:(global)","to":"ns:Shop.Handlers","kind":"Imports"}
+{"from":"ns:(global)","to":"ns:Shop.Services","kind":"Imports"}
+{"from":"ns:Shop.Controllers","to":"Shop.Controllers.OrdersController","kind":"Contains"}
+{"from":"ns:Shop.Controllers","to":"ns:Microsoft.AspNetCore.Authorization","kind":"Imports"}
+{"from":"ns:Shop.Controllers","to":"ns:Microsoft.AspNetCore.Mvc","kind":"Imports"}
+{"from":"ns:Shop.Controllers","to":"ns:Shop.Exceptions","kind":"Imports"}
+{"from":"ns:Shop.Controllers","to":"ns:Shop.Models","kind":"Imports"}
+{"from":"ns:Shop.Controllers","to":"ns:Shop.Services","kind":"Imports"}
+{"from":"ns:Shop.Data","to":"Shop.Data.AppDbContext","kind":"Contains"}
+{"from":"ns:Shop.Data","to":"ns:Microsoft.EntityFrameworkCore","kind":"Imports"}
+{"from":"ns:Shop.Data","to":"ns:Shop.Models","kind":"Imports"}
+{"from":"ns:Shop.Exceptions","to":"Shop.Exceptions.OrderNotFoundException","kind":"Contains"}
+{"from":"ns:Shop.Handlers","to":"Shop.Handlers.Dispatcher","kind":"Contains"}
+{"from":"ns:Shop.Handlers","to":"Shop.Handlers.EmailHandler","kind":"Contains"}
+{"from":"ns:Shop.Handlers","to":"Shop.Handlers.IHandler","kind":"Contains"}
+{"from":"ns:Shop.Handlers","to":"Shop.Handlers.PushHandler","kind":"Contains"}
+{"from":"ns:Shop.Handlers","to":"Shop.Handlers.SmsHandler","kind":"Contains"}
+{"from":"ns:Shop.Models","to":"Shop.Models.Customer","kind":"Contains"}
+{"from":"ns:Shop.Models","to":"Shop.Models.Order","kind":"Contains"}
+{"from":"ns:Shop.Models","to":"Shop.Models.OrderItem","kind":"Contains"}
+{"from":"ns:Shop.Models","to":"Shop.Models.OrderStatus","kind":"Contains"}
+{"from":"ns:Shop.Models","to":"ns:System.ComponentModel.DataAnnotations","kind":"Imports"}
+{"from":"ns:Shop.Services","to":"Shop.Services.IClock","kind":"Contains"}
+{"from":"ns:Shop.Services","to":"Shop.Services.IOrderService","kind":"Contains"}
+{"from":"ns:Shop.Services","to":"Shop.Services.OrderService","kind":"Contains"}
+{"from":"ns:Shop.Services","to":"Shop.Services.SystemClock","kind":"Contains"}
+{"from":"ns:Shop.Services","to":"ns:Microsoft.EntityFrameworkCore","kind":"Imports"}
+{"from":"ns:Shop.Services","to":"ns:Shop.Data","kind":"Imports"}
+{"from":"ns:Shop.Services","to":"ns:Shop.Exceptions","kind":"Imports"}
+{"from":"ns:Shop.Services","to":"ns:Shop.Models","kind":"Imports"}
+{"from":"ns:Shop.Tests","to":"Shop.Tests.OrderServiceTests","kind":"Contains"}
+{"from":"ns:Shop.Tests","to":"ns:Shop.Models","kind":"Imports"}
+{"from":"ns:Shop.Tests","to":"ns:Shop.Services","kind":"Imports"}
+{"from":"ns:Shop.Tests","to":"ns:Xunit","kind":"Imports"}
+{"from":"ns:backend-nest/src/app.module","to":"backend-nest/src/app.module.AppModule","kind":"Contains"}
+{"from":"ns:backend-nest/src/app.module","to":"ns:backend-nest/src/payments/payment","kind":"Imports"}
+{"from":"ns:backend-nest/src/app.module","to":"pkg:@nestjs/common","kind":"Imports"}
+{"from":"ns:backend-nest/src/invoices/invoices.controller","to":"backend-nest/src/invoices/invoices.controller.InvoicesController","kind":"Contains"}
+{"from":"ns:backend-nest/src/invoices/invoices.controller","to":"pkg:@nestjs/common","kind":"Imports"}
+{"from":"ns:backend-nest/src/invoices/invoices.controller","to":"pkg:@nestjs/passport","kind":"Imports"}
+{"from":"ns:backend-nest/src/invoices/invoices.service","to":"backend-nest/src/invoices/invoices.service.InvoicesService","kind":"Contains"}
+{"from":"ns:backend-nest/src/invoices/invoices.service","to":"ns:backend-nest/src/payments/payment","kind":"Imports"}
+{"from":"ns:backend-nest/src/invoices/invoices.service","to":"pkg:@nestjs/common","kind":"Imports"}
+{"from":"ns:backend-nest/src/invoices/invoices.service","to":"pkg:@prisma/client","kind":"Imports"}
+{"from":"ns:backend-nest/src/main","to":"backend-nest/src/main.(module)","kind":"Contains"}
+{"from":"ns:backend-nest/src/main","to":"backend-nest/src/main.bootstrap","kind":"Contains"}
+{"from":"ns:backend-nest/src/main","to":"pkg:@nestjs/core","kind":"Imports"}
+{"from":"ns:backend-nest/src/payments/payment","to":"backend-nest/src/payments/payment.PaymentGateway","kind":"Contains"}
+{"from":"ns:backend-nest/src/payments/payment","to":"backend-nest/src/payments/payment.StripeGateway","kind":"Contains"}
+{"from":"ns:frontend-react/src/__tests__/auth.test","to":"frontend-react/src/__tests__/auth.test.(module)","kind":"Contains"}
+{"from":"ns:frontend-react/src/__tests__/auth.test","to":"ns:frontend-react/src/utils/auth","kind":"Imports"}
+{"from":"ns:frontend-react/src/api/orders","to":"frontend-react/src/api/orders.OrderDto","kind":"Contains"}
+{"from":"ns:frontend-react/src/api/orders","to":"frontend-react/src/api/orders.cancelOrder","kind":"Contains"}
+{"from":"ns:frontend-react/src/api/orders","to":"frontend-react/src/api/orders.getOrders","kind":"Contains"}
+{"from":"ns:frontend-react/src/api/orders","to":"frontend-react/src/api/orders.getProfile","kind":"Contains"}
+{"from":"ns:frontend-react/src/api/orders","to":"ns:frontend-react/src/config","kind":"Imports"}
+{"from":"ns:frontend-react/src/api/orders","to":"pkg:axios","kind":"Imports"}
+{"from":"ns:frontend-react/src/components/OrderList","to":"frontend-react/src/components/OrderList.OrderList","kind":"Contains"}
+{"from":"ns:frontend-react/src/components/OrderList","to":"ns:frontend-react/src/api/orders","kind":"Imports"}
+{"from":"ns:frontend-react/src/components/OrderList","to":"ns:frontend-react/src/components/OrderRow","kind":"Imports"}
+{"from":"ns:frontend-react/src/components/OrderList","to":"pkg:react","kind":"Imports"}
+{"from":"ns:frontend-react/src/components/OrderRow","to":"frontend-react/src/components/OrderRow.OrderRow","kind":"Contains"}
+{"from":"ns:frontend-react/src/components/OrderRow","to":"frontend-react/src/components/OrderRow.Props","kind":"Contains"}
+{"from":"ns:frontend-react/src/components/OrderRow","to":"ns:frontend-react/src/api/orders","kind":"Imports"}
+{"from":"ns:frontend-react/src/components/OrderRow","to":"pkg:react","kind":"Imports"}
+{"from":"ns:frontend-react/src/config","to":"frontend-react/src/config.API_BASE","kind":"Contains"}
+{"from":"ns:frontend-react/src/config","to":"frontend-react/src/config.IS_PROD","kind":"Contains"}
+{"from":"ns:frontend-react/src/utils/auth","to":"frontend-react/src/utils/auth.AuthStore","kind":"Contains"}
+{"from":"ns:frontend-react/src/utils/auth","to":"frontend-react/src/utils/auth.currentToken","kind":"Contains"}
+{"from":"ns:frontend-react/src/utils/auth","to":"ns:frontend-react/src/utils/hash","kind":"Imports"}
+{"from":"ns:frontend-react/src/utils/hash","to":"frontend-react/src/utils/hash.HASH_ROUNDS","kind":"Contains"}
+{"from":"ns:frontend-react/src/utils/hash","to":"frontend-react/src/utils/hash.hash","kind":"Contains"}
+{"from":"ns:frontend-react/src/utils/hash","to":"frontend-react/src/utils/hash.unusedHelper","kind":"Contains"}
+{"from":"Shop.Controllers.OrdersController","to":"Shop.Services.IOrderService","kind":"DependsOn","evidence":"IOrderService is injected into OrdersController through its constructor","site":{"file":"backend-dotnet/Controllers/OrdersController.cs","start_byte":443,"end_byte":469,"start_line":17,"start_col":33,"end_line":17,"end_col":59}}
+{"from":"Shop.Services.IClock","to":"Shop.Services.SystemClock","kind":"ResolvesDi","evidence":"registered as singleton (aspnet) in Top-level statements","site":{"file":"backend-dotnet/Program.cs","start_byte":433,"end_byte":485,"start_line":13,"start_col":1,"end_line":13,"end_col":53}}
+{"from":"Shop.Services.IOrderService","to":"Shop.Services.OrderService","kind":"ResolvesDi","evidence":"registered as scoped (aspnet) in Top-level statements","site":{"file":"backend-dotnet/Program.cs","start_byte":373,"end_byte":430,"start_line":12,"start_col":1,"end_line":12,"end_col":58}}
+{"from":"Shop.Services.OrderService","to":"Shop.Data.AppDbContext","kind":"DependsOn","evidence":"AppDbContext is injected into OrderService through its constructor","site":{"file":"backend-dotnet/Services/OrderService.cs","start_byte":376,"end_byte":391,"start_line":15,"start_col":29,"end_line":15,"end_col":44}}
+{"from":"Shop.Services.OrderService","to":"Shop.Services.IClock","kind":"DependsOn","evidence":"IClock is injected into OrderService through its constructor","site":{"file":"backend-dotnet/Services/OrderService.cs","start_byte":393,"end_byte":405,"start_line":15,"start_col":46,"end_line":15,"end_col":58}}
+{"from":"Shop.Services.OrderService.CancelOrderAsync(Guid, string)","to":"Shop.Exceptions.OrderNotFoundException","kind":"Throws","evidence":"`throw new OrderNotFoundException($\"Order {id} not found\");`","site":{"file":"backend-dotnet/Services/OrderService.cs","start_byte":1657,"end_byte":1715,"start_line":57,"start_col":17,"end_line":57,"end_col":75}}
+{"from":"Shop.Services.OrderService.PlaceOrderAsync(Order, int)","to":"Shop.Models.Order","kind":"Mutates","evidence":"writes `_db.Orders`","site":{"file":"backend-dotnet/Services/OrderService.cs","start_byte":1322,"end_byte":1343,"start_line":46,"start_col":13,"end_line":46,"end_col":34}}
+{"from":"Shop.Services.OrderService.PlaceOrderAsync(Order, int)","to":"ext:ArgumentException","kind":"Throws","evidence":"`throw new ArgumentException(\"Order must contain between 1 and 50 items\");`","site":{"file":"backend-dotnet/Services/OrderService.cs","start_byte":832,"end_byte":905,"start_line":30,"start_col":17,"end_line":30,"end_col":90}}
+{"from":"Shop.Tests.OrderServiceTests","to":"Shop.Services.OrderService","kind":"Tests","confidence":"Inferred","evidence":"OrderServiceTests is named after it"}
+{"from":"backend-nest/src/invoices/invoices.controller.InvoicesController","to":"backend-nest/src/invoices/invoices.service.InvoicesService","kind":"DependsOn","evidence":"InvoicesService is injected into InvoicesController through its constructor","site":{"file":"backend-nest/src/invoices/invoices.controller.ts","start_byte":253,"end_byte":302,"start_line":7,"start_col":15,"end_line":7,"end_col":64}}
+{"from":"backend-nest/src/invoices/invoices.service.InvoicesService.findOne","to":"ext:NotFoundException","kind":"Throws","evidence":"`throw new NotFoundException(`Invoice ${id} not found`);`","site":{"file":"backend-nest/src/invoices/invoices.service.ts","start_byte":492,"end_byte":547,"start_line":14,"start_col":7,"end_line":14,"end_col":62}}
+{"from":"backend-nest/src/payments/payment.PaymentGateway","to":"backend-nest/src/payments/payment.StripeGateway","kind":"ResolvesDi","evidence":"provided for token \"PAYMENT_GATEWAY\" (nestjs) in AppModule","site":{"file":"backend-nest/src/app.module.ts","start_byte":311,"end_byte":366,"start_line":8,"start_col":32,"end_line":8,"end_col":87}}
+{"from":"frontend-react/src/api/orders.cancelOrder","to":"Shop.Controllers.OrdersController.Cancel(Guid)","kind":"HttpCalls","confidence":"Inferred","evidence":"POST /api/orders/${id}/cancel matches POST /api/Orders/{id}/cancel (aspnet)","site":{"file":"frontend-react/src/api/orders.ts","start_byte":450,"end_byte":488,"start_line":19,"start_col":9,"end_line":19,"end_col":47}}
+{"from":"frontend-react/src/api/orders.getOrders","to":"Shop.Controllers.OrdersController.GetOrders()","kind":"HttpCalls","confidence":"Inferred","evidence":"GET /api/orders matches GET /api/Orders (aspnet)","site":{"file":"frontend-react/src/api/orders.ts","start_byte":258,"end_byte":278,"start_line":11,"start_col":21,"end_line":11,"end_col":41}}
+{"from":"frontend-react/src/api/orders.getOrders","to":"ext:Error","kind":"Throws","evidence":"`throw new Error(\"Failed to load orders\");`","site":{"file":"frontend-react/src/api/orders.ts","start_byte":303,"end_byte":344,"start_line":13,"start_col":5,"end_line":13,"end_col":46}}
+{"from":"ns:frontend-react/src/__tests__/auth.test","to":"ns:frontend-react/src/utils/auth","kind":"Tests","confidence":"Inferred","evidence":"auth.test is named after it"}
+
+# knowledge
+{
+  "routes": [
+    {
+      "handler": "Program.<Main>$(string[])",
+      "method": "GET",
+      "path": "/api/health",
+      "normalized": "/api/health",
+      "framework": "aspnet-minimal",
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 604,
+        "end_byte": 658,
+        "start_line": 20,
+        "start_col": 1,
+        "end_line": 20,
+        "end_col": 55
+      }
+    },
+    {
+      "handler": "backend-nest/src/invoices/invoices.controller.InvoicesController.findOne",
+      "method": "GET",
+      "path": "/api/invoices/:id",
+      "normalized": "/api/invoices/{}",
+      "framework": "nestjs",
+      "span": {
+        "file": "backend-nest/src/invoices/invoices.controller.ts",
+        "start_byte": 327,
+        "end_byte": 412,
+        "start_line": 10,
+        "start_col": 3,
+        "end_line": 12,
+        "end_col": 4
+      }
+    },
+    {
+      "handler": "backend-nest/src/invoices/invoices.controller.InvoicesController.pay",
+      "method": "POST",
+      "path": "/api/invoices/:id/pay",
+      "normalized": "/api/invoices/{}/pay",
+      "framework": "nestjs",
+      "span": {
+        "file": "backend-nest/src/invoices/invoices.controller.ts",
+        "start_byte": 470,
+        "end_byte": 547,
+        "start_line": 16,
+        "start_col": 3,
+        "end_line": 18,
+        "end_col": 4
+      }
+    },
+    {
+      "handler": "Shop.Controllers.OrdersController.GetOrders()",
+      "method": "GET",
+      "path": "/api/Orders",
+      "normalized": "/api/orders",
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Controllers/OrdersController.cs",
+        "start_byte": 547,
+        "end_byte": 729,
+        "start_line": 22,
+        "start_col": 9,
+        "end_line": 27,
+        "end_col": 10
+      }
+    },
+    {
+      "handler": "Shop.Controllers.OrdersController.Create(Order)",
+      "method": "POST",
+      "path": "/api/Orders",
+      "normalized": "/api/orders",
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Controllers/OrdersController.cs",
+        "start_byte": 1149,
+        "end_byte": 1361,
+        "start_line": 43,
+        "start_col": 9,
+        "end_line": 48,
+        "end_col": 10
+      }
+    },
+    {
+      "handler": "Shop.Controllers.OrdersController.Cancel(Guid)",
+      "method": "POST",
+      "path": "/api/Orders/{id}/cancel",
+      "normalized": "/api/orders/{}/cancel",
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Controllers/OrdersController.cs",
+        "start_byte": 741,
+        "end_byte": 1137,
+        "start_line": 29,
+        "start_col": 9,
+        "end_line": 41,
+        "end_col": 10
+      }
+    }
+  ],
+  "http_calls": [
+    {
+      "owner": "backend-nest/src/payments/payment.StripeGateway.charge",
+      "method": "POST",
+      "url": "https://api.stripe.com/v1/charges",
+      "client": "fetch",
+      "span": {
+        "file": "backend-nest/src/payments/payment.ts",
+        "start_byte": 215,
+        "end_byte": 277,
+        "start_line": 7,
+        "start_col": 23,
+        "end_line": 7,
+        "end_col": 85
+      }
+    },
+    {
+      "owner": "frontend-react/src/api/orders.getOrders",
+      "method": "GET",
+      "url": "/api/orders",
+      "client": "fetch",
+      "span": {
+        "file": "frontend-react/src/api/orders.ts",
+        "start_byte": 258,
+        "end_byte": 278,
+        "start_line": 11,
+        "start_col": 21,
+        "end_line": 11,
+        "end_col": 41
+      }
+    },
+    {
+      "owner": "frontend-react/src/api/orders.cancelOrder",
+      "method": "POST",
+      "url": "/api/orders/${id}/cancel",
+      "client": "axios",
+      "span": {
+        "file": "frontend-react/src/api/orders.ts",
+        "start_byte": 450,
+        "end_byte": 488,
+        "start_line": 19,
+        "start_col": 9,
+        "end_line": 19,
+        "end_col": 47
+      }
+    },
+    {
+      "owner": "frontend-react/src/api/orders.getProfile",
+      "method": "GET",
+      "url": "${API_BASE}/profile",
+      "client": "axios",
+      "span": {
+        "file": "frontend-react/src/api/orders.ts",
+        "start_byte": 561,
+        "end_byte": 593,
+        "start_line": 23,
+        "start_col": 10,
+        "end_line": 23,
+        "end_col": 42
+      }
+    }
+  ],
+  "di": [
+    {
+      "owner": "Shop.Controllers.OrdersController..ctor(IOrderService)",
+      "service": "IOrderService",
+      "implementation": null,
+      "lifetime": "inject",
+      "token": null,
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Controllers/OrdersController.cs",
+        "start_byte": 443,
+        "end_byte": 469,
+        "start_line": 17,
+        "start_col": 33,
+        "end_line": 17,
+        "end_col": 59
+      }
+    },
+    {
+      "owner": "Program.<Main>$(string[])",
+      "service": "AppDbContext",
+      "implementation": null,
+      "lifetime": "context",
+      "token": null,
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 325,
+        "end_byte": 370,
+        "start_line": 11,
+        "start_col": 1,
+        "end_line": 11,
+        "end_col": 46
+      }
+    },
+    {
+      "owner": "Program.<Main>$(string[])",
+      "service": "IOrderService",
+      "implementation": "OrderService",
+      "lifetime": "scoped",
+      "token": null,
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 373,
+        "end_byte": 430,
+        "start_line": 12,
+        "start_col": 1,
+        "end_line": 12,
+        "end_col": 58
+      }
+    },
+    {
+      "owner": "Program.<Main>$(string[])",
+      "service": "IClock",
+      "implementation": "SystemClock",
+      "lifetime": "singleton",
+      "token": null,
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 433,
+        "end_byte": 485,
+        "start_line": 13,
+        "start_col": 1,
+        "end_line": 13,
+        "end_col": 53
+      }
+    },
+    {
+      "owner": "Program.<Main>$(string[])",
+      "service": "Dispatcher",
+      "implementation": null,
+      "lifetime": "transient",
+      "token": null,
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 488,
+        "end_byte": 531,
+        "start_line": 14,
+        "start_col": 1,
+        "end_line": 14,
+        "end_col": 44
+      }
+    },
+    {
+      "owner": "Shop.Services.OrderService..ctor(AppDbContext, IClock)",
+      "service": "AppDbContext",
+      "implementation": null,
+      "lifetime": "inject",
+      "token": null,
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Services/OrderService.cs",
+        "start_byte": 376,
+        "end_byte": 391,
+        "start_line": 15,
+        "start_col": 29,
+        "end_line": 15,
+        "end_col": 44
+      }
+    },
+    {
+      "owner": "Shop.Services.OrderService..ctor(AppDbContext, IClock)",
+      "service": "IClock",
+      "implementation": null,
+      "lifetime": "inject",
+      "token": null,
+      "framework": "aspnet",
+      "span": {
+        "file": "backend-dotnet/Services/OrderService.cs",
+        "start_byte": 393,
+        "end_byte": 405,
+        "start_line": 15,
+        "start_col": 46,
+        "end_line": 15,
+        "end_col": 58
+      }
+    },
+    {
+      "owner": "backend-nest/src/app.module.AppModule",
+      "service": "InvoicesService",
+      "implementation": null,
+      "lifetime": "class",
+      "token": null,
+      "framework": "nestjs",
+      "span": {
+        "file": "backend-nest/src/app.module.ts",
+        "start_byte": 294,
+        "end_byte": 309,
+        "start_line": 8,
+        "start_col": 15,
+        "end_line": 8,
+        "end_col": 30
+      }
+    },
+    {
+      "owner": "backend-nest/src/app.module.AppModule",
+      "service": "PAYMENT_GATEWAY",
+      "implementation": "StripeGateway",
+      "lifetime": "class",
+      "token": "PAYMENT_GATEWAY",
+      "framework": "nestjs",
+      "span": {
+        "file": "backend-nest/src/app.module.ts",
+        "start_byte": 311,
+        "end_byte": 366,
+        "start_line": 8,
+        "start_col": 32,
+        "end_line": 8,
+        "end_col": 87
+      }
+    },
+    {
+      "owner": "backend-nest/src/invoices/invoices.controller.InvoicesController.constructor",
+      "service": "InvoicesService",
+      "implementation": null,
+      "lifetime": "inject",
+      "token": null,
+      "framework": "nestjs",
+      "span": {
+        "file": "backend-nest/src/invoices/invoices.controller.ts",
+        "start_byte": 253,
+        "end_byte": 302,
+        "start_line": 7,
+        "start_col": 15,
+        "end_line": 7,
+        "end_col": 64
+      }
+    },
+    {
+      "owner": "backend-nest/src/invoices/invoices.service.InvoicesService.constructor",
+      "service": "PaymentGateway",
+      "implementation": null,
+      "lifetime": "inject",
+      "token": "PAYMENT_GATEWAY",
+      "framework": "nestjs",
+      "span": {
+        "file": "backend-nest/src/invoices/invoices.service.ts",
+        "start_byte": 281,
+        "end_byte": 348,
+        "start_line": 9,
+        "start_col": 15,
+        "end_line": 9,
+        "end_col": 82
+      }
+    }
+  ],
+  "config": [
+    {
+      "owner": "Program.<Main>$(string[])",
+      "key": "ConnectionStrings:Default",
+      "source": "connection-string",
+      "default": null,
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 140,
+        "end_byte": 192,
+        "start_line": 7,
+        "start_col": 24,
+        "end_line": 7,
+        "end_col": 76
+      }
+    },
+    {
+      "owner": "Program.<Main>$(string[])",
+      "key": "Jwt:Key",
+      "source": "configuration",
+      "default": null,
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 208,
+        "end_byte": 240,
+        "start_line": 8,
+        "start_col": 14,
+        "end_line": 8,
+        "end_col": 46
+      }
+    },
+    {
+      "owner": "Program.<Main>$(string[])",
+      "key": "SHOP_REGION",
+      "source": "env",
+      "default": null,
+      "span": {
+        "file": "backend-dotnet/Program.cs",
+        "start_byte": 256,
+        "end_byte": 305,
+        "start_line": 9,
+        "start_col": 14,
+        "end_line": 9,
+        "end_col": 63
+      }
+    },
+    {
+      "owner": "backend-nest/src/main.bootstrap",
+      "key": "PORT",
+      "source": "env",
+      "default": null,
+      "span": {
+        "file": "backend-nest/src/main.ts",
+        "start_byte": 222,
+        "end_byte": 238,
+        "start_line": 7,
+        "start_col": 20,
+        "end_line": 7,
+        "end_col": 36
+      }
+    },
+    {
+      "owner": "frontend-react/src/config.API_BASE",
+      "key": "VITE_API_URL",
+      "source": "env",
+      "default": null,
+      "span": {
+        "file": "frontend-react/src/config.ts",
+        "start_byte": 24,
+        "end_byte": 52,
+        "start_line": 1,
+        "start_col": 25,
+        "end_line": 1,
+        "end_col": 53
+      }
+    },
+    {
+      "owner": "frontend-react/src/config.IS_PROD",
+      "key": "NODE_ENV",
+      "source": "env",
+      "default": null,
+      "span": {
+        "file": "frontend-react/src/config.ts",
+        "start_byte": 109,
+        "end_byte": 129,
+        "start_line": 2,
+        "start_col": 24,
+        "end_line": 2,
+        "end_col": 44
+      }
+    }
+  ],
+  "models": [
+    {
+      "symbol": "Shop.Models.Customer",
+      "model": {
+        "framework": "efcore",
+        "table": null,
+        "fields": [
+          {
+            "name": "Email",
+            "ty": "string",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": null
+          },
+          {
+            "name": "Id",
+            "ty": "Guid",
+            "primary_key": true,
+            "foreign_key": false,
+            "target": null
+          },
+          {
+            "name": "Orders",
+            "ty": "ICollection<Order>",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": "Order"
+          }
+        ]
+      }
+    },
+    {
+      "symbol": "Shop.Models.Order",
+      "model": {
+        "framework": "efcore",
+        "table": null,
+        "fields": [
+          {
+            "name": "CreatedAt",
+            "ty": "DateTime",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": null
+          },
+          {
+            "name": "Customer",
+            "ty": "Customer",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": "Customer"
+          },
+          {
+            "name": "CustomerId",
+            "ty": "Guid",
+            "primary_key": false,
+            "foreign_key": true,
+            "target": "Customer"
+          },
+          {
+            "name": "Id",
+            "ty": "Guid",
+            "primary_key": true,
+            "foreign_key": false,
+            "target": null
+          },
+          {
+            "name": "Items",
+            "ty": "List<OrderItem>",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": "OrderItem"
+          },
+          {
+            "name": "Status",
+            "ty": "OrderStatus",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": null
+          }
+        ]
+      }
+    },
+    {
+      "symbol": "Shop.Models.OrderItem",
+      "model": {
+        "framework": "efcore",
+        "table": null,
+        "fields": [
+          {
+            "name": "Id",
+            "ty": "int",
+            "primary_key": true,
+            "foreign_key": false,
+            "target": null
+          },
+          {
+            "name": "Order",
+            "ty": "Order",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": "Order"
+          },
+          {
+            "name": "OrderId",
+            "ty": "Guid",
+            "primary_key": false,
+            "foreign_key": true,
+            "target": "Order"
+          },
+          {
+            "name": "Quantity",
+            "ty": "int",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": null
+          },
+          {
+            "name": "Sku",
+            "ty": "string",
+            "primary_key": false,
+            "foreign_key": false,
+            "target": null
+          }
+        ]
+      }
+    }
+  ],
+  "symbols": [
+    {
+      "symbol": "Program.<Main>$(string[])",
+      "complexity": 2,
+      "capabilities": [
+        "CONFIG_READ"
+      ],
+      "entry": {
+        "kind": "Main",
+        "label": "program entry (top-level statements)"
+      },
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Controllers.OrdersController..ctor(IOrderService)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Controllers.OrdersController.Cancel(Guid)",
+      "complexity": 2,
+      "capabilities": [
+        "ASYNC",
+        "AUTH_REQUIRED"
+      ],
+      "entry": {
+        "kind": "Route",
+        "label": "POST /api/Orders/{id}/cancel"
+      },
+      "test": false,
+      "auth": {
+        "roles": [],
+        "policies": [],
+        "anonymous": false
+      }
+    },
+    {
+      "symbol": "Shop.Controllers.OrdersController.Create(Order)",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC",
+        "AUTH_REQUIRED"
+      ],
+      "entry": {
+        "kind": "Route",
+        "label": "POST /api/Orders"
+      },
+      "test": false,
+      "auth": {
+        "roles": [],
+        "policies": [],
+        "anonymous": false
+      }
+    },
+    {
+      "symbol": "Shop.Controllers.OrdersController.GetOrders()",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC",
+        "AUTH_REQUIRED"
+      ],
+      "entry": {
+        "kind": "Route",
+        "label": "GET /api/Orders"
+      },
+      "test": false,
+      "auth": {
+        "roles": [],
+        "policies": [],
+        "anonymous": false
+      }
+    },
+    {
+      "symbol": "Shop.Exceptions.OrderNotFoundException..ctor(string)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Handlers.Dispatcher.Broadcast(string)",
+      "complexity": 2,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Handlers.Dispatcher.Dispatch(IHandler, string)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Handlers.EmailHandler.Execute(string)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Handlers.PushHandler.Execute(string)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Handlers.SmsHandler.Execute(string)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Services.OrderService..ctor(AppDbContext, IClock)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Services.OrderService.Audit(Order, string)",
+      "complexity": 1,
+      "capabilities": [
+        "LOGGING"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Services.OrderService.CancelOrderAsync(Guid, string)",
+      "complexity": 2,
+      "capabilities": [
+        "ASYNC",
+        "DB_READ",
+        "DB_WRITE",
+        "THROWS"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Services.OrderService.ListOrdersAsync()",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC",
+        "DB_READ"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Services.OrderService.PlaceOrderAsync(Order, int)",
+      "complexity": 7,
+      "capabilities": [
+        "ASYNC",
+        "DB_WRITE",
+        "THROWS"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Services.SystemClock.Now()",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Tests.OrderServiceTests",
+      "complexity": 0,
+      "capabilities": [],
+      "entry": null,
+      "test": true,
+      "auth": null
+    },
+    {
+      "symbol": "Shop.Tests.OrderServiceTests.PlaceOrder_RejectsEmptyOrders()",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC"
+      ],
+      "entry": {
+        "kind": "Test",
+        "label": "test [Fact]"
+      },
+      "test": true,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/invoices/invoices.controller.InvoicesController.constructor",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/invoices/invoices.controller.InvoicesController.findOne",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": {
+        "kind": "Route",
+        "label": "GET /api/invoices/:id"
+      },
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/invoices/invoices.controller.InvoicesController.pay",
+      "complexity": 1,
+      "capabilities": [
+        "AUTH_REQUIRED"
+      ],
+      "entry": {
+        "kind": "Route",
+        "label": "POST /api/invoices/:id/pay"
+      },
+      "test": false,
+      "auth": {
+        "roles": [],
+        "policies": [
+          "AuthGuard"
+        ],
+        "anonymous": false
+      }
+    },
+    {
+      "symbol": "backend-nest/src/invoices/invoices.service.InvoicesService.constructor",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/invoices/invoices.service.InvoicesService.findOne",
+      "complexity": 2,
+      "capabilities": [
+        "ASYNC",
+        "DB_READ",
+        "THROWS"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/invoices/invoices.service.InvoicesService.pay",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC",
+        "DB_WRITE"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/main.(module)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/main.bootstrap",
+      "complexity": 2,
+      "capabilities": [
+        "ASYNC",
+        "CONFIG_READ"
+      ],
+      "entry": {
+        "kind": "ServerStart",
+        "label": "server start"
+      },
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "backend-nest/src/payments/payment.StripeGateway.charge",
+      "complexity": 2,
+      "capabilities": [
+        "ASYNC",
+        "NETWORK_IO"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/__tests__/auth.test.(module)",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/__tests__/auth.test.(module).describe callback",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/__tests__/auth.test.(module).describe callback.it callback",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": {
+        "kind": "Test",
+        "label": "test: returns a token on login"
+      },
+      "test": true,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/api/orders.cancelOrder",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC",
+        "NETWORK_IO"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/api/orders.getOrders",
+      "complexity": 2,
+      "capabilities": [
+        "ASYNC",
+        "NETWORK_IO",
+        "THROWS"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/api/orders.getProfile",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC",
+        "NETWORK_IO"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/components/OrderList.OrderList",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": {
+        "kind": "Framework",
+        "label": "React component"
+      },
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/components/OrderList.OrderList.effect",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/components/OrderList.OrderList.onCancel",
+      "complexity": 2,
+      "capabilities": [
+        "ASYNC",
+        "LOGGING"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/components/OrderList.OrderList.refresh",
+      "complexity": 1,
+      "capabilities": [
+        "ASYNC"
+      ],
+      "entry": {
+        "kind": "Ui",
+        "label": "click \"Refresh\""
+      },
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/components/OrderRow.OrderRow",
+      "complexity": 2,
+      "capabilities": [],
+      "entry": {
+        "kind": "Framework",
+        "label": "React component"
+      },
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/config.API_BASE",
+      "complexity": 0,
+      "capabilities": [
+        "CONFIG_READ"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/config.IS_PROD",
+      "complexity": 0,
+      "capabilities": [
+        "CONFIG_READ"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/utils/auth.AuthStore.login",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/utils/auth.AuthStore.logout",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/utils/hash.hash",
+      "complexity": 2,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "frontend-react/src/utils/hash.unusedHelper",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "ns:frontend-react/src/__tests__/auth.test",
+      "complexity": 0,
+      "capabilities": [],
+      "entry": null,
+      "test": true,
+      "auth": null
+    }
+  ],
+  "state_machines": []
+}

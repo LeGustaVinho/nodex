@@ -78,7 +78,9 @@ impl Project {
         if !root.is_dir() {
             bail!("{} is not a directory", root.display());
         }
-        let descriptors = frontends.iter().filter_map(|f| f.detect(&root)).collect();
+        let timer = crate::perf::phase("open.detect");
+        let descriptors: Vec<ProjectDescriptor> = frontends.iter().filter_map(|f| f.detect(&root)).collect();
+        timer.finish(format_args!("({} descriptors)", descriptors.len()));
         let mut project = Self {
             root,
             frontends,
@@ -90,6 +92,7 @@ impl Project {
             locator: None,
         };
 
+        let timer = crate::perf::phase("open.walk");
         let paths: Vec<PathBuf> = walkdir::WalkDir::new(&project.root)
             .into_iter()
             .filter_entry(|e| !(e.file_type().is_dir() && e.depth() > 0 && is_ignored_dir(e.file_name().to_str().unwrap_or(""))))
@@ -98,12 +101,15 @@ impl Project {
             .map(|e| e.into_path())
             .filter(|p| project.frontend_for(p).is_some())
             .collect();
+        timer.finish(format_args!("({} files)", paths.len()));
 
+        let timer = crate::perf::phase("open.lower");
         let lowered: Vec<(String, FileEntry)> = paths
             .par_iter()
             .filter_map(|p| project.lower_path(p))
             .collect();
         project.files.extend(lowered);
+        timer.finish(format_args!("({} files lowered)", project.files.len()));
         Ok(project)
     }
 
@@ -251,12 +257,16 @@ impl Project {
             .iter()
             .flat_map(|d| d.packages.iter().map(move |p| (d.language, p.clone())))
             .collect();
+        let total = crate::perf::phase("structure");
+        let timer = crate::perf::phase("structure.link");
         let mut graph = link::link(&files, &packages);
+        timer.finish(format_args!("({} symbols, {} edges)", graph.symbols.len(), graph.edges.len()));
 
         // Semantic facts replace guesses: exact bases, calls, events.
         let locator = Arc::new(semantic::Locator::new(&graph.symbols));
         let mut constructs = knowledge::Constructs::new();
         let mut calls: Vec<knowledge::RawCallSite> = Vec::new();
+        let timer = crate::perf::phase("structure.semantic");
         for (language, entry) in &self.semantic {
             let Some(facts) = &entry.facts else { continue };
             let derived = semantic::edges(facts, &locator, *language);
@@ -280,6 +290,7 @@ impl Project {
                 }
             }
         }
+        timer.finish(format_args!("({} languages with facts)", self.semantic.values().filter(|e| e.facts.is_some()).count()));
         // Knowledge: routes, HTTP calls, DI, tests, throws, complexity.
         let package_roots: Vec<String> = self
             .descriptors
@@ -287,7 +298,10 @@ impl Project {
             .flat_map(|d| d.manifests.iter())
             .filter_map(|m| m.parent().and_then(|dir| self.relative(dir)))
             .collect();
+        let timer = crate::perf::phase("structure.knowledge");
         let derived = knowledge::build(&graph, &files, &constructs, &calls, &package_roots);
+        timer.finish("");
+        let timer = crate::perf::phase("structure.merge");
         let mut known: std::collections::HashSet<String> = graph.symbols.iter().map(|s| s.id.clone()).collect();
         for ext in derived.externals {
             if known.insert(ext.id.clone()) {
@@ -313,6 +327,8 @@ impl Project {
             .map(|s| s.id.clone())
             .collect();
         graph.symbols.retain(|s| !orphans.contains(&s.id));
+        timer.finish("");
+        total.finish(format_args!("({} symbols, {} edges)", graph.symbols.len(), graph.edges.len()));
 
         let graph = Arc::new(graph);
         self.knowledge = Some(Arc::new(derived.project));

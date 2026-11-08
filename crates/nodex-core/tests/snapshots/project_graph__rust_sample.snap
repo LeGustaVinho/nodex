@@ -1,0 +1,497 @@
+---
+source: crates/nodex-core/tests/project_graph.rs
+expression: "digest(\"rust/Sample\")"
+---
+86 symbols, 127 edges
+
+# symbols
+{"id":"crate::domain::order::Order","kind":"Struct","name":"Order","qualified_name":"crate::domain::order::Order","parent":"ns:crate::domain::order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":276,"end_byte":394,"start_line":14,"start_col":1,"end_line":19,"end_col":2}],"flavors":["derive:Debug","derive:Clone","derive:PartialEq","pub","impl:Priced","impl:Display"],"signature":"pub struct Order","type_text":null,"has_flow":false,"external":false,"doc":"A customer order. Immutable: changes create a copy."}
+{"id":"crate::domain::order::Order::amount","kind":"Field","name":"amount","qualified_name":"crate::domain::order::Order::amount","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":345,"end_byte":360,"start_line":17,"start_col":5,"end_line":17,"end_col":20}],"flavors":["pub"],"signature":"pub amount: i64","type_text":"i64","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::amount~2","kind":"Method","name":"amount","qualified_name":"crate::domain::order::Order::amount~2","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":1191,"end_byte":1244,"start_line":54,"start_col":5,"end_line":56,"end_col":6}],"flavors":["from-trait:Priced","&self"],"signature":"fn amount(&self) -> i64","type_text":"i64","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::customer","kind":"Field","name":"customer","qualified_name":"crate::domain::order::Order::customer","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":318,"end_byte":338,"start_line":16,"start_col":5,"end_line":16,"end_col":25}],"flavors":["pub"],"signature":"pub customer: String","type_text":"String","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::customer~2","kind":"Method","name":"customer","qualified_name":"crate::domain::order::Order::customer~2","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":1124,"end_byte":1183,"start_line":50,"start_col":5,"end_line":52,"end_col":6}],"flavors":["from-trait:Priced","&self"],"signature":"fn customer(&self) -> &str","type_text":"&str","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::fmt","kind":"Method","name":"fmt","qualified_name":"crate::domain::order::Order::fmt","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":1286,"end_byte":1420,"start_line":60,"start_col":5,"end_line":62,"end_col":6}],"flavors":["from-trait:Display","&self"],"signature":"fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result","type_text":"fmt::Result","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::id","kind":"Field","name":"id","qualified_name":"crate::domain::order::Order::id","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":300,"end_byte":311,"start_line":15,"start_col":5,"end_line":15,"end_col":16}],"flavors":["pub"],"signature":"pub id: u32","type_text":"u32","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::new","kind":"Method","name":"new","qualified_name":"crate::domain::order::Order::new","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":819,"end_byte":974,"start_line":40,"start_col":5,"end_line":42,"end_col":6}],"flavors":["pub","static"],"signature":"pub fn new(id: u32, customer: &str, amount: i64, status: OrderStatus) -> Self","type_text":"Self","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::status","kind":"Field","name":"status","qualified_name":"crate::domain::order::Order::status","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":367,"end_byte":390,"start_line":18,"start_col":5,"end_line":18,"end_col":28}],"flavors":["pub"],"signature":"pub status: OrderStatus","type_text":"OrderStatus","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::Order::with_status","kind":"Method","name":"with_status","qualified_name":"crate::domain::order::Order::with_status","parent":"crate::domain::order::Order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":982,"end_byte":1088,"start_line":44,"start_col":5,"end_line":46,"end_col":6}],"flavors":["pub","&self"],"signature":"pub fn with_status(&self, status: OrderStatus) -> Order","type_text":"Order","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent","kind":"Union","name":"OrderEvent","qualified_name":"crate::domain::order::OrderEvent","parent":"ns:crate::domain::order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":465,"end_byte":594,"start_line":23,"start_col":1,"end_line":27,"end_col":2}],"flavors":["derive:Debug","derive:Clone","pub"],"signature":"pub enum OrderEvent","type_text":null,"has_flow":false,"external":false,"doc":"Something that happened to an order."}
+{"id":"crate::domain::order::OrderEvent::Cancelled","kind":"EnumMember","name":"Cancelled","qualified_name":"crate::domain::order::OrderEvent::Cancelled","parent":"crate::domain::order::OrderEvent","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":553,"end_byte":590,"start_line":26,"start_col":5,"end_line":26,"end_col":42}],"flavors":[],"signature":"Cancelled { id: u32, reason: String }","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent::Cancelled::id","kind":"Field","name":"id","qualified_name":"crate::domain::order::OrderEvent::Cancelled::id","parent":"crate::domain::order::OrderEvent::Cancelled","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":565,"end_byte":572,"start_line":26,"start_col":17,"end_line":26,"end_col":24}],"flavors":[],"signature":"id: u32","type_text":"u32","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent::Cancelled::reason","kind":"Field","name":"reason","qualified_name":"crate::domain::order::OrderEvent::Cancelled::reason","parent":"crate::domain::order::OrderEvent::Cancelled","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":574,"end_byte":588,"start_line":26,"start_col":26,"end_line":26,"end_col":40}],"flavors":[],"signature":"reason: String","type_text":"String","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent::Created","kind":"EnumMember","name":"Created","qualified_name":"crate::domain::order::OrderEvent::Created","parent":"crate::domain::order::OrderEvent","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":492,"end_byte":511,"start_line":24,"start_col":5,"end_line":24,"end_col":24}],"flavors":[],"signature":"Created { id: u32 }","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent::Created::id","kind":"Field","name":"id","qualified_name":"crate::domain::order::OrderEvent::Created::id","parent":"crate::domain::order::OrderEvent::Created","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":502,"end_byte":509,"start_line":24,"start_col":15,"end_line":24,"end_col":22}],"flavors":[],"signature":"id: u32","type_text":"u32","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent::Shipped","kind":"EnumMember","name":"Shipped","qualified_name":"crate::domain::order::OrderEvent::Shipped","parent":"crate::domain::order::OrderEvent","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":518,"end_byte":546,"start_line":25,"start_col":5,"end_line":25,"end_col":33}],"flavors":[],"signature":"Shipped { id: u32, at: u64 }","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent::Shipped::at","kind":"Field","name":"at","qualified_name":"crate::domain::order::OrderEvent::Shipped::at","parent":"crate::domain::order::OrderEvent::Shipped","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":537,"end_byte":544,"start_line":25,"start_col":24,"end_line":25,"end_col":31}],"flavors":[],"signature":"at: u64","type_text":"u64","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderEvent::Shipped::id","kind":"Field","name":"id","qualified_name":"crate::domain::order::OrderEvent::Shipped::id","parent":"crate::domain::order::OrderEvent::Shipped","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":528,"end_byte":535,"start_line":25,"start_col":15,"end_line":25,"end_col":22}],"flavors":[],"signature":"id: u32","type_text":"u32","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderStatus","kind":"Enum","name":"OrderStatus","qualified_name":"crate::domain::order::OrderStatus","parent":"ns:crate::domain::order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":99,"end_byte":179,"start_line":5,"start_col":1,"end_line":10,"end_col":2}],"flavors":["derive:Debug","derive:Clone","derive:Copy","derive:PartialEq","derive:Eq","pub"],"signature":"pub enum OrderStatus","type_text":null,"has_flow":false,"external":false,"doc":"Where an order is in its life."}
+{"id":"crate::domain::order::OrderStatus::Cancelled","kind":"EnumMember","name":"Cancelled","qualified_name":"crate::domain::order::OrderStatus::Cancelled","parent":"crate::domain::order::OrderStatus","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":166,"end_byte":175,"start_line":9,"start_col":5,"end_line":9,"end_col":14}],"flavors":[],"signature":"Cancelled","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderStatus::Paid","kind":"EnumMember","name":"Paid","qualified_name":"crate::domain::order::OrderStatus::Paid","parent":"crate::domain::order::OrderStatus","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":141,"end_byte":145,"start_line":7,"start_col":5,"end_line":7,"end_col":9}],"flavors":[],"signature":"Paid","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderStatus::Pending","kind":"EnumMember","name":"Pending","qualified_name":"crate::domain::order::OrderStatus::Pending","parent":"crate::domain::order::OrderStatus","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":127,"end_byte":134,"start_line":6,"start_col":5,"end_line":6,"end_col":12}],"flavors":[],"signature":"Pending","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::OrderStatus::Shipped","kind":"EnumMember","name":"Shipped","qualified_name":"crate::domain::order::OrderStatus::Shipped","parent":"crate::domain::order::OrderStatus","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":152,"end_byte":159,"start_line":8,"start_col":5,"end_line":8,"end_col":12}],"flavors":[],"signature":"Shipped","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::Priced","kind":"Trait","name":"Priced","qualified_name":"crate::domain::order::Priced","parent":"ns:crate::domain::order","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":640,"end_byte":797,"start_line":30,"start_col":1,"end_line":37,"end_col":2}],"flavors":["pub"],"signature":"pub trait Priced","type_text":null,"has_flow":false,"external":false,"doc":"Anything with a buyer and an amount."}
+{"id":"crate::domain::order::Priced::amount","kind":"Method","name":"amount","qualified_name":"crate::domain::order::Priced::amount","parent":"crate::domain::order::Priced","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":697,"end_byte":721,"start_line":32,"start_col":5,"end_line":32,"end_col":29}],"flavors":["required","&self"],"signature":"fn amount(&self) -> i64","type_text":"i64","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::Priced::customer","kind":"Method","name":"customer","qualified_name":"crate::domain::order::Priced::customer","parent":"crate::domain::order::Priced","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":664,"end_byte":691,"start_line":31,"start_col":5,"end_line":31,"end_col":32}],"flavors":["required","&self"],"signature":"fn customer(&self) -> &str","type_text":"&str","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::order::Priced::is_large","kind":"Method","name":"is_large","qualified_name":"crate::domain::order::Priced::is_large","parent":"crate::domain::order::Priced","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":729,"end_byte":794,"start_line":34,"start_col":5,"end_line":36,"end_col":6}],"flavors":["default","&self"],"signature":"fn is_large(&self) -> bool","type_text":"bool","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Circle","kind":"Struct","name":"Circle","qualified_name":"crate::domain::shapes::Circle","parent":"ns:crate::domain::shapes","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":146,"end_byte":190,"start_line":9,"start_col":1,"end_line":11,"end_col":2}],"flavors":["pub","impl:Shape"],"signature":"pub struct Circle","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Circle::area","kind":"Method","name":"area","qualified_name":"crate::domain::shapes::Circle::area","parent":"crate::domain::shapes::Circle","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":254,"end_byte":342,"start_line":16,"start_col":5,"end_line":18,"end_col":6}],"flavors":["from-trait:Shape","&self"],"signature":"fn area(&self) -> f64","type_text":"f64","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Circle::name","kind":"Method","name":"name","qualified_name":"crate::domain::shapes::Circle::name","parent":"crate::domain::shapes::Circle","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":350,"end_byte":412,"start_line":20,"start_col":5,"end_line":22,"end_col":6}],"flavors":["from-trait:Shape","&self"],"signature":"fn name(&self) -> String","type_text":"String","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Circle::radius","kind":"Field","name":"radius","qualified_name":"crate::domain::shapes::Circle::radius","parent":"crate::domain::shapes::Circle","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":171,"end_byte":186,"start_line":10,"start_col":5,"end_line":10,"end_col":20}],"flavors":["pub"],"signature":"pub radius: f64","type_text":"f64","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Shape","kind":"Trait","name":"Shape","qualified_name":"crate::domain::shapes::Shape","parent":"ns:crate::domain::shapes","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":27,"end_byte":142,"start_line":2,"start_col":1,"end_line":7,"end_col":2}],"flavors":["pub"],"signature":"pub trait Shape","type_text":null,"has_flow":false,"external":false,"doc":"A shape with an area."}
+{"id":"crate::domain::shapes::Shape::area","kind":"Method","name":"area","qualified_name":"crate::domain::shapes::Shape::area","parent":"crate::domain::shapes::Shape","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":50,"end_byte":72,"start_line":3,"start_col":5,"end_line":3,"end_col":27}],"flavors":["required","&self"],"signature":"fn area(&self) -> f64","type_text":"f64","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Shape::name","kind":"Method","name":"name","qualified_name":"crate::domain::shapes::Shape::name","parent":"crate::domain::shapes::Shape","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":78,"end_byte":139,"start_line":4,"start_col":5,"end_line":6,"end_col":6}],"flavors":["default","&self"],"signature":"fn name(&self) -> String","type_text":"String","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Square","kind":"Struct","name":"Square","qualified_name":"crate::domain::shapes::Square","parent":"ns:crate::domain::shapes","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":194,"end_byte":221,"start_line":13,"start_col":1,"end_line":13,"end_col":28}],"flavors":["pub","tuple-struct","impl:Shape"],"signature":"pub struct Square","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Square::0","kind":"Field","name":"0","qualified_name":"crate::domain::shapes::Square::0","parent":"crate::domain::shapes::Square","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":216,"end_byte":219,"start_line":13,"start_col":23,"end_line":13,"end_col":26}],"flavors":[],"signature":null,"type_text":"f64","has_flow":false,"external":false,"doc":null}
+{"id":"crate::domain::shapes::Square::area","kind":"Method","name":"area","qualified_name":"crate::domain::shapes::Square::area","parent":"crate::domain::shapes::Square","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":448,"end_byte":503,"start_line":26,"start_col":5,"end_line":28,"end_col":6}],"flavors":["from-trait:Shape","&self"],"signature":"fn area(&self) -> f64","type_text":"f64","has_flow":true,"external":false,"doc":null}
+{"id":"crate::domain::shapes::total_area","kind":"Function","name":"total_area","qualified_name":"crate::domain::shapes::total_area","parent":"ns:crate::domain::shapes","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":549,"end_byte":648,"start_line":32,"start_col":1,"end_line":34,"end_col":2}],"flavors":["pub"],"signature":"pub fn total_area(shapes: &[Box<dyn Shape>]) -> f64","type_text":"f64","has_flow":true,"external":false,"doc":"The area of every shape added up."}
+{"id":"crate::main","kind":"Function","name":"main","qualified_name":"crate::main","parent":"ns:crate","language":"rust","origins":[{"file":"src/main.rs","start_byte":284,"end_byte":1244,"start_line":11,"start_col":1,"end_line":39,"end_col":2}],"flavors":[],"signature":"fn main()","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"crate::main::on_shipped callback","kind":"Function","name":"on_shipped callback","qualified_name":"crate::main::on_shipped callback","parent":"crate::main","language":"rust","origins":[{"file":"src/main.rs","start_byte":437,"end_byte":504,"start_line":14,"start_col":33,"end_line":16,"end_col":6}],"flavors":["local-function","callback"],"signature":"|order: &Order|","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"crate::main::spawn callback","kind":"Function","name":"spawn callback","qualified_name":"crate::main::spawn callback","parent":"crate::main","language":"rust","origins":[{"file":"src/main.rs","start_byte":1069,"end_byte":1152,"start_line":33,"start_col":37,"end_line":36,"end_col":6}],"flavors":["local-function","callback","move"],"signature":"move ||","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::Listener","kind":"TypeAlias","name":"Listener","qualified_name":"crate::services::order_service::Listener","parent":"ns:crate::services::order_service","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":555,"end_byte":591,"start_line":23,"start_col":1,"end_line":23,"end_col":37}],"flavors":[],"signature":"type Listener = Box<dyn Fn(&Order)>","type_text":"Box<dyn Fn(&Order)>","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService","kind":"Struct","name":"OrderService","qualified_name":"crate::services::order_service::OrderService","parent":"ns:crate::services::order_service","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":666,"end_byte":765,"start_line":26,"start_col":1,"end_line":29,"end_col":2}],"flavors":["pub"],"signature":"pub struct OrderService<R: OrderRepository>","type_text":null,"has_flow":false,"external":false,"doc":"Totals, descriptions and shipping for the orders of a repository."}
+{"id":"crate::services::order_service::OrderService::count_pending","kind":"Method","name":"count_pending","qualified_name":"crate::services::order_service::OrderService::count_pending","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":3228,"end_byte":3561,"start_line":108,"start_col":5,"end_line":119,"end_col":6}],"flavors":["pub","&self"],"signature":"pub fn count_pending(&self) -> usize","type_text":"usize","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::describe","kind":"Method","name":"describe","qualified_name":"crate::services::order_service::OrderService::describe","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":2869,"end_byte":3220,"start_line":100,"start_col":5,"end_line":106,"end_col":6}],"flavors":["pub","&self"],"signature":"pub fn describe(&self, event: &OrderEvent) -> String","type_text":"String","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::describe_all","kind":"Method","name":"describe_all","qualified_name":"crate::services::order_service::OrderService::describe_all","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":1814,"end_byte":2316,"start_line":68,"start_col":5,"end_line":81,"end_col":6}],"flavors":["pub","&self"],"signature":"pub fn describe_all(&self) -> Vec<String>","type_text":"Vec<String>","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::listeners","kind":"Field","name":"listeners","qualified_name":"crate::services::order_service::OrderService::listeners","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":737,"end_byte":761,"start_line":28,"start_col":5,"end_line":28,"end_col":29}],"flavors":[],"signature":"listeners: Vec<Listener>","type_text":"Vec<Listener>","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::new","kind":"Method","name":"new","qualified_name":"crate::services::order_service::OrderService::new","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":817,"end_byte":919,"start_line":32,"start_col":5,"end_line":34,"end_col":6}],"flavors":["pub","static"],"signature":"pub fn new(repository: R) -> Self","type_text":"Self","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::on_shipped","kind":"Method","name":"on_shipped","qualified_name":"crate::services::order_service::OrderService::on_shipped","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":1070,"end_byte":1167,"start_line":41,"start_col":5,"end_line":43,"end_col":6}],"flavors":["pub","&mut self"],"signature":"pub fn on_shipped(&mut self, listener: Listener)","type_text":null,"has_flow":true,"external":false,"doc":"Runs the listener every time an order ships."}
+{"id":"crate::services::order_service::OrderService::repository","kind":"Field","name":"repository","qualified_name":"crate::services::order_service::OrderService::repository","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":717,"end_byte":730,"start_line":27,"start_col":5,"end_line":27,"end_col":18}],"flavors":[],"signature":"repository: R","type_text":"R","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::repository_mut","kind":"Method","name":"repository_mut","qualified_name":"crate::services::order_service::OrderService::repository_mut","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":927,"end_byte":1008,"start_line":36,"start_col":5,"end_line":38,"end_col":6}],"flavors":["pub","&mut self"],"signature":"pub fn repository_mut(&mut self) -> &mut R","type_text":"&mut R","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::ship","kind":"Method","name":"ship","qualified_name":"crate::services::order_service::OrderService::ship","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":2324,"end_byte":2861,"start_line":83,"start_col":5,"end_line":98,"end_col":6}],"flavors":["pub","&mut self"],"signature":"pub fn ship(&mut self, id: u32) -> Result<(), ShipError>","type_text":"Result<(), ShipError>","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::total_for_customer","kind":"Method","name":"total_for_customer","qualified_name":"crate::services::order_service::OrderService::total_for_customer","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":1175,"end_byte":1558,"start_line":45,"start_col":5,"end_line":57,"end_col":6}],"flavors":["pub","&self"],"signature":"pub fn total_for_customer(&self, customer: &str) -> i64","type_text":"i64","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::OrderService::total_for_customer_pipeline","kind":"Method","name":"total_for_customer_pipeline","qualified_name":"crate::services::order_service::OrderService::total_for_customer_pipeline","parent":"crate::services::order_service::OrderService","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":1566,"end_byte":1806,"start_line":59,"start_col":5,"end_line":66,"end_col":6}],"flavors":["pub","&self"],"signature":"pub fn total_for_customer_pipeline(&self, customer: &str) -> i64","type_text":"i64","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::order_service::ShipError","kind":"Union","name":"ShipError","qualified_name":"crate::services::order_service::ShipError","parent":"ns:crate::services::order_service","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":192,"end_byte":254,"start_line":9,"start_col":1,"end_line":12,"end_col":2}],"flavors":["derive:Debug","pub","impl:Display"],"signature":"pub enum ShipError","type_text":null,"has_flow":false,"external":false,"doc":"Why an order could not ship."}
+{"id":"crate::services::order_service::ShipError::NotFound","kind":"EnumMember","name":"NotFound","qualified_name":"crate::services::order_service::ShipError::NotFound","parent":"crate::services::order_service::ShipError","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":218,"end_byte":231,"start_line":10,"start_col":5,"end_line":10,"end_col":18}],"flavors":[],"signature":"NotFound(u32)","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::order_service::ShipError::NotFound::0","kind":"Field","name":"0","qualified_name":"crate::services::order_service::ShipError::NotFound::0","parent":"crate::services::order_service::ShipError::NotFound","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":227,"end_byte":230,"start_line":10,"start_col":14,"end_line":10,"end_col":17}],"flavors":[],"signature":null,"type_text":"u32","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::order_service::ShipError::NotPaid","kind":"EnumMember","name":"NotPaid","qualified_name":"crate::services::order_service::ShipError::NotPaid","parent":"crate::services::order_service::ShipError","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":238,"end_byte":250,"start_line":11,"start_col":5,"end_line":11,"end_col":17}],"flavors":[],"signature":"NotPaid(u32)","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::order_service::ShipError::NotPaid::0","kind":"Field","name":"0","qualified_name":"crate::services::order_service::ShipError::NotPaid::0","parent":"crate::services::order_service::ShipError::NotPaid","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":246,"end_byte":249,"start_line":11,"start_col":13,"end_line":11,"end_col":16}],"flavors":[],"signature":null,"type_text":"u32","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::order_service::ShipError::fmt","kind":"Method","name":"fmt","qualified_name":"crate::services::order_service::ShipError::fmt","parent":"crate::services::order_service::ShipError","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":297,"end_byte":548,"start_line":15,"start_col":5,"end_line":20,"end_col":6}],"flavors":["from-trait:Display","&self"],"signature":"fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result","type_text":"fmt::Result","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::repository::InMemoryOrderRepository","kind":"Struct","name":"InMemoryOrderRepository","qualified_name":"crate::services::repository::InMemoryOrderRepository","parent":"ns:crate::services::repository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":300,"end_byte":364,"start_line":13,"start_col":1,"end_line":15,"end_col":2}],"flavors":["derive:Default","pub","impl:OrderRepository"],"signature":"pub struct InMemoryOrderRepository","type_text":null,"has_flow":false,"external":false,"doc":"Orders kept in memory."}
+{"id":"crate::services::repository::InMemoryOrderRepository::add","kind":"Method","name":"add","qualified_name":"crate::services::repository::InMemoryOrderRepository::add","parent":"crate::services::repository::InMemoryOrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":740,"end_byte":814,"start_line":32,"start_col":5,"end_line":34,"end_col":6}],"flavors":["from-trait:OrderRepository","&mut self"],"signature":"fn add(&mut self, order: Order)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::repository::InMemoryOrderRepository::all","kind":"Method","name":"all","qualified_name":"crate::services::repository::InMemoryOrderRepository::all","parent":"crate::services::repository::InMemoryOrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":552,"end_byte":617,"start_line":24,"start_col":5,"end_line":26,"end_col":6}],"flavors":["from-trait:OrderRepository","&self"],"signature":"fn all(&self) -> Vec<Order>","type_text":"Vec<Order>","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::repository::InMemoryOrderRepository::find","kind":"Method","name":"find","qualified_name":"crate::services::repository::InMemoryOrderRepository::find","parent":"crate::services::repository::InMemoryOrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":625,"end_byte":732,"start_line":28,"start_col":5,"end_line":30,"end_col":6}],"flavors":["from-trait:OrderRepository","&self"],"signature":"fn find(&self, id: u32) -> Option<Order>","type_text":"Option<Order>","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::repository::InMemoryOrderRepository::new","kind":"Method","name":"new","qualified_name":"crate::services::repository::InMemoryOrderRepository::new","parent":"crate::services::repository::InMemoryOrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":404,"end_byte":489,"start_line":18,"start_col":5,"end_line":20,"end_col":6}],"flavors":["pub","static"],"signature":"pub fn new() -> Self","type_text":"Self","has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::repository::InMemoryOrderRepository::orders","kind":"Field","name":"orders","qualified_name":"crate::services::repository::InMemoryOrderRepository::orders","parent":"crate::services::repository::InMemoryOrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":342,"end_byte":360,"start_line":14,"start_col":5,"end_line":14,"end_col":23}],"flavors":[],"signature":"orders: Vec<Order>","type_text":"Vec<Order>","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::repository::InMemoryOrderRepository::replace","kind":"Method","name":"replace","qualified_name":"crate::services::repository::InMemoryOrderRepository::replace","parent":"crate::services::repository::InMemoryOrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":822,"end_byte":986,"start_line":36,"start_col":5,"end_line":40,"end_col":6}],"flavors":["from-trait:OrderRepository","&mut self"],"signature":"fn replace(&mut self, order: Order)","type_text":null,"has_flow":true,"external":false,"doc":null}
+{"id":"crate::services::repository::OrderRepository","kind":"Trait","name":"OrderRepository","qualified_name":"crate::services::repository::OrderRepository","parent":"ns:crate::services::repository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":57,"end_byte":248,"start_line":4,"start_col":1,"end_line":9,"end_col":2}],"flavors":["pub"],"signature":"pub trait OrderRepository","type_text":null,"has_flow":false,"external":false,"doc":"Where orders are kept."}
+{"id":"crate::services::repository::OrderRepository::add","kind":"Method","name":"add","qualified_name":"crate::services::repository::OrderRepository::add","parent":"crate::services::repository::OrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":171,"end_byte":203,"start_line":7,"start_col":5,"end_line":7,"end_col":37}],"flavors":["required","&mut self"],"signature":"fn add(&mut self, order: Order)","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::repository::OrderRepository::all","kind":"Method","name":"all","qualified_name":"crate::services::repository::OrderRepository::all","parent":"crate::services::repository::OrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":90,"end_byte":118,"start_line":5,"start_col":5,"end_line":5,"end_col":33}],"flavors":["required","&self"],"signature":"fn all(&self) -> Vec<Order>","type_text":"Vec<Order>","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::repository::OrderRepository::find","kind":"Method","name":"find","qualified_name":"crate::services::repository::OrderRepository::find","parent":"crate::services::repository::OrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":124,"end_byte":165,"start_line":6,"start_col":5,"end_line":6,"end_col":46}],"flavors":["required","&self"],"signature":"fn find(&self, id: u32) -> Option<Order>","type_text":"Option<Order>","has_flow":false,"external":false,"doc":null}
+{"id":"crate::services::repository::OrderRepository::replace","kind":"Method","name":"replace","qualified_name":"crate::services::repository::OrderRepository::replace","parent":"crate::services::repository::OrderRepository","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":209,"end_byte":245,"start_line":8,"start_col":5,"end_line":8,"end_col":41}],"flavors":["required","&mut self"],"signature":"fn replace(&mut self, order: Order)","type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"crate::ship_all","kind":"Function","name":"ship_all","qualified_name":"crate::ship_all","parent":"ns:crate","language":"rust","origins":[{"file":"src/main.rs","start_byte":1248,"end_byte":1400,"start_line":41,"start_col":1,"end_line":45,"end_col":2}],"flavors":[],"signature":"fn ship_all(service: &mut OrderService<InMemoryOrderRepository>) -> Result<(), ShipError>","type_text":"Result<(), ShipError>","has_flow":true,"external":false,"doc":null}
+{"id":"crate::util::count_slowly","kind":"Function","name":"count_slowly","qualified_name":"crate::util::count_slowly","parent":"ns:crate::util","language":"rust","origins":[{"file":"src/util.rs","start_byte":196,"end_byte":343,"start_line":10,"start_col":1,"end_line":17,"end_col":2}],"flavors":["pub"],"signature":"pub fn count_slowly(n: u32) -> u32","type_text":"u32","has_flow":true,"external":false,"doc":"Counts to n, one step at a time."}
+{"id":"crate::util::sleep_ms","kind":"Function","name":"sleep_ms","qualified_name":"crate::util::sleep_ms","parent":"ns:crate::util","language":"rust","origins":[{"file":"src/util.rs","start_byte":78,"end_byte":154,"start_line":5,"start_col":1,"end_line":7,"end_col":2}],"flavors":["pub"],"signature":"pub fn sleep_ms(ms: u64)","type_text":null,"has_flow":true,"external":false,"doc":"Pauses the current thread."}
+{"id":"ns:crate","kind":"Module","name":"crate","qualified_name":"crate","parent":null,"language":"rust","origins":[{"file":"src/main.rs","start_byte":0,"end_byte":1402,"start_line":1,"start_col":1,"end_line":46,"end_col":1}],"flavors":["crate-root"],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":"Nodex Rust sample: the same orders program as the C# and TypeScript samples."}
+{"id":"ns:crate::domain","kind":"Module","name":"domain","qualified_name":"crate::domain","parent":"ns:crate","language":"rust","origins":[{"file":"src/domain/mod.rs","start_byte":0,"end_byte":182,"start_line":1,"start_col":1,"end_line":8,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":"Orders and what can happen to them."}
+{"id":"ns:crate::domain::order","kind":"Module","name":"order","qualified_name":"crate::domain::order","parent":"ns:crate::domain","language":"rust","origins":[{"file":"src/domain/order.rs","start_byte":0,"end_byte":1425,"start_line":1,"start_col":1,"end_line":64,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:crate::domain::shapes","kind":"Module","name":"shapes","qualified_name":"crate::domain::shapes","parent":"ns:crate::domain","language":"rust","origins":[{"file":"src/domain/shapes.rs","start_byte":0,"end_byte":650,"start_line":1,"start_col":1,"end_line":35,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:crate::services","kind":"Module","name":"services","qualified_name":"crate::services","parent":"ns:crate","language":"rust","origins":[{"file":"src/services/mod.rs","start_byte":0,"end_byte":155,"start_line":1,"start_col":1,"end_line":6,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:crate::services::order_service","kind":"Module","name":"order_service","qualified_name":"crate::services::order_service","parent":"ns:crate::services","language":"rust","origins":[{"file":"src/services/order_service.rs","start_byte":0,"end_byte":3566,"start_line":1,"start_col":1,"end_line":121,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:crate::services::repository","kind":"Module","name":"repository","qualified_name":"crate::services::repository","parent":"ns:crate::services","language":"rust","origins":[{"file":"src/services/repository.rs","start_byte":0,"end_byte":991,"start_line":1,"start_col":1,"end_line":42,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ns:crate::util","kind":"Module","name":"util","qualified_name":"crate::util","parent":"ns:crate","language":"rust","origins":[{"file":"src/util.rs","start_byte":0,"end_byte":345,"start_line":1,"start_col":1,"end_line":18,"end_col":1}],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":false,"doc":null}
+{"id":"ext:Display","kind":"Trait","name":"Display","qualified_name":"Display","parent":null,"language":"rust","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+{"id":"pkg:std","kind":"Package","name":"std","qualified_name":"std","parent":null,"language":"rust","origins":[],"flavors":[],"signature":null,"type_text":null,"has_flow":false,"external":true,"doc":null}
+
+# edges
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::amount","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::amount~2","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::customer","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::customer~2","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::fmt","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::id","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::new","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::status","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Order::with_status","kind":"Contains"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::OrderStatus","kind":"References"}
+{"from":"crate::domain::order::Order","to":"crate::domain::order::Priced","kind":"Implements"}
+{"from":"crate::domain::order::Order","to":"ext:Display","kind":"Implements"}
+{"from":"crate::domain::order::Order::new","to":"crate::domain::order::Order","kind":"Instantiates"}
+{"from":"crate::domain::order::Order::new","to":"crate::domain::order::OrderStatus","kind":"References"}
+{"from":"crate::domain::order::Order::with_status","to":"crate::domain::order::Order","kind":"Instantiates"}
+{"from":"crate::domain::order::Order::with_status","to":"crate::domain::order::Order","kind":"References"}
+{"from":"crate::domain::order::Order::with_status","to":"crate::domain::order::OrderStatus","kind":"References"}
+{"from":"crate::domain::order::OrderEvent","to":"crate::domain::order::OrderEvent::Cancelled","kind":"Contains"}
+{"from":"crate::domain::order::OrderEvent","to":"crate::domain::order::OrderEvent::Created","kind":"Contains"}
+{"from":"crate::domain::order::OrderEvent","to":"crate::domain::order::OrderEvent::Shipped","kind":"Contains"}
+{"from":"crate::domain::order::OrderEvent::Cancelled","to":"crate::domain::order::OrderEvent::Cancelled::id","kind":"Contains"}
+{"from":"crate::domain::order::OrderEvent::Cancelled","to":"crate::domain::order::OrderEvent::Cancelled::reason","kind":"Contains"}
+{"from":"crate::domain::order::OrderEvent::Created","to":"crate::domain::order::OrderEvent::Created::id","kind":"Contains"}
+{"from":"crate::domain::order::OrderEvent::Shipped","to":"crate::domain::order::OrderEvent::Shipped::at","kind":"Contains"}
+{"from":"crate::domain::order::OrderEvent::Shipped","to":"crate::domain::order::OrderEvent::Shipped::id","kind":"Contains"}
+{"from":"crate::domain::order::OrderStatus","to":"crate::domain::order::OrderStatus::Cancelled","kind":"Contains"}
+{"from":"crate::domain::order::OrderStatus","to":"crate::domain::order::OrderStatus::Paid","kind":"Contains"}
+{"from":"crate::domain::order::OrderStatus","to":"crate::domain::order::OrderStatus::Pending","kind":"Contains"}
+{"from":"crate::domain::order::OrderStatus","to":"crate::domain::order::OrderStatus::Shipped","kind":"Contains"}
+{"from":"crate::domain::order::Priced","to":"crate::domain::order::Priced::amount","kind":"Contains"}
+{"from":"crate::domain::order::Priced","to":"crate::domain::order::Priced::customer","kind":"Contains"}
+{"from":"crate::domain::order::Priced","to":"crate::domain::order::Priced::is_large","kind":"Contains"}
+{"from":"crate::domain::shapes::Circle","to":"crate::domain::shapes::Circle::area","kind":"Contains"}
+{"from":"crate::domain::shapes::Circle","to":"crate::domain::shapes::Circle::name","kind":"Contains"}
+{"from":"crate::domain::shapes::Circle","to":"crate::domain::shapes::Circle::radius","kind":"Contains"}
+{"from":"crate::domain::shapes::Circle","to":"crate::domain::shapes::Shape","kind":"Implements"}
+{"from":"crate::domain::shapes::Shape","to":"crate::domain::shapes::Shape::area","kind":"Contains"}
+{"from":"crate::domain::shapes::Shape","to":"crate::domain::shapes::Shape::name","kind":"Contains"}
+{"from":"crate::domain::shapes::Square","to":"crate::domain::shapes::Shape","kind":"Implements"}
+{"from":"crate::domain::shapes::Square","to":"crate::domain::shapes::Square::0","kind":"Contains"}
+{"from":"crate::domain::shapes::Square","to":"crate::domain::shapes::Square::area","kind":"Contains"}
+{"from":"crate::domain::shapes::total_area","to":"crate::domain::shapes::Shape","kind":"References"}
+{"from":"crate::main","to":"crate::domain::order::Order","kind":"Instantiates"}
+{"from":"crate::main","to":"crate::main::on_shipped callback","kind":"Contains"}
+{"from":"crate::main","to":"crate::main::spawn callback","kind":"Contains"}
+{"from":"crate::main","to":"crate::services::order_service::OrderService","kind":"Instantiates"}
+{"from":"crate::main","to":"crate::services::repository::InMemoryOrderRepository","kind":"Instantiates"}
+{"from":"crate::services::order_service::Listener","to":"crate::domain::order::Order","kind":"References"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::Listener","kind":"References"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::count_pending","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::describe","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::describe_all","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::listeners","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::new","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::on_shipped","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::repository","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::repository_mut","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::ship","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::total_for_customer","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService","to":"crate::services::order_service::OrderService::total_for_customer_pipeline","kind":"Contains"}
+{"from":"crate::services::order_service::OrderService::describe","to":"crate::domain::order::OrderEvent","kind":"References"}
+{"from":"crate::services::order_service::OrderService::new","to":"crate::services::order_service::OrderService","kind":"Instantiates"}
+{"from":"crate::services::order_service::OrderService::on_shipped","to":"crate::services::order_service::Listener","kind":"References"}
+{"from":"crate::services::order_service::OrderService::ship","to":"crate::services::order_service::ShipError","kind":"References"}
+{"from":"crate::services::order_service::ShipError","to":"crate::services::order_service::ShipError::NotFound","kind":"Contains"}
+{"from":"crate::services::order_service::ShipError","to":"crate::services::order_service::ShipError::NotPaid","kind":"Contains"}
+{"from":"crate::services::order_service::ShipError","to":"crate::services::order_service::ShipError::fmt","kind":"Contains"}
+{"from":"crate::services::order_service::ShipError","to":"ext:Display","kind":"Implements"}
+{"from":"crate::services::order_service::ShipError::NotFound","to":"crate::services::order_service::ShipError::NotFound::0","kind":"Contains"}
+{"from":"crate::services::order_service::ShipError::NotPaid","to":"crate::services::order_service::ShipError::NotPaid::0","kind":"Contains"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::domain::order::Order","kind":"References"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::services::repository::InMemoryOrderRepository::add","kind":"Contains"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::services::repository::InMemoryOrderRepository::all","kind":"Contains"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::services::repository::InMemoryOrderRepository::find","kind":"Contains"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::services::repository::InMemoryOrderRepository::new","kind":"Contains"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::services::repository::InMemoryOrderRepository::orders","kind":"Contains"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::services::repository::InMemoryOrderRepository::replace","kind":"Contains"}
+{"from":"crate::services::repository::InMemoryOrderRepository","to":"crate::services::repository::OrderRepository","kind":"Implements"}
+{"from":"crate::services::repository::InMemoryOrderRepository::add","to":"crate::domain::order::Order","kind":"References"}
+{"from":"crate::services::repository::InMemoryOrderRepository::all","to":"crate::domain::order::Order","kind":"References"}
+{"from":"crate::services::repository::InMemoryOrderRepository::find","to":"crate::domain::order::Order","kind":"References"}
+{"from":"crate::services::repository::InMemoryOrderRepository::new","to":"crate::services::repository::InMemoryOrderRepository","kind":"Instantiates"}
+{"from":"crate::services::repository::InMemoryOrderRepository::replace","to":"crate::domain::order::Order","kind":"References"}
+{"from":"crate::services::repository::OrderRepository","to":"crate::services::repository::OrderRepository::add","kind":"Contains"}
+{"from":"crate::services::repository::OrderRepository","to":"crate::services::repository::OrderRepository::all","kind":"Contains"}
+{"from":"crate::services::repository::OrderRepository","to":"crate::services::repository::OrderRepository::find","kind":"Contains"}
+{"from":"crate::services::repository::OrderRepository","to":"crate::services::repository::OrderRepository::replace","kind":"Contains"}
+{"from":"crate::ship_all","to":"crate::services::order_service::OrderService","kind":"References"}
+{"from":"crate::ship_all","to":"crate::services::order_service::ShipError","kind":"References"}
+{"from":"crate::ship_all","to":"crate::services::repository::InMemoryOrderRepository","kind":"References"}
+{"from":"ns:crate","to":"crate::main","kind":"Contains"}
+{"from":"ns:crate","to":"crate::ship_all","kind":"Contains"}
+{"from":"ns:crate","to":"ns:crate::domain","kind":"Contains"}
+{"from":"ns:crate","to":"ns:crate::domain","kind":"Imports"}
+{"from":"ns:crate","to":"ns:crate::services","kind":"Contains"}
+{"from":"ns:crate","to":"ns:crate::services","kind":"Imports"}
+{"from":"ns:crate","to":"ns:crate::util","kind":"Contains"}
+{"from":"ns:crate::domain","to":"ns:crate::domain::order","kind":"Contains"}
+{"from":"ns:crate::domain","to":"ns:crate::domain::order","kind":"Imports"}
+{"from":"ns:crate::domain","to":"ns:crate::domain::shapes","kind":"Contains"}
+{"from":"ns:crate::domain","to":"ns:crate::domain::shapes","kind":"Imports"}
+{"from":"ns:crate::domain::order","to":"crate::domain::order::Order","kind":"Contains"}
+{"from":"ns:crate::domain::order","to":"crate::domain::order::OrderEvent","kind":"Contains"}
+{"from":"ns:crate::domain::order","to":"crate::domain::order::OrderStatus","kind":"Contains"}
+{"from":"ns:crate::domain::order","to":"crate::domain::order::Priced","kind":"Contains"}
+{"from":"ns:crate::domain::order","to":"pkg:std","kind":"Imports"}
+{"from":"ns:crate::domain::shapes","to":"crate::domain::shapes::Circle","kind":"Contains"}
+{"from":"ns:crate::domain::shapes","to":"crate::domain::shapes::Shape","kind":"Contains"}
+{"from":"ns:crate::domain::shapes","to":"crate::domain::shapes::Square","kind":"Contains"}
+{"from":"ns:crate::domain::shapes","to":"crate::domain::shapes::total_area","kind":"Contains"}
+{"from":"ns:crate::services","to":"ns:crate::services::order_service","kind":"Contains"}
+{"from":"ns:crate::services","to":"ns:crate::services::order_service","kind":"Imports"}
+{"from":"ns:crate::services","to":"ns:crate::services::repository","kind":"Contains"}
+{"from":"ns:crate::services","to":"ns:crate::services::repository","kind":"Imports"}
+{"from":"ns:crate::services::order_service","to":"crate::services::order_service::Listener","kind":"Contains"}
+{"from":"ns:crate::services::order_service","to":"crate::services::order_service::OrderService","kind":"Contains"}
+{"from":"ns:crate::services::order_service","to":"crate::services::order_service::ShipError","kind":"Contains"}
+{"from":"ns:crate::services::order_service","to":"ns:crate::domain","kind":"Imports"}
+{"from":"ns:crate::services::order_service","to":"ns:crate::services","kind":"Imports"}
+{"from":"ns:crate::services::order_service","to":"ns:crate::util","kind":"Imports"}
+{"from":"ns:crate::services::order_service","to":"pkg:std","kind":"Imports"}
+{"from":"ns:crate::services::repository","to":"crate::services::repository::InMemoryOrderRepository","kind":"Contains"}
+{"from":"ns:crate::services::repository","to":"crate::services::repository::OrderRepository","kind":"Contains"}
+{"from":"ns:crate::services::repository","to":"ns:crate::domain","kind":"Imports"}
+{"from":"ns:crate::util","to":"crate::util::count_slowly","kind":"Contains"}
+{"from":"ns:crate::util","to":"crate::util::sleep_ms","kind":"Contains"}
+{"from":"ns:crate::util","to":"pkg:std","kind":"Imports"}
+
+# knowledge
+{
+  "routes": [],
+  "http_calls": [],
+  "di": [],
+  "config": [],
+  "models": [],
+  "symbols": [
+    {
+      "symbol": "crate::domain::order::Order::amount~2",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::order::Order::customer~2",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::order::Order::fmt",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::order::Order::new",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::order::Order::with_status",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::order::Priced::is_large",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::shapes::Circle::area",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::shapes::Circle::name",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::shapes::Shape::name",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::shapes::Square::area",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::domain::shapes::total_area",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::main",
+      "complexity": 3,
+      "capabilities": [],
+      "entry": {
+        "kind": "Main",
+        "label": "program entry (main)"
+      },
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::main::on_shipped callback",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::main::spawn callback",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::count_pending",
+      "complexity": 3,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::describe",
+      "complexity": 3,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::describe_all",
+      "complexity": 2,
+      "capabilities": [
+        "DB_READ"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::new",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::on_shipped",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::repository_mut",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::ship",
+      "complexity": 3,
+      "capabilities": [
+        "DB_READ"
+      ],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::total_for_customer",
+      "complexity": 4,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::OrderService::total_for_customer_pipeline",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::order_service::ShipError::fmt",
+      "complexity": 2,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::repository::InMemoryOrderRepository::add",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::repository::InMemoryOrderRepository::all",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::repository::InMemoryOrderRepository::find",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::repository::InMemoryOrderRepository::new",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::services::repository::InMemoryOrderRepository::replace",
+      "complexity": 2,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::ship_all",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::util::count_slowly",
+      "complexity": 2,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    },
+    {
+      "symbol": "crate::util::sleep_ms",
+      "complexity": 1,
+      "capabilities": [],
+      "entry": null,
+      "test": false,
+      "auth": null
+    }
+  ],
+  "state_machines": []
+}

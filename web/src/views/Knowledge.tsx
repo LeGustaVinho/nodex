@@ -13,6 +13,7 @@ import { useUi } from "../store";
 import { KNOWLEDGE_COLORS } from "./GraphCanvas";
 import { GraphCanvas } from "./GraphCanvas";
 import { useStructure } from "./Views";
+import * as perf from "../perf";
 
 export function useKnowledge() {
   return useQuery({ queryKey: ["knowledge"], queryFn: api.knowledge });
@@ -223,6 +224,7 @@ export function OverviewView() {
     };
   }, [index]);
   if (!index || !stats) return <div className="empty">Loading…</div>;
+  perf.firstView("overview");
 
   const name = (id: string) => index.byId.get(id)?.qualified_name ?? id;
   const pick = (id: string) => {

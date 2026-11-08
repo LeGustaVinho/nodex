@@ -221,6 +221,7 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
     state.run.stop();
     let _ = state.debug.command(crate::debugger::DebugCommand::Stop);
     let frontends = state.frontends.clone();
+    let timer = nodex_core::perf::phase("open.total");
     let loaded = tokio::task::spawn_blocking(move || Project::open(&dir, frontends))
         .await
         .map_err(|e| e.to_string())?
@@ -234,7 +235,10 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
     };
     tracing::info!(root = %project.root().display(), files = project.summary().files.len(), "project opened");
     remember(&project);
+    let installing = nodex_core::perf::phase("open.install");
     install(state, project)?;
+    installing.finish("");
+    timer.finish("(until project-changed)");
     let _ = state.events.send(ServerEvent::ProjectChanged);
     Ok(())
 }

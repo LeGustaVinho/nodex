@@ -28,6 +28,7 @@ import type { RunStatus } from "./gen/RunStatus";
 import type { StepsPage } from "./gen/StepsPage";
 import type { StructureGraph } from "./gen/StructureGraph";
 import type { TraceFrame } from "./gen/TraceFrame";
+import * as perf from "./perf";
 
 declare global {
   interface Window {
@@ -85,14 +86,24 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 
 const json = async <T,>(path: string): Promise<T> => (await request(path)).json() as Promise<T>;
 
+/** A large payload: logs its size and how long it took to download and parse. */
+const bigJson = async <T,>(path: string): Promise<T> => {
+  const started = performance.now();
+  const text = await (await request(path)).text();
+  const downloaded = performance.now();
+  const value = JSON.parse(text) as T;
+  perf.payload(path, text.length, downloaded - started, performance.now() - downloaded);
+  return value;
+};
+
 export type Positions = Record<string, { x: number; y: number }>;
 
 export type UnityPackageAction = "link" | "embed" | "update" | "remove";
 
 export const api = {
   project: () => json<ProjectSummary>("/api/project"),
-  structure: () => json<StructureGraph>("/api/structure"),
-  knowledge: () => json<ProjectKnowledge>("/api/knowledge"),
+  structure: () => bigJson<StructureGraph>("/api/structure"),
+  knowledge: () => bigJson<ProjectKnowledge>("/api/knowledge"),
   catalog: () => json<Catalog>("/api/catalog"),
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),

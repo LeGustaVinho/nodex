@@ -25,12 +25,20 @@ pub async fn project(State(state): State<Arc<AppState>>) -> ApiResult {
 
 pub async fn structure(State(state): State<Arc<AppState>>) -> ApiResult {
     let graph = state.project.lock().map_err(poisoned)?.structure();
-    Ok(Json(&*graph).into_response())
+    timed_json("api.structure.json", &*graph)
 }
 
 pub async fn knowledge(State(state): State<Arc<AppState>>) -> ApiResult {
     let knowledge = state.project.lock().map_err(poisoned)?.knowledge();
-    Ok(Json(&*knowledge).into_response())
+    timed_json("api.knowledge.json", &*knowledge)
+}
+
+/// Serializes a large payload, logging how long it took and its size.
+fn timed_json<T: serde::Serialize + ?Sized>(phase: &'static str, value: &T) -> ApiResult {
+    let timer = nodex_core::perf::phase(phase);
+    let bytes = serde_json::to_vec(value).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    timer.finish(format_args!("({:.1} MB)", bytes.len() as f64 / 1_048_576.0));
+    Ok(([("content-type", "application/json")], bytes).into_response())
 }
 
 #[derive(Deserialize)]

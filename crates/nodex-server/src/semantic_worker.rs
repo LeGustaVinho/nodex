@@ -61,15 +61,19 @@ pub fn spawn(state: &Arc<AppState>) {
                 Some(Ok(p)) => p,
             };
             tracing::info!(?language, provider = %provider.describe(), "semantic provider started");
+            let analyzing = nodex_core::perf::phase("semantic.analyze");
             let mut result = provider.analyze();
+            analyzing.finish(format_args!("({language:?})"));
             loop {
                 match result {
                     Ok(_) if !current() => return,
                     Ok(facts) => {
                         tracing::info!(?language, refs = facts.refs.len(), "semantic facts ready");
+                        let applying = nodex_core::perf::phase("semantic.apply");
                         if let Ok(mut p) = state.project.lock() {
                             p.apply_semantic(language, facts);
                         }
+                        applying.finish(format_args!("({language:?})"));
                         let _ = state.events.send(ServerEvent::SemanticChanged);
                     }
                     Err(reason) => {

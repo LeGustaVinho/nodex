@@ -20,6 +20,7 @@ import { ConnectionOverlay, Toasts } from "./components/Toasts";
 import { EnvironmentDialog } from "./panels/EnvironmentDialog";
 import { SettingsDialog, useSettingsMenu } from "./panels/SettingsDialog";
 import { Welcome } from "./panels/Welcome";
+import * as perf from "./perf";
 
 // Loaded on first use: Monaco, Mermaid and the knowledge views are large.
 const CodePanel = lazy(() => import("./panels/CodePanel").then((m) => ({ default: m.CodePanel })));
@@ -59,7 +60,10 @@ function useLiveUpdates() {
             trace.applyFrame(event.data);
             refreshRecordedDiagrams(queryClient);
           }
-          else if (event.type === "project-loading") useUi.getState().setProjectLoading(event.data.path);
+          else if (event.type === "project-loading") {
+            perf.openStarted();
+            useUi.getState().setProjectLoading(event.data.path);
+          }
           else if (event.type === "project-failed") useUi.getState().setProjectLoading(null);
           else if (event.type === "debug-status") useDebug.getState().setStatus(event.data);
           else if (event.type === "debug-continued") useDebug.getState().setStopped(null);
@@ -78,6 +82,7 @@ function useLiveUpdates() {
             void queryClient.invalidateQueries({ queryKey: ["debug-scopes"] });
             void queryClient.invalidateQueries({ queryKey: ["debug-watch"] });
           } else if (event.type === "project-changed") {
+            perf.step("project-changed");
             // Everything shown belonged to the old project.
             trace.reset();
             useDebug.getState().reset();

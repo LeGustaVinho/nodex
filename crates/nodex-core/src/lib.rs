@@ -11,6 +11,7 @@ pub mod catalog;
 pub mod knowledge;
 pub mod link;
 pub mod operations;
+pub mod perf;
 pub mod project;
 pub mod semantic;
 pub mod units;

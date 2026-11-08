@@ -18,6 +18,10 @@
 //!
 //! `cargo xtask version <x.y.z>` sets the version everywhere it is written; `cargo xtask notes
 //! <x.y.z>` prints that version's CHANGELOG section (the release notes).
+//!
+//! Performance: `cargo xtask bench-open <folder> [--semantic] [--runs N]` times opening a project
+//! phase by phase (see `crates/nodex-server/examples/bench_open.rs`); `cargo xtask gen-corpus
+//! <out> [--files N] [--lang cs|ts|rs]` writes a large synthetic project from a sample fixture.
 
 mod licenses;
 
@@ -40,6 +44,8 @@ fn main() -> ExitCode {
         Some("dist") => dist(&args[1..]),
         Some("version") if args.len() == 2 => set_version(&args[1]),
         Some("notes") if args.len() == 2 => release_notes(&args[1]).map(|n| println!("{n}")),
+        Some("bench-open") if args.len() >= 2 => bench_open(&args[1..]),
+        Some("gen-corpus") if args.len() >= 2 => gen_corpus(&args[1..]),
         Some("licenses") => {
             let stage = stage_dir(&root());
             licenses::write(&root(), &stage, &stage.join("THIRD-PARTY-NOTICES.txt"))
@@ -49,6 +55,8 @@ fn main() -> ExitCode {
             eprintln!("       cargo xtask version <x.y.z>");
             eprintln!("       cargo xtask notes <x.y.z>");
             eprintln!("       cargo xtask licenses   (after dist --no-bundle)");
+            eprintln!("       cargo xtask bench-open <folder> [--semantic] [--runs N]");
+            eprintln!("       cargo xtask gen-corpus <out> [--files N] [--lang cs|ts|rs]");
             return ExitCode::from(2);
         }
     };
@@ -347,4 +355,109 @@ fn copy_dir(from: &Path, to: &Path) -> Result {
         }
     }
     Ok(())
+}
+
+/// Runs the `bench_open` example in release mode with the given arguments.
+fn bench_open(args: &[String]) -> Result {
+    run(Command::new(env!("CARGO"))
+        .args(["run", "--release", "-q", "-p", "nodex-server", "--example", "bench_open", "--"])
+        .args(args)
+        .current_dir(root()))
+}
+
+/// The value after `--name`, if given.
+fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
+}
+
+/// Writes a synthetic project of about `--files` source files (10 000 by default) by copying a
+/// sample fixture again and again under distinct names, so every copy links on its own.
+fn gen_corpus(args: &[String]) -> Result {
+    let out = PathBuf::from(&args[0]);
+    let files: usize = flag(args, "--files").unwrap_or("10000").parse().map_err(|_| "--files needs a number")?;
+    let lang = flag(args, "--lang").unwrap_or("cs");
+    let (fixture, exts): (&str, &[&str]) = match lang {
+        "cs" => ("fixtures/csharp/Sample", &["cs"]),
+        "ts" => ("fixtures/ts/Sample", &["ts", "cjs"]),
+        "rs" => ("fixtures/rust/Sample", &["rs"]),
+        other => return Err(format!("unknown language {other} (cs, ts or rs)")),
+    };
+    if out.exists() && fs::read_dir(&out).map_err(|e| e.to_string())?.next().is_some() {
+        return Err(format!("{} is not empty", out.display()));
+    }
+    let fixture = root().join(fixture);
+    let mut sources = Vec::new();
+    collect_sources(&fixture, &fixture, exts, &mut sources)?;
+    if sources.is_empty() {
+        return Err(format!("no sources in {}", fixture.display()));
+    }
+    let copies = files.div_ceil(sources.len());
+    let write = |path: PathBuf, text: &str| -> Result {
+        fs::create_dir_all(path.parent().expect("a file has a parent")).map_err(|e| e.to_string())?;
+        fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    };
+    let mut modules = String::new();
+    for i in 0..copies {
+        let tag = format!("{i:05}");
+        for (rel, text) in &sources {
+            match lang {
+                "cs" => write(out.join(format!("Copy{tag}")).join(rel), &replace_word(text, "Sample", &format!("Sample{tag}")))?,
+                "ts" => write(out.join("src").join(format!("c{tag}")).join(rel.strip_prefix("src").unwrap_or(rel)), text)?,
+                _ => {
+                    let rel = rel.strip_prefix("src").unwrap_or(rel);
+                    let rel = if rel == Path::new("main.rs") { Path::new("mod.rs") } else { rel };
+                    write(out.join("src").join(format!("m{tag}")).join(rel), &text.replace("crate::", &format!("crate::m{tag}::")))?
+                }
+            }
+        }
+        modules.push_str(&format!("pub mod m{tag};\n"));
+    }
+    match lang {
+        "cs" => write(out.join("Corpus.csproj"), &fs::read_to_string(fixture.join("Sample.csproj")).map_err(|e| e.to_string())?)?,
+        "ts" => {
+            for name in ["package.json", "tsconfig.json"] {
+                write(out.join(name), &fs::read_to_string(fixture.join(name)).map_err(|e| e.to_string())?)?;
+            }
+        }
+        _ => {
+            write(out.join("Cargo.toml"), "[package]\nname = \"nodex-corpus\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n")?;
+            write(out.join("src/lib.rs"), &modules)?;
+        }
+    }
+    println!("wrote {} source files to {}", copies * sources.len(), out.display());
+    Ok(())
+}
+
+/// Source files below `dir` with one of `exts`, as (path relative to `base`, text).
+fn collect_sources(base: &Path, dir: &Path, exts: &[&str], out: &mut Vec<(PathBuf, String)>) -> Result {
+    for entry in fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            let name = entry.file_name();
+            if !SKIP.iter().any(|s| name == *s) && !name.to_string_lossy().starts_with('.') {
+                collect_sources(base, &path, exts, out)?;
+            }
+        } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| exts.contains(&e)) {
+            let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            out.push((path.strip_prefix(base).expect("below base").to_path_buf(), text));
+        }
+    }
+    Ok(())
+}
+
+/// Replaces `word` where it stands alone (not inside a longer identifier).
+fn replace_word(text: &str, word: &str, with: &str) -> String {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find(word) {
+        let before = rest[..i].chars().next_back();
+        let after = rest[i + word.len()..].chars().next();
+        out.push_str(&rest[..i]);
+        out.push_str(if before.is_some_and(ident) || after.is_some_and(ident) { word } else { with });
+        rest = &rest[i + word.len()..];
+    }
+    out.push_str(rest);
+    out
 }

@@ -26,6 +26,7 @@ import { HierarchyGroup, HierarchyNode } from "../components/HierarchyNodes";
 import { NamespaceNode, TypeCard } from "../components/StructureNodes";
 import { layoutGraph } from "../graph/layout";
 import type { GEdge, GGraph } from "../graph/model";
+import * as perf from "../perf";
 
 const nodeTypes: NodeTypes = {
   blueprint: BlueprintNode,
@@ -166,9 +167,11 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
     if (!graph || !saved.isFetched) return;
     let cancelled = false;
     setBusy(true);
+    const layoutStarted = performance.now();
     layoutGraph(graph)
       .then((positions) => {
         if (cancelled) return;
+        perf.timed(`layout ${layoutKey} (${graph.nodes.length} nodes, ${(performance.now() - layoutStarted).toFixed(0)} ms in ELK) + setNodes`, () => {
         const overrides = savePositions ? (saved.data ?? {}) : {};
         setNodes(
           graph.nodes.map((n) => {
@@ -203,6 +206,8 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
           if (selectedId && graph.nodes.some((n) => n.id === selectedId)) pendingFit.current = [{ id: selectedId }];
           else pendingFit.current = fitFirst ? graph.nodes.slice(0, fitFirst).map((n) => ({ id: n.id })) : [];
         }
+        });
+        perf.firstView(layoutKey);
       })
       .catch((err) => console.error("layout failed", err))
       .finally(() => !cancelled && setBusy(false));

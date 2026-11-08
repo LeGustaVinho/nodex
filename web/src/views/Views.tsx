@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { api } from "../api";
+import * as perf from "../perf";
 import { useTrace } from "../trace";
 import { useCatalog } from "../catalog";
 import { callGraph } from "../graph/callGraph";
@@ -12,14 +13,14 @@ import { GraphCanvas } from "./GraphCanvas";
 
 export function useStructure() {
   const q = useQuery({ queryKey: ["structure"], queryFn: api.structure });
-  const index = useMemo(() => (q.data ? new StructureIndex(q.data) : undefined), [q.data]);
+  const index = useMemo(() => (q.data ? perf.timed("StructureIndex", () => new StructureIndex(q.data)) : undefined), [q.data]);
   return { index, error: q.error };
 }
 
 export function ArchitectureView() {
   const { index } = useStructure();
   const { setNamespace, setView, select, selection } = useUi();
-  const graph = useMemo(() => (index ? architectureGraph(index) : undefined), [index]);
+  const graph = useMemo(() => (index ? perf.timed("architectureGraph", () => architectureGraph(index)) : undefined), [index]);
   return (
     <GraphCanvas
       key="architecture"
