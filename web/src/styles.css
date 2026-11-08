@@ -324,3 +324,10 @@ button.run.stop { background: #5a2323; border-color: #8a3434; }
 .dbg-card { border-bottom: 1px solid var(--line); padding: 10px; font-size: 12px; display: flex; flex-direction: column; gap: 8px; }
 .dbg-card a { color: #7fd1ff; }
 .dbg-more { width: 100%; text-align: left; background: transparent; border-color: transparent; color: var(--muted); font-size: 11px; padding: 2px 6px; }
+
+/* Unity */
+.unity-card { border-bottom: 1px solid var(--line); padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+.unity-card p { margin: 0; }
+.unity-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.unity-actions { display: inline-flex; gap: 6px; }
+.unity-warn { color: #ffb300; }

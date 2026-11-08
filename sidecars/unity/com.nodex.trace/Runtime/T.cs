@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -39,40 +41,85 @@ namespace Nodex.Trace
         private const int MaxPendingBytes = 16 * 1024 * 1024;
         private const int MaxText = 96;
 
-        private static readonly bool s_on;
+        private static volatile bool s_on;
         private static readonly object s_lock = new object();
         private static readonly object s_flushLock = new object();
+        private static readonly object s_connectLock = new object();
         private static MemoryStream s_buffer = new MemoryStream(64 * 1024);
         private static BinaryWriter s_writer = new BinaryWriter(s_buffer, new UTF8Encoding(false), leaveOpen: true);
         private static readonly Stopwatch s_clock = Stopwatch.StartNew();
         private static NetworkStream? s_stream;
         private static TcpClient? s_client;
         private static long s_dropped;
+        private static bool s_hooked;
 
         static T()
         {
             var endpoint = Environment.GetEnvironmentVariable("NODEX_TRACE");
             var token = Environment.GetEnvironmentVariable("NODEX_TRACE_TOKEN");
             if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(token)) return;
-            try
+            Connect(endpoint!, token!);
+        }
+
+        /// <summary>True while events go to Nodex.</summary>
+        public static bool IsConnected => s_on;
+
+        /// <summary>
+        /// Starts sending events to Nodex at <paramref name="endpoint"/> ("host:port"). A program
+        /// started by Nodex is connected from its environment; the Unity Editor is connected by
+        /// the Nodex bridge when Play Mode starts. Returns false if Nodex cannot be reached.
+        /// </summary>
+        public static bool Connect(string endpoint, string token)
+        {
+            lock (s_connectLock)
             {
-                var colon = endpoint!.LastIndexOf(':');
-                var client = new TcpClient { NoDelay = true };
-                client.Connect(endpoint.Substring(0, colon), int.Parse(endpoint.Substring(colon + 1), CultureInfo.InvariantCulture));
-                s_client = client;
-                s_stream = client.GetStream();
-                var hello = Encoding.ASCII.GetBytes($"NODEX1 {token}\n");
-                s_stream.Write(hello, 0, hello.Length);
-                s_on = true;
-                var flusher = new Thread(FlushLoop) { IsBackground = true, Name = "Nodex.Trace" };
-                flusher.Start();
-                AppDomain.CurrentDomain.ProcessExit += (_, __) => Close();
-                AppDomain.CurrentDomain.FirstChanceException += (_, e) => Thrown(e.Exception);
-                AppDomain.CurrentDomain.UnhandledException += (_, __) => Flush();
+                if (s_on) return true;
+                try
+                {
+                    var colon = endpoint.LastIndexOf(':');
+                    var client = new TcpClient { NoDelay = true };
+                    client.Connect(endpoint.Substring(0, colon), int.Parse(endpoint.Substring(colon + 1), CultureInfo.InvariantCulture));
+                    var stream = client.GetStream();
+                    var hello = Encoding.ASCII.GetBytes($"NODEX1 {token}\n");
+                    stream.Write(hello, 0, hello.Length);
+                    lock (s_flushLock)
+                    {
+                        s_client = client;
+                        s_stream = stream;
+                    }
+                    if (!s_hooked)
+                    {
+                        s_hooked = true;
+                        var flusher = new Thread(FlushLoop) { IsBackground = true, Name = "Nodex.Trace" };
+                        flusher.Start();
+                        AppDomain.CurrentDomain.ProcessExit += (_, __) => Close();
+                        AppDomain.CurrentDomain.DomainUnload += (_, __) => Close();
+                        AppDomain.CurrentDomain.FirstChanceException += (_, e) => Thrown(e.Exception);
+                        AppDomain.CurrentDomain.UnhandledException += (_, __) => Flush();
+                    }
+                    s_on = true;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    s_on = false; // Tracing must never break the program.
+                    return false;
+                }
             }
-            catch (Exception)
+        }
+
+        /// <summary>Sends what is buffered and stops sending (Unity: leaving Play Mode).</summary>
+        public static void Disconnect()
+        {
+            lock (s_connectLock)
             {
-                s_on = false; // Tracing must never break the program.
+                s_on = false;
+                Close();
+                lock (s_lock)
+                {
+                    s_buffer.SetLength(0);
+                    s_dropped = 0;
+                }
             }
         }
 

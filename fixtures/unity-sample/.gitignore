@@ -1,0 +1,11 @@
+# Unity-generated; only Assets/, Packages/ and ProjectSettings/ are kept.
+/Library/
+/Temp/
+/Logs/
+/obj/
+/UserSettings/
+/Build/
+/Builds/
+*.sln
+*.csproj
+.nodex/

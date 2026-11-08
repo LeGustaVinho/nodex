@@ -1,0 +1,13 @@
+{
+  "name": "com.nodex.trace",
+  "version": "0.1.0",
+  "displayName": "Nodex Trace",
+  "description": "Live traces and debugging of this project from Nodex: adds trace probes to the project's scripts while Nodex asks for them (an IL post-processor), sends Play Mode events to Nodex, and lets Nodex press Play and switch the Editor to Debug mode. Does nothing unless Nodex is running a session.",
+  "unity": "2021.3",
+  "author": {
+    "name": "Nodex"
+  },
+  "dependencies": {
+    "com.unity.nuget.mono-cecil": "1.11.4"
+  }
+}

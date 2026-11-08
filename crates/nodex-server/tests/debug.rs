@@ -3,7 +3,7 @@
 //!
 //! `cargo test -p nodex-server --test debug -- --ignored --test-threads 1`
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,7 +35,7 @@ async fn debug_sample(frontend: Arc<dyn LanguageFrontend>, rel: &str, file: &str
     unsafe {
         std::env::set_var("NODEX_NO_SEMANTIC", "1");
     }
-    let spec = frontend.debugger().expect("debugger").adapter();
+    let spec = frontend.debugger(Path::new(".")).expect("debugger").adapter();
     if adapters::locate(&spec).is_none() {
         let path = tokio::task::spawn_blocking(move || adapters::install(&spec, &mut |_, _| {})).await.unwrap().expect("adapter installs");
         assert!(path.exists());
@@ -109,4 +109,42 @@ async fn debugs_the_typescript_sample() {
 #[ignore = "downloads CodeLLDB; needs cargo"]
 async fn debugs_the_rust_sample() {
     debug_sample(Arc::new(nodex_lang_rust::RustFrontend), "rust/Sample", "src/services/order_service.rs", 54, "total_for_customer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs Node.js, the nodex-ts sidecar and vscode-js-debug"]
+async fn stop_during_the_build_ends_without_launching() {
+    // SAFETY: set before the server's threads read the environment.
+    unsafe {
+        std::env::set_var("NODEX_NO_SEMANTIC", "1");
+    }
+    let frontend: Arc<dyn LanguageFrontend> = Arc::new(nodex_lang_typescript::TypeScriptFrontend);
+    let spec = frontend.debugger(Path::new(".")).expect("debugger").adapter();
+    if adapters::locate(&spec).is_none() {
+        tokio::task::spawn_blocking(move || adapters::install(&spec, &mut |_, _| {})).await.unwrap().expect("adapter installs");
+    }
+    let project = Project::open(&fixtures().join("ts/Sample"), vec![frontend]).unwrap();
+    let state = AppState::new(project, "t".into(), 7401, Vec::new());
+    let mut events = state.events.subscribe();
+    debugger::start(&state).expect("debugging starts");
+    // Busy from the first moment: a Run or a second session is refused while it builds.
+    assert!(state.debug.is_busy());
+    assert!(debugger::start(&state).is_err());
+    assert!(nodex_server::runner::start(&state).is_err());
+    // Only Stop is accepted before the program runs.
+    assert!(state.debug.command(DebugCommand::Next).is_err());
+    state.debug.command(DebugCommand::Stop).expect("stop during the build");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv()).await.expect("ends in time").expect("event");
+        match event {
+            ServerEvent::DebugStatus(s) if s.state == DebugState::Running => panic!("launched after Stop: {s:?}"),
+            ServerEvent::DebugStatus(s) if matches!(s.state, DebugState::Exited | DebugState::Failed) => {
+                assert_eq!(s.state, DebugState::Exited, "{s:?}");
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(!state.debug.is_busy());
 }

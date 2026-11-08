@@ -925,6 +925,7 @@ dependencies = [
  "insta",
  "nodex-ir",
  "nodex-lang-api",
+ "serde",
  "serde_json",
  "tree-sitter",
  "tree-sitter-c-sharp",

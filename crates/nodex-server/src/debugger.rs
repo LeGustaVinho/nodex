@@ -13,6 +13,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -127,11 +128,16 @@ enum Msg {
     Breakpoints(String),
 }
 
+/// A session, registered from the moment Debug is pressed (so nothing else starts while it
+/// builds).
 struct Session {
-    /// The connection that runs the program (a js-debug child, or the only one).
-    client: Arc<Client>,
+    /// The connection that runs the program (a js-debug child, or the only one); `None` while
+    /// building and starting the adapter.
+    client: Option<Arc<Client>>,
     tx: Sender<Msg>,
     thread: Option<i64>,
+    /// Stop pressed before the adapter was connected: the session ends instead of launching.
+    cancelled: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -159,13 +165,21 @@ impl DebugManager {
     }
 
     fn client(&self) -> Option<Arc<Client>> {
-        self.session.lock().ok()?.as_ref().map(|s| s.client.clone())
+        self.session.lock().ok()?.as_ref().and_then(|s| s.client.clone())
     }
 
-    /// Sends a command to the running session.
+    /// Sends a command to the session. While it is still building, only Stop is accepted: the
+    /// session then ends without launching the program.
     pub fn command(&self, cmd: DebugCommand) -> Result<(), String> {
         let s = self.session.lock().map_err(|_| "poisoned")?;
         let s = s.as_ref().ok_or("no debug session")?;
+        if s.client.is_none() {
+            if cmd != DebugCommand::Stop {
+                return Err("the program is still starting".into());
+            }
+            s.cancelled.store(true, Ordering::SeqCst);
+            return Ok(());
+        }
         s.tx.send(Msg::Command(cmd)).map_err(|_| "the debug session ended".to_owned())
     }
 
@@ -259,7 +273,7 @@ pub fn start(state: &Arc<AppState>) -> Result<(), String> {
         let found = project
             .active_frontends()
             .into_iter()
-            .find_map(|f| f.debugger().map(|d| (f.id(), d)))
+            .find_map(|f| f.debugger(project.root()).map(|d| (f.id(), d)))
             .ok_or("no language in this project has a debugger yet")?;
         (project.root().to_path_buf(), found.0, found.1)
     };
@@ -273,15 +287,27 @@ pub fn start(state: &Arc<AppState>) -> Result<(), String> {
         set_status(state, s);
         return Err(format!("the {} debug adapter is not installed", spec.name));
     };
+    // Registered at once: Run and another Debug are refused, and Stop works during the build.
+    let (tx, msgs) = mpsc::channel::<Msg>();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut session = state.debug.session.lock().map_err(|_| "debug lock poisoned")?;
+        if session.is_some() {
+            return Err("a run or a debug session is already in progress".into());
+        }
+        *session = Some(Session { client: None, tx: tx.clone(), thread: None, cancelled: cancelled.clone() });
+    }
     if let Ok(mut l) = state.debug.last_stop.lock() {
         *l = None;
     }
     set_status(state, status(DebugState::Starting, "building for debugging…"));
+    let registered = state.clone();
     let state = state.clone();
+    let channel = (tx, msgs, cancelled);
     std::thread::Builder::new()
         .name("nodex-debug".into())
         .spawn(move || {
-            let result = session(&state, &root, launcher, spec, program);
+            let result = session(&state, &root, launcher, spec, program, channel);
             if let Ok(mut s) = state.debug.session.lock() {
                 *s = None;
             }
@@ -293,7 +319,12 @@ pub fn start(state: &Arc<AppState>) -> Result<(), String> {
                 }
             }
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            if let Ok(mut s) = registered.debug.session.lock() {
+                *s = None;
+            }
+            e.to_string()
+        })?;
     Ok(())
 }
 
@@ -363,25 +394,48 @@ fn plain(p: &Path) -> PathBuf {
     }
 }
 
-fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>, spec: AdapterSpec, program: PathBuf) -> Result<(), String> {
+type Channel = (Sender<Msg>, Receiver<Msg>, Arc<AtomicBool>);
+
+fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>, spec: AdapterSpec, program: PathBuf, channel: Channel) -> Result<(), String> {
+    let (tx, msgs, cancelled) = channel;
+    let stopped_early = || {
+        let yes = cancelled.load(Ordering::SeqCst);
+        if yes {
+            push_output(state, vec![line("nodex", "■ stopped")]);
+        }
+        yes
+    };
     let root = &plain(root);
     // 1. Debug build.
     let out_dir = root.join(".nodex").join("run");
     let st = state.clone();
     let launch = launcher.prepare(root, &out_dir, &mut |l| push_output(&st, vec![line("build", l)]))?;
+    if stopped_early() {
+        return Ok(());
+    }
     push_output(state, vec![line("nodex", format!("🐞 {} with {} {}", launch.description, spec.name, spec.version))]);
 
     // 2. Adapter.
     let (client, rx, addr, mut adapter_process) = start_adapter(&spec, &program)?;
-    let client = Arc::new(client);
-    let (tx, msgs) = mpsc::channel::<Msg>();
-    forward(0, rx, tx.clone());
-    if let Ok(mut s) = state.debug.session.lock() {
-        *s = Some(Session { client: client.clone(), tx: tx.clone(), thread: None });
-    }
     let _cleanup = Cleanup(adapter_process.take());
-    client.initialize(spec.adapter_id)?;
-    let launch_reply = client.send_request("launch", launch.launch.clone())?;
+    let client = Arc::new(client);
+    forward(0, rx, tx.clone());
+    // From here on, commands (Stop too) go through the session loop.
+    if let Ok(mut s) = state.debug.session.lock()
+        && let Some(s) = s.as_mut()
+    {
+        s.client = Some(client.clone());
+    }
+    if stopped_early() {
+        client.shutdown(!launch.attach);
+        return Ok(());
+    }
+    // Whether each connection takes `configurationDone` (unity-dap does not).
+    let takes_done = |caps: &Value| caps.get("supportsConfigurationDoneRequest").and_then(Value::as_bool).unwrap_or(false);
+    let mut done_supported = vec![takes_done(&client.initialize(spec.adapter_id)?)];
+    // An attached program (the Unity Editor) is detached from on Stop, never ended.
+    let terminate = !launch.attach;
+    let launch_reply = client.send_request(if launch.attach { "attach" } else { "launch" }, launch.launch.clone())?;
     let mut clients: Vec<Arc<Client>> = vec![client.clone()];
     let mut active = 0usize;
     set_status(state, status(DebugState::Running, launch.description.clone()));
@@ -395,7 +449,8 @@ fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>,
         {
             launch_reply = None;
             if let Err(e) = result {
-                return Err(format!("the adapter could not start the program: {e}"));
+                let what = if launch.attach { "attach to the program" } else { "start the program" };
+                return Err(format!("the adapter could not {what}: {e}"));
             }
         }
         let msg = match msgs.recv_timeout(Duration::from_millis(200)) {
@@ -407,7 +462,7 @@ fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>,
             Msg::Adapter(which, Incoming::Event { event, body }) => match event.as_str() {
                 "initialized" => {
                     let c = clients[which].clone();
-                    configure(state, &c, root)?;
+                    configure(state, &c, root, done_supported[which])?;
                 }
                 "stopped" if which == active => {
                     let thread = body.get("threadId").and_then(Value::as_i64).unwrap_or(1);
@@ -458,7 +513,7 @@ fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>,
                         let (child, child_rx) = Client::connect(addr, Duration::from_secs(10))?;
                         let child = Arc::new(child);
                         forward(clients.len(), child_rx, tx.clone());
-                        child.initialize(spec.adapter_id)?;
+                        done_supported.push(takes_done(&child.initialize(spec.adapter_id)?));
                         let config = arguments.get("configuration").cloned().unwrap_or(Value::Null);
                         let _ = child.send_request("launch", config)?;
                         clients.push(child.clone());
@@ -466,7 +521,7 @@ fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>,
                         if let Ok(mut s) = state.debug.session.lock()
                             && let Some(s) = s.as_mut()
                         {
-                            s.client = child;
+                            s.client = Some(child);
                         }
                     }
                     _ => {
@@ -491,7 +546,7 @@ fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>,
                     DebugCommand::Pause => c.request("pause", args),
                     DebugCommand::Stop => {
                         for c in clients.iter().rev() {
-                            c.shutdown();
+                            c.shutdown(terminate);
                         }
                         push_output(state, vec![line("nodex", "■ stopped")]);
                         break;
@@ -514,7 +569,7 @@ fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>,
         }
     }
     for c in clients.iter().rev() {
-        c.shutdown();
+        c.shutdown(terminate);
     }
     Ok(())
 }
@@ -538,16 +593,23 @@ impl Drop for Cleanup {
 }
 
 /// Breakpoints of every file, exception breakpoints, `configurationDone`.
-fn configure(state: &AppState, client: &Client, root: &Path) -> Result<(), String> {
+/// `configuration_done`: the adapter announced `supportsConfigurationDoneRequest` (DAP clients
+/// must not send it otherwise).
+fn configure(state: &AppState, client: &Client, root: &Path, configuration_done: bool) -> Result<(), String> {
     let mut by_file: BTreeMap<String, ()> = BTreeMap::new();
     for b in breakpoints(state) {
         by_file.insert(b.file, ());
     }
     for file in by_file.keys() {
-        send_file_breakpoints(state, client, root, file)?;
+        // One file the adapter rejects (renamed, deleted) must not end the session.
+        if let Err(e) = send_file_breakpoints(state, client, root, file) {
+            push_output(state, vec![line("nodex", format!("breakpoints in {file} not set: {e}"))]);
+        }
     }
     let _ = client.request("setExceptionBreakpoints", json!({ "filters": [] }));
-    client.request("configurationDone", json!({}))?;
+    if configuration_done {
+        client.request("configurationDone", json!({}))?;
+    }
     Ok(())
 }
 

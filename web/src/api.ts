@@ -1,3 +1,4 @@
+import type { UnityStatus } from "./gen/UnityStatus";
 import type { CallsPage } from "./gen/CallsPage";
 import type { Catalog } from "./gen/Catalog";
 import type { FlowGraph } from "./gen/FlowGraph";
@@ -63,6 +64,8 @@ const json = async <T,>(path: string): Promise<T> => (await request(path)).json(
 
 export type Positions = Record<string, { x: number; y: number }>;
 
+export type UnityPackageAction = "link" | "embed" | "update" | "remove";
+
 export const api = {
   project: () => json<ProjectSummary>("/api/project"),
   structure: () => json<StructureGraph>("/api/structure"),
@@ -106,6 +109,10 @@ export const api = {
   adapters: () => json<AdapterStatus[]>("/api/debug/adapters"),
   installAdapter: (language: Language) =>
     request("/api/debug/adapters/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ language }) }),
+  unity: () => json<UnityStatus | null>("/api/unity"),
+  unityPackage: (action: UnityPackageAction) =>
+    request("/api/unity/package", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action }) }),
+  unityTraceOff: () => request("/api/unity/trace-off", { method: "POST" }),
   run: () => json<RunSnapshot>("/api/run"),
   runStart: () => request("/api/run", { method: "POST" }),
   runStop: () => request("/api/run/stop", { method: "POST" }),

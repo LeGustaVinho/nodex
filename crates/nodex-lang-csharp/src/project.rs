@@ -7,6 +7,13 @@ use nodex_lang_api::ProjectDescriptor;
 
 const SKIP_DIRS: &[&str] = &["bin", "obj", ".git", "node_modules", "Library", "Temp", "Logs", ".nodex", "target"];
 
+/// `productName` in `ProjectSettings/ProjectSettings.asset` (Player settings).
+fn unity_product_name(root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(root.join("ProjectSettings").join("ProjectSettings.asset")).ok()?;
+    let name = text.lines().find_map(|l| l.trim_start().strip_prefix("productName:"))?.trim();
+    (!name.is_empty()).then(|| name.trim_matches('"').to_owned())
+}
+
 pub fn detect(root: &Path) -> Option<ProjectDescriptor> {
     let unity_manifest = root.join("Packages").join("manifest.json");
     let is_unity = root.join("ProjectSettings").is_dir() || (root.join("Assets").is_dir() && unity_manifest.is_file());
@@ -36,11 +43,15 @@ pub fn detect(root: &Path) -> Option<ProjectDescriptor> {
     packages.sort_by(|a, b| a.name.cmp(&b.name));
     packages.dedup_by(|a, b| a.name == b.name);
 
-    let name = manifests
+    // Unity generates `.csproj` files named after assemblies (Assembly-CSharp-Editor): use the
+    // product name, or the folder's.
+    let unity_name = is_unity.then(|| unity_product_name(root).or_else(|| root.file_name().map(|s| s.to_string_lossy().into_owned()))).flatten();
+    let name = unity_name.into_iter().chain(manifests
         .iter()
         .find(|m| m.extension().is_some_and(|e| e == "csproj" || e == "sln"))
         .and_then(|m| m.file_stem())
-        .map(|s| s.to_string_lossy().into_owned())
+        .map(|s| s.to_string_lossy().into_owned()))
+        .next()
         .or_else(|| root.file_name().map(|s| s.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "project".into());
 

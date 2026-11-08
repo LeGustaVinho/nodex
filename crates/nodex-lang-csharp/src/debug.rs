@@ -89,6 +89,7 @@ impl DebugLauncher for DotnetDebugger {
                 "justMyCode": true,
             }),
             description: format!("{app} (.NET, debug build)"),
+            attach: false,
         })
     }
 }

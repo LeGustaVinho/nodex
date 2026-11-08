@@ -1,0 +1,18 @@
+{
+    "name": "Nodex.Bridge",
+    "rootNamespace": "Nodex.Bridge",
+    "references": [
+        "Nodex.Trace"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

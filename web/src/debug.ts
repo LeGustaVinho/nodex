@@ -3,6 +3,7 @@ import { api } from "./api";
 import type { AdapterProgress } from "./gen/AdapterProgress";
 import type { Breakpoint } from "./gen/Breakpoint";
 import type { DebugFrame } from "./gen/DebugFrame";
+import type { DebugScope } from "./gen/DebugScope";
 import type { DebugStatus } from "./gen/DebugStatus";
 import type { DebugStopped } from "./gen/DebugStopped";
 
@@ -12,11 +13,16 @@ interface DebugStore {
   stopped: DebugStopped | null;
   /** The frame whose variables are shown (the top project frame by default). */
   frame: number | null;
+  /** The variables of `frame` (the stop carries the top frame's; others are fetched), or null
+   *  while they load. */
+  scopes: DebugScope[] | null;
   breakpoints: Breakpoint[];
   progress: Record<string, AdapterProgress>;
   setStatus: (s: DebugStatus) => void;
   setStopped: (s: DebugStopped | null) => void;
   setFrame: (id: number | null) => void;
+  /** The fetched scopes of a frame other than the top one. */
+  setFrameScopes: (id: number, scopes: DebugScope[]) => void;
   setBreakpoints: (b: Breakpoint[]) => void;
   setProgress: (p: AdapterProgress) => void;
   reset: () => void;
@@ -28,6 +34,7 @@ export const useDebug = create<DebugStore>((set) => ({
   status: idle,
   stopped: null,
   frame: null,
+  scopes: null,
   breakpoints: [],
   progress: {},
   setStatus: (status) =>
@@ -36,13 +43,20 @@ export const useDebug = create<DebugStore>((set) => ({
       // Leaving the paused state forgets the stop.
       stopped: status.state === "paused" ? s.stopped : null,
       frame: status.state === "paused" ? s.frame : null,
+      scopes: status.state === "paused" ? s.scopes : null,
     })),
-  setStopped: (stopped) => set({ stopped, frame: stopped?.frames.find((f) => f.file)?.id ?? stopped?.frames[0]?.id ?? null }),
-  setFrame: (frame) => set({ frame }),
+  setStopped: (stopped) => set({ stopped, frame: topFrame(stopped), scopes: stopped?.scopes ?? null }),
+  setFrame: (frame) => set((s) => ({ frame, scopes: frame !== null && frame === topFrame(s.stopped) ? (s.stopped?.scopes ?? null) : null })),
+  setFrameScopes: (id, scopes) => set((s) => (s.frame === id ? { scopes } : {})),
   setBreakpoints: (breakpoints) => set({ breakpoints }),
   setProgress: (p) => set((s) => ({ progress: { ...s.progress, [p.language]: p } })),
-  reset: () => set({ status: idle, stopped: null, frame: null, breakpoints: [], progress: {} }),
+  reset: () => set({ status: idle, stopped: null, frame: null, scopes: null, breakpoints: [], progress: {} }),
 }));
+
+/** The frame whose scopes a stop carries: the first one in the project (as the server picks it). */
+export function topFrame(stopped: DebugStopped | null): number | null {
+  return stopped?.frames.find((f) => f.file)?.id ?? stopped?.frames[0]?.id ?? null;
+}
 
 export function debugActive(state: DebugStatus["state"]): boolean {
   return state === "starting" || state === "running" || state === "paused";

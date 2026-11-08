@@ -6,6 +6,7 @@ import { CodePanel } from "./panels/CodePanel";
 import { ConsolePanel, RunButton } from "./panels/RunPanel";
 import { OpenDialog } from "./panels/OpenDialog";
 import { DebugControls, DebugPanel } from "./panels/DebugPanel";
+import { UnityCard } from "./panels/UnityCard";
 import { loadDebug, useDebug } from "./debug";
 import { useTrace } from "./trace";
 import { Inspector } from "./panels/Inspector";
@@ -59,6 +60,7 @@ function useLiveUpdates() {
             // Everything shown belonged to the old project.
             trace.reset();
             useDebug.getState().reset();
+            void queryClient.invalidateQueries({ queryKey: ["unity"] });
             void loadDebug();
             useUi.getState().resetForProject();
             queryClient.clear();
@@ -218,6 +220,7 @@ export function App() {
         <ConsolePanel />
       </main>
       <section className="right">
+        <UnityCard />
         <DebugPanel />
         <Inspector />
         <CodePanel />

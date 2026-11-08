@@ -213,9 +213,10 @@ impl Client {
         )
     }
 
-    /// Ends the session (and the adapter process when we started it).
-    pub fn shutdown(&self) {
-        let _ = self.send_request("disconnect", json!({ "terminateDebuggee": true }));
+    /// Ends the session (and the adapter process when we started it). `terminate` also ends the
+    /// debugged program; an attached one (the Unity Editor) is only detached from.
+    pub fn shutdown(&self, terminate: bool) {
+        let _ = self.send_request("disconnect", json!({ "terminateDebuggee": terminate }));
         std::thread::sleep(Duration::from_millis(200));
         if let Ok(mut c) = self.child.lock()
             && let Some(mut child) = c.take()

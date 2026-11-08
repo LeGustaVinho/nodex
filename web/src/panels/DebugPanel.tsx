@@ -1,8 +1,9 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { debugActive, hiddenFrames, toggleBreakpoint, useDebug, visibleFrames } from "../debug";
+import { debugActive, hiddenFrames, toggleBreakpoint, topFrame, useDebug, visibleFrames } from "../debug";
 import type { FlowGraph } from "../gen/FlowGraph";
+import type { AdapterStatus } from "../gen/AdapterStatus";
 import type { DebugFrame } from "../gen/DebugFrame";
 import type { DebugVariable } from "../gen/DebugVariable";
 import { useUi } from "../store";
@@ -29,9 +30,13 @@ export function DebugControls() {
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       const state = useDebug.getState().status.state;
       const isActive = debugActive(state);
-      if (e.key === "F5" && e.shiftKey && isActive) send("stop");
-      else if (e.key === "F5" && !isActive && !runBusy) startDebugging(setConsoleOpen);
-      else if (e.key === "F5" && state === "paused") send("continue");
+      // F5 always belongs to the debugger here: it never reloads Nodex.
+      if (e.key === "F5" && e.shiftKey) {
+        if (isActive) send("stop");
+      } else if (e.key === "F5") {
+        if (!isActive && !runBusy) startDebugging(setConsoleOpen);
+        else if (state === "paused") send("continue");
+      }
       else if (e.key === "F10" && state === "paused") send("next");
       else if (e.key === "F11" && e.shiftKey && state === "paused") send("stepOut");
       else if (e.key === "F11" && state === "paused") send("stepIn");
@@ -127,6 +132,13 @@ function openFrame(f: DebugFrame) {
   if (f.node) ui.select({ kind: "flow-node", flow: f.flow, id: f.node });
 }
 
+/** Starts a download; the button shows progress at once (no second click while it starts). */
+function installAdapter(language: AdapterStatus["language"], size: number) {
+  const { setProgress } = useDebug.getState();
+  setProgress({ language, received: 0, total: size, done: false, error: null });
+  void api.installAdapter(language).catch((e: Error) => setProgress({ language, received: 0, total: size, done: true, error: e.message.replace(/^\d+ /, "") }));
+}
+
 /** Missing adapter: what it is and an Install button (the user's explicit choice). */
 function InstallCard({ language }: { language: string }) {
   const queryClient = useQueryClient();
@@ -157,7 +169,7 @@ function InstallCard({ language }: { language: string }) {
       {adapter.state === "unsupported" ? (
         <div className="muted">There is no build of it for this machine.</div>
       ) : (
-        <button className="primary" disabled={busy} onClick={() => void api.installAdapter(adapter.language)}>
+        <button className="primary" disabled={busy} onClick={() => installAdapter(adapter.language, adapter.size)}>
           {busy ? `Downloading… ${progress.total ? Math.round((100 * progress.received) / progress.total) : 0}%` : "Install"}
         </button>
       )}
@@ -168,15 +180,20 @@ function InstallCard({ language }: { language: string }) {
 
 /** Call stack, variables and watch expressions while debugging. */
 export function DebugPanel() {
-  const { status, stopped, frame, setFrame } = useDebug();
+  const { status, stopped, frame, setFrame, setFrameScopes, scopes: frameScopes } = useDebug();
   const [watches, setWatches] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [allFrames, setAllFrames] = useState(false);
+  const isTop = frame !== null && frame === topFrame(stopped);
   const scopes = useQuery({
     queryKey: ["debug-scopes", frame, stopped],
     queryFn: () => api.debugScopes(frame!),
-    enabled: frame !== null && !!stopped && stopped.frames.findIndex((f) => f.id === frame) > 0,
+    enabled: frame !== null && !!stopped && !isTop,
   });
+  // Other frames' variables also go to the store, for the pins of their Blueprint.
+  useEffect(() => {
+    if (frame !== null && !isTop && scopes.data) setFrameScopes(frame, scopes.data);
+  }, [frame, isTop, scopes.data, setFrameScopes]);
   const watchValues = useQuery({
     queryKey: ["debug-watch", watches, frame, stopped],
     queryFn: () => Promise.all(watches.map((w) => api.debugEvaluate(w, frame).catch((e: Error) => ({ name: w, value: e.message.replace(/^\d+ /, ""), ty: null, reference: 0 })))),
@@ -185,8 +202,7 @@ export function DebugPanel() {
 
   if (status.missing_adapter) return <InstallCard language={status.missing_adapter} />;
   if (!debugActive(status.state)) return null;
-  const topIsSelected = stopped && stopped.frames.findIndex((f) => f.id === frame) <= 0;
-  const shownScopes = topIsSelected ? stopped.scopes : (scopes.data ?? []);
+  const shownScopes = frameScopes ?? [];
   return (
     <div className="debug-panel">
       <div className="section-title">

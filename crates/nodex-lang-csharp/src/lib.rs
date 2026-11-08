@@ -18,6 +18,7 @@ mod sidecar;
 mod structure;
 mod syntax;
 mod unity;
+pub mod unity_editor;
 
 use std::path::Path;
 
@@ -49,11 +50,21 @@ impl LanguageFrontend for CSharpFrontend {
         Some(roslyn::RoslynSidecar::start(root).map(|s| Box::new(s) as Box<dyn SemanticProvider>))
     }
 
-    fn debugger(&self) -> Option<Box<dyn nodex_lang_api::DebugLauncher>> {
+    /// Unity projects are debugged in the Editor (unity-dap attaches to it); .NET programs are
+    /// built and launched under netcoredbg.
+    fn debugger(&self, root: &Path) -> Option<Box<dyn nodex_lang_api::DebugLauncher>> {
+        if unity_editor::is_unity(root) {
+            return Some(Box::new(unity_editor::UnityDebugger));
+        }
         Some(Box::new(debug::DotnetDebugger))
     }
 
-    fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {
+    /// Unity projects trace Play Mode in the open Editor (the Nodex package compiles the probes
+    /// in); .NET programs are built, woven and run by Nodex.
+    fn instrumenter(&self, root: &Path) -> Option<Box<dyn TraceInstrumenter>> {
+        if unity_editor::is_unity(root) {
+            return Some(Box::new(unity_editor::UnityInstrumenter));
+        }
         Some(Box::new(instrument::DotnetInstrumenter))
     }
 }

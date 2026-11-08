@@ -38,9 +38,7 @@ impl DebugLauncher for NodeDebugger {
 
     fn prepare(&self, root: &Path, out_dir: &Path, log: &mut dyn FnMut(&str)) -> Result<DebugLaunch, String> {
         std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
-        if crate::instrument::is_browser_app(root) {
-            return Err("debugging browser apps is not supported yet; use Run to watch them live".into());
-        }
+        // The sidecar refuses browser apps (it decides what is one, as for Run).
         log("Compiling with source maps (TypeScript compiler) …");
         let result = crate::instrument::sidecar_debug_build(root, out_dir, log)?;
         let field = |k: &str| result.get(k).and_then(Value::as_str).map(str::to_owned).ok_or_else(|| format!("compiler reported no {k}"));
@@ -63,6 +61,7 @@ impl DebugLauncher for NodeDebugger {
                 "console": "internalConsole",
             }),
             description: format!("{} (Node.js, debug build)", field("source")?),
+            attach: false,
         })
     }
 }

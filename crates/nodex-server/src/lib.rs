@@ -13,6 +13,7 @@ pub mod projects;
 pub mod runner;
 pub mod security;
 pub mod semantic_worker;
+pub mod unity;
 pub mod watch;
 
 use std::collections::BTreeMap;
@@ -138,6 +139,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/debug/evaluate", post(api::debug_evaluate))
         .route("/api/debug/adapters", get(api::debug_adapters))
         .route("/api/debug/adapters/install", post(api::debug_adapter_install))
+        .route("/api/unity", get(api::unity_status))
+        .route("/api/unity/package", post(api::unity_package))
+        .route("/api/unity/trace-off", post(api::unity_trace_off))
         .route("/ws", get(api::ws))
         .route_layer(middleware::from_fn_with_state(state.clone(), security::require_token));
 
