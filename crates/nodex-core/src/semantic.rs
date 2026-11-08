@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use nodex_ir::semantic::{ByteRange, RefKind, SemanticFacts, SemanticTarget};
+use nodex_ir::semantic::{ByteRange, LocalTypeFact, RefKind, SemanticFacts, SemanticRef, SemanticTarget};
 use nodex_ir::{
     CallTarget, Concept, Expr, FlowGraph, Language, PinKind, StructEdge, StructEdgeKind, Symbol, SymbolId, SymbolKind,
 };
@@ -212,10 +212,17 @@ fn within(outer_start: u32, outer_end: u32, r: &ByteRange) -> bool {
 
 /// Returns a copy of `flow` enriched with the facts that fall inside it.
 pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -> FlowGraph {
+    let refs: Vec<&SemanticRef> = facts.refs.iter().collect();
+    let locals: Vec<&LocalTypeFact> = facts.locals.iter().collect();
+    enrich_flow_with(flow, &refs, &locals, locator)
+}
+
+/// [`enrich_flow`] over candidate facts (all of them, or those of the flow's file).
+pub fn enrich_flow_with(flow: &FlowGraph, refs: &[&SemanticRef], locals: &[&LocalTypeFact], locator: &Locator) -> FlowGraph {
     let mut flow = flow.clone();
     let file = flow.span.file.clone();
     let (fs, fe) = (flow.span.start_byte, flow.span.end_byte);
-    let refs: Vec<_> = facts.refs.iter().filter(|r| r.site.file == file && within(fs, fe, &r.site)).collect();
+    let refs: Vec<&SemanticRef> = refs.iter().copied().filter(|r| r.site.file == file && within(fs, fe, &r.site)).collect();
 
     for r in &refs {
         // The statement that contains the site: the smallest node span around it.
@@ -277,7 +284,7 @@ pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -
 
     // Inferred local types: fill `var:` pins, then the `use:` pins wired to them.
     let mut typed: Vec<(String, String, String)> = Vec::new();
-    for local in facts.locals.iter().filter(|l| l.site.file == file && within(fs, fe, &l.site)) {
+    for local in locals.iter().copied().filter(|l| l.site.file == file && within(fs, fe, &l.site)) {
         let pin_id = format!("var:{}", local.name);
         for node in flow.nodes.iter_mut().filter(|n| within(n.span.start_byte, n.span.end_byte, &local.site)) {
             if let Some(pin) = node.outputs.iter_mut().find(|p| p.id == pin_id && p.kind == PinKind::Data) {

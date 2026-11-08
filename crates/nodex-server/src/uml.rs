@@ -78,10 +78,9 @@ struct Inputs {
     name: String,
 }
 
-fn inputs(state: &AppState) -> Result<Inputs, (StatusCode, String)> {
-    let mut project = state.project.lock().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "project lock poisoned".to_owned()))?;
-    let graph = project.structure();
-    let knowledge = project.knowledge();
+async fn inputs(state: &Arc<AppState>) -> Result<Inputs, (StatusCode, String)> {
+    let (graph, knowledge) = crate::builds::graphs(state).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let project = state.project.lock().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "project lock poisoned".to_owned()))?;
     let units = project.units();
     let name = project.root().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     Ok(Inputs { graph, knowledge, units, name })
@@ -132,7 +131,7 @@ pub async fn diagram(State(state): State<Arc<AppState>>, Query(q): Query<UmlQuer
     let runtime = runtime_of(&state, q.kind, &opts);
     let events = runtime.as_ref().map(|(_, e)| *e).unwrap_or(0);
     let key = format!("diagram|{:?}|{}|{}|{events}", q.kind, serde_json::to_string(&scope).unwrap_or_default(), serde_json::to_string(&opts).unwrap_or_default());
-    let inputs = inputs(&state)?;
+    let inputs = inputs(&state).await?;
     if let Some(hit) = state.uml.get(&key, &inputs.graph) {
         return Ok(hit);
     }
@@ -155,7 +154,7 @@ pub async fn diagram(State(state): State<Arc<AppState>>, Query(q): Query<UmlQuer
 pub async fn availability(State(state): State<Arc<AppState>>, Query(q): Query<AvailabilityQuery>) -> ApiResult {
     let scope: UmlScope = serde_json::from_str(&q.scope).map_err(|e| bad("scope", e))?;
     let key = format!("availability|{}", serde_json::to_string(&scope).unwrap_or_default());
-    let inputs = inputs(&state)?;
+    let inputs = inputs(&state).await?;
     if let Some(hit) = state.uml.get(&key, &inputs.graph) {
         return Ok(hit);
     }

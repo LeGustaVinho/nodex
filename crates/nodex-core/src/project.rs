@@ -1,6 +1,6 @@
 //! The project model: files on disk lowered by language frontends.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -56,16 +56,127 @@ pub struct Project {
     root: PathBuf,
     frontends: Vec<Arc<dyn LanguageFrontend>>,
     descriptors: Vec<ProjectDescriptor>,
-    files: BTreeMap<String, FileEntry>,
+    files: BTreeMap<String, Arc<FileEntry>>,
     structure: Option<Arc<StructureGraph>>,
     knowledge: Option<Arc<ProjectKnowledge>>,
     semantic: BTreeMap<Language, SemanticEntry>,
     locator: Option<Arc<semantic::Locator>>,
+    /// Bumped whenever the structure graph must be built again (files, semantic facts).
+    version: u64,
+    /// Where each flow graph lives: symbol → (file, index in its flows). Built on first use.
+    flow_index: Option<HashMap<String, (String, usize)>>,
 }
 
 struct SemanticEntry {
     status: SemanticStatus,
     facts: Option<Arc<SemanticFacts>>,
+    /// Indexes into `facts.refs` and `facts.locals`, by file, for enriching one flow.
+    by_file: Arc<HashMap<String, (Vec<usize>, Vec<usize>)>>,
+}
+
+/// What building the structure graph and the knowledge needs: a snapshot taken under the
+/// project lock in a moment, so the build itself ([`BuildInput::build`]) runs without it.
+pub struct BuildInput {
+    version: u64,
+    root: PathBuf,
+    files: Vec<Arc<FileEntry>>,
+    descriptors: Vec<ProjectDescriptor>,
+    semantic: Vec<(Language, Arc<SemanticFacts>)>,
+}
+
+/// A built structure graph, knowledge and locator, for [`Project::install_build`].
+pub struct Built {
+    version: u64,
+    structure: Arc<StructureGraph>,
+    knowledge: Arc<ProjectKnowledge>,
+    locator: Arc<semantic::Locator>,
+}
+
+impl BuildInput {
+    /// Links the files, applies the semantic facts and derives the knowledge.
+    pub fn build(self) -> Built {
+        let files: Vec<&FileIr> = self.files.iter().map(|f| &f.ir).collect();
+        let packages: Vec<(Language, PackageRef)> = self
+            .descriptors
+            .iter()
+            .flat_map(|d| d.packages.iter().map(move |p| (d.language, p.clone())))
+            .collect();
+        let total = crate::perf::phase("structure");
+        let timer = crate::perf::phase("structure.link");
+        let mut graph = link::link(&files, &packages);
+        timer.finish(format_args!("({} symbols, {} edges)", graph.symbols.len(), graph.edges.len()));
+
+        // Semantic facts replace guesses: exact bases, calls, events.
+        let locator = Arc::new(semantic::Locator::new(&graph.symbols));
+        let mut constructs = knowledge::Constructs::new();
+        let mut calls: Vec<knowledge::RawCallSite> = Vec::new();
+        let timer = crate::perf::phase("structure.semantic");
+        let mut known: std::collections::HashSet<String> = graph.symbols.iter().map(|s| s.id.clone()).collect();
+        for (language, facts) in &self.semantic {
+            let derived = semantic::edges(facts, &locator, *language);
+            for (site, owner, target) in derived.calls {
+                calls.push(knowledge::RawCallSite { file: site.file, start: site.start, end: site.end, owner, target });
+            }
+            for (site, ty) in derived.constructs {
+                constructs.entry(site.file).or_default().push((site.start, site.end, ty));
+            }
+            graph.edges.retain(|e| {
+                !(matches!(e.kind, StructEdgeKind::Inherits | StructEdgeKind::Implements) && derived.typed_bases.contains(&e.from))
+            });
+            for ext in derived.externals {
+                if known.insert(ext.id.clone()) {
+                    graph.symbols.push(ext);
+                }
+            }
+            let mut present: std::collections::HashSet<StructEdge> = graph.edges.iter().cloned().collect();
+            for e in derived.edges {
+                if present.insert(e.clone()) {
+                    graph.edges.push(e);
+                }
+            }
+        }
+        timer.finish(format_args!("({} languages with facts)", self.semantic.len()));
+        // Knowledge: routes, HTTP calls, DI, tests, throws, complexity.
+        let package_roots: Vec<String> = self
+            .descriptors
+            .iter()
+            .flat_map(|d| d.manifests.iter())
+            .filter_map(|m| m.parent().and_then(|dir| relative_to(&self.root, dir)))
+            .collect();
+        let timer = crate::perf::phase("structure.knowledge");
+        let derived = knowledge::build(&graph, &files, &constructs, &calls, &package_roots);
+        timer.finish("");
+        let timer = crate::perf::phase("structure.merge");
+        for ext in derived.externals {
+            if known.insert(ext.id.clone()) {
+                graph.symbols.push(ext);
+            }
+        }
+        // Exact relations already in the graph win over a derived copy (same endpoints and kind).
+        let mut present: std::collections::HashSet<(String, String, StructEdgeKind)> =
+            graph.edges.iter().map(|e| (e.from.clone(), e.to.clone(), e.kind)).collect();
+        for e in derived.edges {
+            if present.insert((e.from.clone(), e.to.clone(), e.kind)) {
+                graph.edges.push(e);
+            }
+        }
+
+        // Drop external types no edge refers to any more (name-based guesses replaced above).
+        let referenced: std::collections::HashSet<&str> =
+            graph.edges.iter().flat_map(|e| [e.from.as_str(), e.to.as_str()]).collect();
+        let orphans: std::collections::HashSet<String> = graph
+            .symbols
+            .iter()
+            .filter(|s| s.id.starts_with("ext:") && !referenced.contains(s.id.as_str()))
+            .map(|s| s.id.clone())
+            .collect();
+        graph.symbols.retain(|s| !orphans.contains(&s.id));
+        timer.finish("");
+        total.finish(format_args!("({} symbols, {} edges)", graph.symbols.len(), graph.edges.len()));
+
+        Built { version: self.version, structure: Arc::new(graph), knowledge: Arc::new(derived.project), locator }
+    }
+
 }
 
 impl Project {
@@ -84,6 +195,8 @@ impl Project {
             knowledge: None,
             semantic: BTreeMap::new(),
             locator: None,
+            version: 0,
+            flow_index: None,
         };
         // Detection (each language walks the top of the tree for its manifests) needs nothing
         // from the files, and lowering needs nothing from it: both run at once, the languages too.
@@ -97,7 +210,7 @@ impl Project {
             || project.lower_all(),
         );
         project.descriptors = descriptors;
-        project.files.extend(lowered);
+        project.files.extend(lowered.into_iter().map(|(rel, entry)| (rel, Arc::new(entry))));
         Ok(project)
     }
 
@@ -132,6 +245,8 @@ impl Project {
             knowledge: None,
             semantic: BTreeMap::new(),
             locator: None,
+            version: 0,
+            flow_index: None,
         }
     }
 
@@ -156,15 +271,7 @@ impl Project {
 
     /// Converts an absolute path inside the root to a project-relative path with `/`.
     pub fn relative(&self, path: &Path) -> Option<String> {
-        let rel = path.strip_prefix(&self.root).ok()?;
-        let mut parts = Vec::new();
-        for c in rel.components() {
-            match c {
-                Component::Normal(s) => parts.push(s.to_str()?.to_owned()),
-                _ => return None,
-            }
-        }
-        Some(parts.join("/"))
+        relative_to(&self.root, path)
     }
 
     /// Resolves a project-relative path to an absolute one, refusing anything outside the root.
@@ -213,7 +320,7 @@ impl Project {
             if self.files.get(&rel).is_some_and(|old| old.ir == entry.ir) {
                 return None;
             }
-            self.files.insert(rel.clone(), entry);
+            self.files.insert(rel.clone(), Arc::new(entry));
         } else if self.files.remove(&rel).is_none() {
             return None;
         }
@@ -221,21 +328,29 @@ impl Project {
         Some(rel)
     }
 
-    pub fn summary(&self) -> ProjectSummary {
-        let mut languages: Vec<Language> = self.files.values().map(|f| f.language).collect();
-        languages.sort();
-        languages.dedup();
-        let name = self
-            .descriptors
+    /// Display name: the first manifest's (`.csproj`, `package.json`, crate), else the folder's.
+    pub fn name(&self) -> String {
+        self.descriptors
             .first()
             .map(|d| d.name.clone())
             .or_else(|| self.root.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
+
+    /// The languages of the project's files, sorted.
+    pub fn languages(&self) -> Vec<Language> {
+        let mut languages: Vec<Language> = self.files.values().map(|f| f.language).collect();
+        languages.sort();
+        languages.dedup();
+        languages
+    }
+
+    pub fn summary(&self) -> ProjectSummary {
         ProjectSummary {
             open: self.is_open(),
-            name,
+            name: self.name(),
+            languages: self.languages(),
             root: self.root.display().to_string(),
-            languages,
             flavors: self.descriptors.iter().flat_map(|d| d.flavors.clone()).collect(),
             packages: self.descriptors.iter().flat_map(|d| d.packages.clone()).collect(),
             semantic: self.semantic.values().map(|e| e.status.clone()).collect(),
@@ -253,115 +368,72 @@ impl Project {
         }
     }
 
-    /// The linked structure graph (cached until a file changes).
+    /// The linked structure graph (cached until a file changes). Builds it here when needed;
+    /// a server takes [`Project::build_input`] instead and builds without holding the project.
     pub fn structure(&mut self) -> Arc<StructureGraph> {
         if let Some(s) = &self.structure {
             return s.clone();
         }
-        let files: Vec<&FileIr> = self.files.values().map(|f| &f.ir).collect();
-        let packages: Vec<(Language, PackageRef)> = self
-            .descriptors
-            .iter()
-            .flat_map(|d| d.packages.iter().map(move |p| (d.language, p.clone())))
-            .collect();
-        let total = crate::perf::phase("structure");
-        let timer = crate::perf::phase("structure.link");
-        let mut graph = link::link(&files, &packages);
-        timer.finish(format_args!("({} symbols, {} edges)", graph.symbols.len(), graph.edges.len()));
-
-        // Semantic facts replace guesses: exact bases, calls, events.
-        let locator = Arc::new(semantic::Locator::new(&graph.symbols));
-        let mut constructs = knowledge::Constructs::new();
-        let mut calls: Vec<knowledge::RawCallSite> = Vec::new();
-        let timer = crate::perf::phase("structure.semantic");
-        let mut known: std::collections::HashSet<String> = graph.symbols.iter().map(|s| s.id.clone()).collect();
-        for (language, entry) in &self.semantic {
-            let Some(facts) = &entry.facts else { continue };
-            let derived = semantic::edges(facts, &locator, *language);
-            for (site, owner, target) in derived.calls {
-                calls.push(knowledge::RawCallSite { file: site.file, start: site.start, end: site.end, owner, target });
-            }
-            for (site, ty) in derived.constructs {
-                constructs.entry(site.file).or_default().push((site.start, site.end, ty));
-            }
-            graph.edges.retain(|e| {
-                !(matches!(e.kind, StructEdgeKind::Inherits | StructEdgeKind::Implements) && derived.typed_bases.contains(&e.from))
-            });
-            for ext in derived.externals {
-                if known.insert(ext.id.clone()) {
-                    graph.symbols.push(ext);
-                }
-            }
-            let mut present: std::collections::HashSet<StructEdge> = graph.edges.iter().cloned().collect();
-            for e in derived.edges {
-                if present.insert(e.clone()) {
-                    graph.edges.push(e);
-                }
-            }
-        }
-        timer.finish(format_args!("({} languages with facts)", self.semantic.values().filter(|e| e.facts.is_some()).count()));
-        // Knowledge: routes, HTTP calls, DI, tests, throws, complexity.
-        let package_roots: Vec<String> = self
-            .descriptors
-            .iter()
-            .flat_map(|d| d.manifests.iter())
-            .filter_map(|m| m.parent().and_then(|dir| self.relative(dir)))
-            .collect();
-        let timer = crate::perf::phase("structure.knowledge");
-        let derived = knowledge::build(&graph, &files, &constructs, &calls, &package_roots);
-        timer.finish("");
-        let timer = crate::perf::phase("structure.merge");
-        for ext in derived.externals {
-            if known.insert(ext.id.clone()) {
-                graph.symbols.push(ext);
-            }
-        }
-        // Exact relations already in the graph win over a derived copy (same endpoints and kind).
-        let mut present: std::collections::HashSet<(String, String, StructEdgeKind)> =
-            graph.edges.iter().map(|e| (e.from.clone(), e.to.clone(), e.kind)).collect();
-        for e in derived.edges {
-            if present.insert((e.from.clone(), e.to.clone(), e.kind)) {
-                graph.edges.push(e);
-            }
-        }
-
-        // Drop external types no edge refers to any more (name-based guesses replaced above).
-        let referenced: std::collections::HashSet<&str> =
-            graph.edges.iter().flat_map(|e| [e.from.as_str(), e.to.as_str()]).collect();
-        let orphans: std::collections::HashSet<String> = graph
-            .symbols
-            .iter()
-            .filter(|s| s.id.starts_with("ext:") && !referenced.contains(s.id.as_str()))
-            .map(|s| s.id.clone())
-            .collect();
-        graph.symbols.retain(|s| !orphans.contains(&s.id));
-        timer.finish("");
-        total.finish(format_args!("({} symbols, {} edges)", graph.symbols.len(), graph.edges.len()));
-
-        let graph = Arc::new(graph);
-        self.knowledge = Some(Arc::new(derived.project));
-        self.locator = Some(locator);
-        self.structure = Some(graph.clone());
+        let built = self.build_input().build();
+        let graph = built.structure.clone();
+        self.install_build(built);
         graph
+    }
+
+    /// The structure graph and knowledge, when they are current.
+    pub fn built(&self) -> Option<(Arc<StructureGraph>, Arc<ProjectKnowledge>)> {
+        Some((self.structure.clone()?, self.knowledge.clone()?))
+    }
+
+    /// Changes each time the structure graph must be built again.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// A snapshot of what building the graphs needs (cheap: shared file entries).
+    pub fn build_input(&self) -> BuildInput {
+        BuildInput {
+            version: self.version,
+            root: self.root.clone(),
+            files: self.files.values().cloned().collect(),
+            descriptors: self.descriptors.clone(),
+            semantic: self.semantic.iter().filter_map(|(l, e)| Some((*l, e.facts.clone()?))).collect(),
+        }
+    }
+
+    /// Keeps a build if nothing changed since its input was taken; false when it is stale.
+    pub fn install_build(&mut self, built: Built) -> bool {
+        if built.version != self.version {
+            return false;
+        }
+        self.structure = Some(built.structure);
+        self.knowledge = Some(built.knowledge);
+        self.locator = Some(built.locator);
+        true
     }
 
     /// Project-wide knowledge: routes, HTTP calls, DI, configuration, data models and per-symbol
     /// metrics (computed with the structure graph).
     pub fn knowledge(&mut self) -> Arc<ProjectKnowledge> {
-        if self.knowledge.is_none() {
-            self.structure = None;
-            self.structure();
-        }
+        self.structure();
         self.knowledge.clone().unwrap_or_default()
     }
 
     /// The flow graph of `symbol`, enriched with semantic facts when available.
     pub fn flow(&mut self, symbol: &str) -> Option<FlowGraph> {
-        let (language, raw) = self
-            .files
-            .values()
-            .find_map(|f| f.ir.flows.iter().find(|g| g.symbol == symbol).map(|g| (f.language, g.clone())))?;
-        let Some(facts) = self.semantic.get(&language).and_then(|e| e.facts.clone()) else {
+        let index = self.flow_index.get_or_insert_with(|| {
+            let mut index = HashMap::new();
+            for (rel, f) in &self.files {
+                for (i, g) in f.ir.flows.iter().enumerate() {
+                    index.entry(g.symbol.clone()).or_insert_with(|| (rel.clone(), i));
+                }
+            }
+            index
+        });
+        let (rel, i) = index.get(symbol)?;
+        let entry = self.files.get(rel)?;
+        let (language, raw) = (entry.language, entry.ir.flows.get(*i)?.clone());
+        let Some((facts, by_file)) = self.semantic.get(&language).and_then(|e| Some((e.facts.clone()?, e.by_file.clone()))) else {
             let mut raw = raw;
             crate::operations::recognize_flow(&mut raw);
             return Some(raw);
@@ -370,7 +442,10 @@ impl Project {
             self.structure();
         }
         let locator = self.locator.clone()?;
-        let mut flow = semantic::enrich_flow(&raw, &facts, &locator);
+        let (refs, locals) = by_file.get(&raw.span.file).map(|(r, l)| (r.as_slice(), l.as_slice())).unwrap_or((&[], &[]));
+        let refs: Vec<_> = refs.iter().map(|&i| &facts.refs[i]).collect();
+        let locals: Vec<_> = locals.iter().map(|&i| &facts.locals[i]).collect();
+        let mut flow = semantic::enrich_flow_with(&raw, &refs, &locals, &locator);
         crate::operations::recognize_flow(&mut flow);
         Some(flow)
     }
@@ -398,18 +473,22 @@ impl Project {
         self.frontends.iter().filter(|f| used.contains(&f.id())).cloned().collect()
     }
 
-    /// Records progress of a semantic provider (loading, unavailable).
-    pub fn set_semantic_status(&mut self, language: Language, state: SemanticState, detail: impl Into<String>) {
+    /// Records progress of a semantic provider (loading, unavailable). Returns true when the
+    /// structure graph changed (facts that were in use are dropped).
+    pub fn set_semantic_status(&mut self, language: Language, state: SemanticState, detail: impl Into<String>) -> bool {
         let entry = self.semantic.entry(language).or_insert_with(|| SemanticEntry {
             status: SemanticStatus { language, state, detail: String::new(), messages: Vec::new() },
             facts: None,
+            by_file: Arc::default(),
         });
         entry.status.state = state;
         entry.status.detail = detail.into();
-        if state == SemanticState::Unavailable {
-            entry.facts = None;
+        if state == SemanticState::Unavailable && entry.facts.take().is_some() {
+            entry.by_file = Arc::default();
             self.invalidate();
+            return true;
         }
+        false
     }
 
     /// Installs fresh facts for a language.
@@ -420,7 +499,14 @@ impl Project {
             detail: facts.source.clone(),
             messages: facts.messages.clone(),
         };
-        self.semantic.insert(language, SemanticEntry { status, facts: Some(Arc::new(facts)) });
+        let mut by_file: HashMap<String, (Vec<usize>, Vec<usize>)> = HashMap::new();
+        for (i, r) in facts.refs.iter().enumerate() {
+            by_file.entry(r.site.file.clone()).or_default().0.push(i);
+        }
+        for (i, l) in facts.locals.iter().enumerate() {
+            by_file.entry(l.site.file.clone()).or_default().1.push(i);
+        }
+        self.semantic.insert(language, SemanticEntry { status, facts: Some(Arc::new(facts)), by_file: Arc::new(by_file) });
         self.invalidate();
     }
 
@@ -428,6 +514,8 @@ impl Project {
         self.structure = None;
         self.knowledge = None;
         self.locator = None;
+        self.flow_index = None;
+        self.version += 1;
     }
 
     /// Every flow graph of the project (syntax-only; node IDs and spans match enriched flows).
@@ -458,6 +546,19 @@ impl Project {
 fn is_unit_manifest(path: &Path) -> bool {
     let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     name.ends_with(".csproj") || name == "package.json" || name == "Cargo.toml"
+}
+
+/// `path` relative to `root`, with `/`.
+fn relative_to(root: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(root).ok()?;
+    let mut parts = Vec::new();
+    for c in rel.components() {
+        match c {
+            Component::Normal(s) => parts.push(s.to_str()?.to_owned()),
+            _ => return None,
+        }
+    }
+    Some(parts.join("/"))
 }
 
 /// Canonicalizes without the `\\?\` prefix Windows adds, so paths stay readable.

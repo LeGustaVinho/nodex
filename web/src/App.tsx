@@ -96,7 +96,10 @@ function useLiveUpdates() {
             const keys =
               event.type === "graph-changed"
                 ? ["structure", "knowledge", "project", "flow", "source", "uml", "uml-availability"]
-                : ["structure", "knowledge", "project", "flow", "uml", "uml-availability"];
+                : event.data.graph
+                  ? ["structure", "knowledge", "project", "flow", "uml", "uml-availability"]
+                  : // Only the analysis status (shown from the project summary) changed.
+                    ["project"];
             for (const key of keys) {
               void queryClient.invalidateQueries({ queryKey: [key] });
             }

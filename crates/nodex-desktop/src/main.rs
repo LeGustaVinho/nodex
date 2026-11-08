@@ -162,10 +162,10 @@ fn follow_project(app: &AppHandle, state: Arc<AppState>) {
         loop {
             match events.recv().await {
                 Ok(ServerEvent::ProjectChanged) => {
-                    let summary = state.project.lock().map(|p| p.summary()).ok();
-                    let title = match summary {
-                        Some(s) if s.open => format!("{} — Nodex", s.name),
-                        _ => "Nodex".to_owned(),
+                    let name = state.project.lock().ok().filter(|p| p.is_open()).map(|p| p.name());
+                    let title = match name {
+                        Some(name) => format!("{name} — Nodex"),
+                        None => "Nodex".to_owned(),
                     };
                     if let Some(w) = app.get_webview_window(MAIN) {
                         let _ = w.set_title(&title);

@@ -46,6 +46,7 @@ pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher>
                 state.run.files_changed(&state, &changed_paths);
                 if !changed.is_empty() {
                     tracing::info!(files = ?changed, "re-lowered");
+                    crate::builds::prebuild(&state);
                     let _ = state.events.send(ServerEvent::GraphChanged { files: changed });
                 }
             }

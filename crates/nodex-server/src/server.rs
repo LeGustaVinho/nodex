@@ -56,8 +56,7 @@ pub async fn start(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         Some(path) => {
             let started = Instant::now();
             let project = tokio::task::spawn_blocking(move || Project::open(&path, frontends())).await??;
-            let summary = project.summary();
-            tracing::info!("loaded {} ({} files) in {:?}", summary.name, summary.files.len(), started.elapsed());
+            tracing::info!("loaded {} ({} files) in {:?}", project.root().display(), project.files().count(), started.elapsed());
             project
         }
         None => Project::empty(frontends()),
@@ -72,6 +71,7 @@ pub async fn start(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         if let Ok(mut w) = state.watcher.lock() {
             *w = Some(watcher);
         }
+        crate::builds::prebuild(&state);
         semantic_worker::spawn(&state);
         if let Ok(project) = state.project.lock() {
             projects::remember(&project);

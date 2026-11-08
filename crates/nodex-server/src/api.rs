@@ -24,20 +24,12 @@ pub async fn project(State(state): State<Arc<AppState>>) -> ApiResult {
 }
 
 pub async fn structure(State(state): State<Arc<AppState>>) -> ApiResult {
-    let graph = state.project.lock().map_err(poisoned)?.structure();
-    timed_json("api.structure.json", &*graph)
+    let bytes = crate::builds::structure_json(&state).await.map_err(internal)?;
+    Ok(([("content-type", "application/json")], bytes).into_response())
 }
 
 pub async fn knowledge(State(state): State<Arc<AppState>>) -> ApiResult {
-    let knowledge = state.project.lock().map_err(poisoned)?.knowledge();
-    timed_json("api.knowledge.json", &*knowledge)
-}
-
-/// Serializes a large payload, logging how long it took and its size.
-fn timed_json<T: serde::Serialize + ?Sized>(phase: &'static str, value: &T) -> ApiResult {
-    let timer = nodex_core::perf::phase(phase);
-    let bytes = serde_json::to_vec(value).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    timer.finish(format_args!("({:.1} MB)", bytes.len() as f64 / 1_048_576.0));
+    let bytes = crate::builds::knowledge_json(&state).await.map_err(internal)?;
     Ok(([("content-type", "application/json")], bytes).into_response())
 }
 
@@ -47,6 +39,8 @@ pub struct FlowQuery {
 }
 
 pub async fn flow(State(state): State<Arc<AppState>>, Query(q): Query<FlowQuery>) -> ApiResult {
+    // Enriching a flow needs the built graph (its locator): build it off the lock first.
+    crate::builds::graphs(&state).await.map_err(internal)?;
     let flow = state.project.lock().map_err(poisoned)?.flow(&q.symbol).ok_or_else(|| not_found("flow"))?;
     Ok(Json(flow).into_response())
 }
@@ -384,6 +378,15 @@ pub async fn ws(State(state): State<Arc<AppState>>, upgrade: WebSocketUpgrade) -
 
 async fn client(mut socket: WebSocket, state: Arc<AppState>) {
     let mut events = state.events.subscribe();
+    // A folder opened before this browser connected (the desktop app's command line): say so,
+    // or the browser would miss `project-loading`.
+    let loading = state.loading.lock().ok().and_then(|l| l.clone());
+    if let Some(path) = loading
+        && let Ok(text) = serde_json::to_string(&crate::ServerEvent::ProjectLoading { path })
+        && socket.send(Message::Text(text.into())).await.is_err()
+    {
+        return;
+    }
     loop {
         tokio::select! {
             event = events.recv() => match event {

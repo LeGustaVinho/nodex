@@ -179,7 +179,8 @@ export const api = {
 
 export type ServerEvent =
   | { type: "graph-changed"; data: { files: string[] } }
-  | { type: "semantic-changed" }
+  /** `graph` is false when only the analysis status changed (the graphs are the same). */
+  | { type: "semantic-changed"; data: { graph: boolean } }
   | { type: "run-status"; data: RunStatus }
   | { type: "run-output"; data: { lines: OutputLine[] } }
   | { type: "trace-frame"; data: TraceFrame }

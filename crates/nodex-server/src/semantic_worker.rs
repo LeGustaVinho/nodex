@@ -42,10 +42,11 @@ pub fn spawn(state: &Arc<AppState>) {
                 if !current() {
                     return;
                 }
-                if let Ok(mut p) = state.project.lock() {
-                    p.set_semantic_status(language, s, detail);
+                let graph = state.project.lock().is_ok_and(|mut p| p.set_semantic_status(language, s, detail));
+                if graph {
+                    crate::builds::prebuild(&state);
                 }
-                let _ = state.events.send(ServerEvent::SemanticChanged);
+                let _ = state.events.send(ServerEvent::SemanticChanged { graph });
             };
             set(SemanticState::Loading, "loading the project for semantic analysis…".into());
             let mut provider = match frontend.semantic(&root) {
@@ -74,7 +75,8 @@ pub fn spawn(state: &Arc<AppState>) {
                             p.apply_semantic(language, facts);
                         }
                         applying.finish(format_args!("({language:?})"));
-                        let _ = state.events.send(ServerEvent::SemanticChanged);
+                        crate::builds::prebuild(&state);
+                        let _ = state.events.send(ServerEvent::SemanticChanged { graph: true });
                     }
                     Err(reason) => {
                         tracing::warn!(?language, %reason, "semantic analysis failed");

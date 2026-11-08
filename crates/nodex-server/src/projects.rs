@@ -189,11 +189,10 @@ pub fn recent() -> Vec<RecentProject> {
 /// Puts the project first in the recent list.
 pub fn remember(project: &Project) {
     let Some(file) = recent_file() else { return };
-    let summary = project.summary();
     let entry = RecentProject {
         path: display(project.root()),
-        name: summary.name,
-        languages: summary.languages.iter().map(|l| format!("{l:?}").to_lowercase()).collect(),
+        name: project.name(),
+        languages: project.languages().iter().map(|l| format!("{l:?}").to_lowercase()).collect(),
         opened_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
     };
     let mut list: Vec<RecentProject> = recent().into_iter().filter(|r| !same_path(&r.path, &entry.path)).collect();
@@ -218,6 +217,9 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
         return Err(format!("{} is not a folder", dir.display()));
     }
     let _ = state.events.send(ServerEvent::ProjectLoading { path: display(&dir) });
+    if let Ok(mut loading) = state.loading.lock() {
+        *loading = Some(display(&dir));
+    }
     state.run.stop();
     let _ = state.debug.command(crate::debugger::DebugCommand::Stop);
     let frontends = state.frontends.clone();
@@ -226,6 +228,9 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("cannot open the project: {e}"));
+    if let Ok(mut loading) = state.loading.lock() {
+        *loading = None;
+    }
     let project = match loaded {
         Ok(p) => p,
         Err(e) => {
@@ -233,17 +238,17 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
             return Err(e);
         }
     };
-    tracing::info!(root = %project.root().display(), files = project.summary().files.len(), "project opened");
+    tracing::info!(root = %project.root().display(), files = project.files().count(), "project opened");
     remember(&project);
     let installing = nodex_core::perf::phase("open.install");
     install(state, project)?;
     installing.finish("");
     timer.finish("(until project-changed)");
-    let _ = state.events.send(ServerEvent::ProjectChanged);
     Ok(())
 }
 
-/// Makes `project` the current one and restarts what watches it.
+/// Makes `project` the current one, tells browsers (`project-changed`), and restarts what
+/// watches it: the file watcher, the semantic workers and the background build.
 pub fn install(state: &Arc<AppState>, project: Project) -> Result<(), String> {
     state.generation.fetch_add(1, Ordering::SeqCst);
     // Old semantic workers exit when their channel closes.
@@ -257,9 +262,12 @@ pub fn install(state: &Arc<AppState>, project: Project) -> Result<(), String> {
     state.run.reset();
     let open = project.is_open();
     *state.project.lock().map_err(|_| "project lock poisoned".to_owned())? = project;
+    // Browsers start fetching now; the semantic workers' first events come after this one.
+    let _ = state.events.send(ServerEvent::ProjectChanged);
     if !open {
         return Ok(());
     }
+    crate::builds::prebuild(state);
     let watcher = watch::spawn(state.clone()).map_err(|e| format!("cannot watch the project folder: {e}"))?;
     if let Ok(mut w) = state.watcher.lock() {
         *w = Some(watcher);
@@ -272,9 +280,7 @@ pub fn install(state: &Arc<AppState>, project: Project) -> Result<(), String> {
 pub fn close(state: &Arc<AppState>) -> Result<(), String> {
     state.run.stop();
     let _ = state.debug.command(crate::debugger::DebugCommand::Stop);
-    install(state, Project::empty(state.frontends.clone()))?;
-    let _ = state.events.send(ServerEvent::ProjectChanged);
-    Ok(())
+    install(state, Project::empty(state.frontends.clone()))
 }
 
 #[cfg(test)]

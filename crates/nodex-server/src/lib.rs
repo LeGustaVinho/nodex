@@ -8,6 +8,7 @@
 pub mod adapters;
 pub mod api;
 pub mod assets;
+pub mod builds;
 pub mod debugger;
 pub mod environment;
 pub mod logging;
@@ -44,7 +45,8 @@ pub enum ServerEvent {
     /// Files changed on disk and were re-lowered.
     GraphChanged { files: Vec<String> },
     /// Semantic analysis progressed (loading, ready, unavailable) or produced new facts.
-    SemanticChanged,
+    /// `graph` is false when only the status changed and the graphs are the same.
+    SemanticChanged { graph: bool },
     /// The run state changed (preparing, running, exited, failed).
     RunStatus(runner::RunStatus),
     /// New lines of build or program output.
@@ -88,6 +90,14 @@ pub struct AppState {
     pub debug: debugger::DebugManager,
     /// Recent UML diagrams.
     pub uml: uml::UmlCache,
+    /// One structure build at a time ([`builds::graphs`]).
+    pub build_lock: tokio::sync::Mutex<()>,
+    /// JSON of the current structure graph and knowledge.
+    pub json: builds::JsonCache,
+    /// The folder being opened, if any (told to browsers that connect meanwhile).
+    pub loading: Mutex<Option<String>>,
+    /// The runtime the server started on, for background builds started from other threads.
+    pub runtime: Option<tokio::runtime::Handle>,
 }
 
 impl AppState {
@@ -109,6 +119,10 @@ impl AppState {
             run: runner::RunManager::default(),
             debug: debugger::DebugManager::default(),
             uml: uml::UmlCache::default(),
+            build_lock: tokio::sync::Mutex::new(()),
+            json: builds::JsonCache::default(),
+            loading: Mutex::new(None),
+            runtime: tokio::runtime::Handle::try_current().ok(),
         })
     }
 
