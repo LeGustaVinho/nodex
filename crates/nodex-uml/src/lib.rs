@@ -341,22 +341,27 @@ impl std::error::Error for UmlError {}
 pub fn build(input: &UmlInput, kind: UmlKind, scope: &UmlScope, opts: &UmlOptions) -> Result<UmlDiagram, UmlError> {
     let index = Index::new(input.graph, input.knowledge);
     let scoped = Scoped::resolve(&index, scope)?;
+    Ok(build_scoped(&index, &scoped, input, kind, scope, opts))
+}
+
+/// Builds one diagram over an index and a scope already resolved (availability builds several).
+pub(crate) fn build_scoped(index: &Index, scoped: &Scoped, input: &UmlInput, kind: UmlKind, scope: &UmlScope, opts: &UmlOptions) -> UmlDiagram {
     let mut diagram = match kind {
-        UmlKind::Class => class::build(&index, &scoped, opts),
-        UmlKind::Package => package::build(&index, &scoped, opts),
-        UmlKind::Component => component::build(&index, &scoped, input, opts),
-        UmlKind::Activity => activity::build(&index, &scoped, scope, input, opts),
-        UmlKind::Sequence if opts.runtime => sequence::recorded(&index, &scoped, input, opts),
-        UmlKind::Sequence => sequence::build(&index, &scoped, scope, input, opts),
-        UmlKind::State => state::build(&index, &scoped, input, opts),
-        UmlKind::UseCase => usecase::build(&index, &scoped, input, opts),
+        UmlKind::Class => class::build(index, scoped, opts),
+        UmlKind::Package => package::build(index, scoped, opts),
+        UmlKind::Component => component::build(index, scoped, input, opts),
+        UmlKind::Activity => activity::build(index, scoped, scope, input, opts),
+        UmlKind::Sequence if opts.runtime => sequence::recorded(index, scoped, input, opts),
+        UmlKind::Sequence => sequence::build(index, scoped, scope, input, opts),
+        UmlKind::State => state::build(index, scoped, input, opts),
+        UmlKind::UseCase => usecase::build(index, scoped, input, opts),
     };
     if diagram.title.is_empty() {
         diagram.title = scoped.title.clone();
     }
     diagram.stats.elements = diagram.elements.len() as u32;
     diagram.stats.relations = diagram.relations.len() as u32;
-    Ok(diagram)
+    diagram
 }
 
 pub(crate) fn empty(kind: UmlKind) -> UmlDiagram {

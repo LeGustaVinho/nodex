@@ -2,7 +2,7 @@
 
 use crate::index::Index;
 use crate::scope::Scoped;
-use crate::{UmlAvailability, UmlError, UmlInput, UmlKind, UmlKindAvailability, UmlOptions, UmlScope, build};
+use crate::{UmlAvailability, UmlError, UmlInput, UmlKind, UmlKindAvailability, UmlOptions, UmlScope, build_scoped};
 
 pub fn availability(input: &UmlInput, scope: &UmlScope) -> Result<UmlAvailability, UmlError> {
     let index = Index::new(input.graph, input.knowledge);
@@ -17,7 +17,8 @@ pub fn availability(input: &UmlInput, scope: &UmlScope) -> Result<UmlAvailabilit
         available: types > 0,
         reason: if types > 0 { format!("{types} types") } else { "No types in this scope".into() },
     });
-    let packages = build(input, UmlKind::Package, scope, &opts).map(|d| d.elements.iter().filter(|e| e.kind == "package").count()).unwrap_or(0);
+    // One index and one resolved scope for every count (each used to build its own).
+    let packages = build_scoped(&index, &scoped, input, UmlKind::Package, scope, &opts).elements.iter().filter(|e| e.kind == "package").count();
     kinds.push(UmlKindAvailability {
         kind: UmlKind::Package,
         available: packages > 0,
@@ -27,7 +28,7 @@ pub fn availability(input: &UmlInput, scope: &UmlScope) -> Result<UmlAvailabilit
             n => format!("{n} packages"),
         },
     });
-    let components = build(input, UmlKind::Component, scope, &opts).map(|d| d.elements.iter().filter(|e| e.kind == "component").count()).unwrap_or(0);
+    let components = build_scoped(&index, &scoped, input, UmlKind::Component, scope, &opts).elements.iter().filter(|e| e.kind == "component").count();
     kinds.push(UmlKindAvailability {
         kind: UmlKind::Component,
         available: components > 0,

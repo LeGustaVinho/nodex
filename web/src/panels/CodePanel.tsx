@@ -8,6 +8,7 @@ import type { Span } from "../gen/Span";
 import { monaco } from "../monaco";
 import { useUi } from "../store";
 import { useStructure } from "../views/Views";
+import { Loading, LoadingOverlay } from "../components/Loading";
 
 type Editor = Parameters<OnMount>[0];
 
@@ -183,6 +184,7 @@ export function CodePanel() {
         language={LANGUAGE_BY_EXT[ext] ?? "plaintext"}
         value={source.data ?? ""}
         onMount={onMount}
+        loading={<Loading label="Loading the code editor…" />}
         options={{
           readOnly: true,
           glyphMargin: true,
@@ -194,6 +196,8 @@ export function CodePanel() {
           wordWrap: "off",
         }}
       />
+      {source.isFetching && source.data === undefined && <LoadingOverlay label="Loading the file…" detail={file} />}
+      {source.isError && <div className="code-error">Could not read {file}: {String(source.error)}</div>}
       </div>
     </div>
   );

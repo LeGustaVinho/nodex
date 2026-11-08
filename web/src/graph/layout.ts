@@ -28,6 +28,52 @@ const CONTAINER_PADDING = "[top=34,left=12,bottom=12,right=12]";
  * stops the layout (its worker is terminated) and rejects with an `AbortError`.
  */
 export async function layoutGraph(g: GGraph, signal?: AbortSignal): Promise<Positions> {
+  const key = layoutSignature(g);
+  const cached = recent.get(key);
+  if (cached) {
+    // Most recently used last.
+    recent.delete(key);
+    recent.set(key, cached);
+    return cached;
+  }
+  const positions = await computeLayout(g, signal);
+  recent.set(key, positions);
+  if (recent.size > CACHE_SIZE) recent.delete(recent.keys().next().value!);
+  return positions;
+}
+
+/** Layouts of recent graphs: coming back to a namespace or a Blueprint skips ELK. */
+const recent = new Map<string, Positions>();
+const CACHE_SIZE = 24;
+
+/** Everything about a graph that changes its layout (ids, sizes, ports, nesting, layout edges). */
+export function layoutSignature(g: GGraph): string {
+  const parts: string[] = [g.direction, String(g.aspectRatio ?? "")];
+  for (const n of g.nodes) {
+    const ports = n.ports.map((p) => `${p.id}${p.side[0]}`).join(",");
+    const box = n.box ? `${n.box.width}x${n.box.height}+${n.box.offsetX}` : "";
+    const attach = n.attach ? `${n.attach.to}@${n.attach.dx},${n.attach.dy}` : "";
+    parts.push(`${n.id}|${n.width}x${n.height}|${box}|${n.parent ?? ""}|${n.container ? 1 : 0}|${attach}|${ports}`);
+  }
+  for (const e of g.edges) if (e.layout) parts.push(`${e.source}:${e.sourceHandle ?? ""}>${e.target}:${e.targetHandle ?? ""}`);
+  return hash(parts.join("\n"));
+}
+
+/** A 53-bit string hash (cyrb53), as text: keys stay small even for very large graphs. */
+function hash(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${text.length}:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+}
+
+async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions> {
   const laidOut = g.nodes.filter((n) => !n.attach);
   const nodeIds = new Set(laidOut.map((n) => n.id));
   const kids = new Map<string | undefined, GNode[]>();
@@ -168,7 +214,9 @@ export function packComponents(g: GGraph, positions: Positions, ratio: number, g
   const parts = new Map<string, string[]>();
   for (const r of roots) {
     const key = find(r);
-    parts.set(key, [...(parts.get(key) ?? []), r]);
+    const list = parts.get(key);
+    if (list) list.push(r);
+    else parts.set(key, [r]);
   }
   if (parts.size < 2) return;
   const boxes = [...parts.values()].map((members) => {

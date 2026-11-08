@@ -11,6 +11,7 @@ import { ConfidenceToggles } from "../components/ConfidenceToggles";
 import { saveFile } from "../desktop";
 import { errorText, toast } from "../toast";
 import { useStructure } from "./Views";
+import { Loading, LoadingBadge, LoadingOverlay } from "../components/Loading";
 
 type Mermaid = typeof import("mermaid").default;
 let loading: Promise<Mermaid> | null = null;
@@ -66,6 +67,8 @@ export function UmlView() {
   const { kind, scope, availability, available, diagram } = useUmlDiagram();
   const [svg, setSvg] = useState<string>("");
   const [renderError, setRenderError] = useState<string | null>(null);
+  /** Mermaid is drawing the current text (it runs on the main thread). */
+  const [drawing, setDrawing] = useState(false);
   const [showText, setShowText] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
@@ -83,7 +86,10 @@ export function UmlView() {
   useEffect(() => {
     if (!data?.mermaid) return;
     let cancelled = false;
-    void mermaid()
+    setDrawing(true);
+    // Let the overlay paint before Mermaid takes the main thread.
+    void new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)))
+      .then(() => mermaid())
       .then((m) => m.render(`uml-${++renders}`, data.mermaid))
       .then(({ svg }) => {
         if (cancelled) return;
@@ -92,7 +98,8 @@ export function UmlView() {
         setPicked(null);
         fitPending.current = true;
       })
-      .catch((e: unknown) => !cancelled && setRenderError(String(e)));
+      .catch((e: unknown) => !cancelled && setRenderError(String(e)))
+      .finally(() => !cancelled && setDrawing(false));
     return () => {
       cancelled = true;
     };
@@ -223,7 +230,7 @@ export function UmlView() {
             {data.stats.hidden > 0 && ` · ${data.stats.hidden} hidden`}
           </span>
         )}
-        {(diagram.isFetching || availability.isFetching) && <span className="muted small">updating…</span>}
+        {svg && (diagram.isFetching || availability.isFetching || drawing) && <LoadingBadge label="updating…" />}
         <span className="spacer" />
         <button onClick={() => ((adjusted.current = true), setView((v) => ({ ...v, scale: Math.min(4, v.scale * 1.25) })))} title="Zoom in">
           +
@@ -333,8 +340,11 @@ export function UmlView() {
               dangerouslySetInnerHTML={{ __html: svg }}
             />
           ) : (
-            <div className="empty">{diagram.isLoading || availability.isLoading ? "Drawing…" : ""}</div>
+            (diagram.isLoading || availability.isLoading || drawing) && (
+              <Loading label={drawing ? "Drawing the diagram…" : "Building the diagram…"} detail={data ? `${data.stats.elements} elements · ${data.stats.relations} relations` : undefined} />
+            )
           )}
+          {svg && drawing && <LoadingOverlay label="Drawing the diagram…" detail={data ? `${data.stats.elements} elements` : undefined} />}
         </div>
         {showText && data && <pre className="uml-text">{data.mermaid}</pre>}
         {pickedEl && <Details element={pickedEl} diagram={data!} relations={pickedRelations} onClose={() => setPicked(null)} />}

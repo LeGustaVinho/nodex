@@ -21,7 +21,9 @@ export function useUmlDiagram() {
   const diagram = useQuery({
     queryKey: ["uml", kind, key, JSON.stringify(opts)],
     queryFn: () => api.uml(kind, scope, opts),
-    enabled: available?.available ?? false,
+    // Asked for alongside the availability, not after it: the diagram is usually available, and
+    // waiting cost a round trip. A kind found unavailable shows its reason instead.
+    enabled: availability.isSuccess ? (available?.available ?? false) : !availability.isError,
     retry: false,
     placeholderData: (prev) => prev,
   });

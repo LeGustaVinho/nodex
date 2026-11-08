@@ -8,6 +8,7 @@ import { useCatalog } from "../catalog";
 import { callGraph } from "../graph/callGraph";
 import { flowToGraph } from "../graph/flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "../graph/structureGraph";
+import { useShallow } from "zustand/react/shallow";
 import { useUi } from "../store";
 import { ReplayBar } from "../panels/RunPanel";
 import { GraphCanvas } from "./GraphCanvas";
@@ -27,12 +28,14 @@ function indexOf(graph: StructureGraph): StructureIndex {
 export function useStructure() {
   const q = useQuery({ queryKey: ["structure"], queryFn: api.structure });
   const index = useMemo(() => (q.data ? indexOf(q.data) : undefined), [q.data]);
-  return { index, error: q.error };
+  return { index, error: q.error, isLoading: q.isLoading, refetch: q.refetch };
 }
 
 export function ArchitectureView() {
-  const { index } = useStructure();
-  const { setNamespace, setView, select, selection } = useUi();
+  const { index, error, refetch } = useStructure();
+  const { setNamespace, setView, select, selection } = useUi(
+    useShallow((s) => ({ setNamespace: s.setNamespace, setView: s.setView, select: s.select, selection: s.selection })),
+  );
   const graph = useMemo(() => (index ? perf.timed("architectureGraph", () => architectureGraph(index)) : undefined), [index]);
   return (
     <>
@@ -54,6 +57,9 @@ export function ArchitectureView() {
           }
         }}
         emptyText="No namespaces found."
+        loadingText="Loading the project structure…"
+        error={error}
+        onRetry={() => void refetch()}
       />
       {graph && graph.grouped > 0 && (
         <div className="canvas-note">
@@ -65,8 +71,10 @@ export function ArchitectureView() {
 }
 
 export function TypesView() {
-  const { index } = useStructure();
-  const { namespace, showUses, select, selection } = useUi();
+  const { index, error, refetch } = useStructure();
+  const { namespace, showUses, select, selection } = useUi(
+    useShallow((s) => ({ namespace: s.namespace, showUses: s.showUses, select: s.select, selection: s.selection })),
+  );
   const graph = useMemo(() => (index ? typesGraph(index, namespace, showUses) : undefined), [index, namespace, showUses]);
   const selectedType = selection?.kind === "symbol" ? (index?.owningType(selection.id)?.id ?? selection.id) : null;
   return (
@@ -80,13 +88,25 @@ export function TypesView() {
         select({ kind: "symbol", id: n.id }, s?.origins[0] ?? null);
       }}
       emptyText="No types in this namespace."
+      loadingText="Loading the types…"
+      error={error}
+      onRetry={() => void refetch()}
     />
   );
 }
 
 export function CallsView() {
-  const { index } = useStructure();
-  const { callFocus, callDepth, flowSymbol, selection, select, openFlow } = useUi();
+  const { index, error, refetch } = useStructure();
+  const { callFocus, callDepth, flowSymbol, selection, select, openFlow } = useUi(
+    useShallow((s) => ({
+      callFocus: s.callFocus,
+      callDepth: s.callDepth,
+      flowSymbol: s.flowSymbol,
+      selection: s.selection,
+      select: s.select,
+      openFlow: s.openFlow,
+    })),
+  );
   const focus = callFocus ?? flowSymbol ?? (selection?.kind === "symbol" ? selection.id : null);
   const graph = useMemo(() => (index && focus ? callGraph(index, focus, callDepth) : undefined), [index, focus, callDepth]);
   if (!focus) {
@@ -106,12 +126,25 @@ export function CallsView() {
         if (index?.byId.get(n.id)?.has_flow) openFlow(n.id);
       }}
       emptyText="No calls found. Calls appear once semantic analysis is ready."
+      loadingText="Loading the calls…"
+      error={error}
+      onRetry={() => void refetch()}
     />
   );
 }
 
 export function BlueprintView() {
-  const { flowSymbol, expanded, showDataWires, detail, select, selection, openFlow } = useUi();
+  const { flowSymbol, expanded, showDataWires, detail, select, selection, openFlow } = useUi(
+    useShallow((s) => ({
+      flowSymbol: s.flowSymbol,
+      expanded: s.expanded,
+      showDataWires: s.showDataWires,
+      detail: s.detail,
+      select: s.select,
+      selection: s.selection,
+      openFlow: s.openFlow,
+    })),
+  );
   const catalog = useCatalog();
   const flow = useQuery({
     queryKey: ["flow", flowSymbol],
@@ -150,6 +183,7 @@ export function BlueprintView() {
       graph={graph}
       layoutKey={`flow:${flowSymbol}:${detail}`}
       fitFirst={3}
+      loadingText="Loading the Blueprint…"
       selectedId={selectedId}
       onNodeDoubleClick={(n) => {
         // Double-clicking a call (or a function value with a Blueprint) opens that Blueprint.

@@ -3,6 +3,8 @@ import { openMenu } from "../components/ContextMenu";
 import { umlMenuItems } from "../uml/menu";
 import { UML_KINDS } from "../uml/uml";
 import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { Loading } from "../components/Loading";
 import { api } from "../api";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
 import type { Confidence } from "../gen/Confidence";
@@ -18,9 +20,18 @@ import * as perf from "../perf";
 import { revealInHierarchy, useHierarchy, useKnowledge } from "./hierarchyAccess";
 
 export function HierarchyView() {
-  const { index } = useStructure();
+  const { index, error, refetch } = useStructure();
   const h = useHierarchy();
-  const { treeExpanded, relations, selection, select, toggleTree, openFlow } = useUi();
+  const { treeExpanded, relations, selection, select, toggleTree, openFlow } = useUi(
+    useShallow((s) => ({
+      treeExpanded: s.treeExpanded,
+      relations: s.relations,
+      selection: s.selection,
+      select: s.select,
+      toggleTree: s.toggleTree,
+      openFlow: s.openFlow,
+    })),
+  );
   const expanded = useMemo(() => new Set(Object.keys(treeExpanded).filter((k) => treeExpanded[k])), [treeExpanded]);
   const kinds = useMemo(() => kindsOf(relations), [relations]);
   const graph = useMemo(() => (h && index ? hierarchyGraph(h, index, expanded, kinds) : undefined), [h, index, expanded, kinds]);
@@ -61,6 +72,9 @@ export function HierarchyView() {
           ]);
         }}
         emptyText="No declarations found."
+        loadingText="Loading the project structure…"
+        error={error}
+        onRetry={() => void refetch()}
       />
       {graph?.truncated && <div className="canvas-note">Showing the first {HIERARCHY_CAP} items. Close some boxes to see the rest.</div>}
       <Legend kinds={kinds} />
@@ -70,8 +84,18 @@ export function HierarchyView() {
 
 /** Relations around one symbol, or every knowledge relation of the project. */
 export function KnowledgeView() {
-  const { index } = useStructure();
-  const { knowledgeFocus, knowledgeDepth, relations, confidences, selection, select, showKnowledge } = useUi();
+  const { index, error, refetch } = useStructure();
+  const { knowledgeFocus, knowledgeDepth, relations, confidences, selection, select, showKnowledge } = useUi(
+    useShallow((s) => ({
+      knowledgeFocus: s.knowledgeFocus,
+      knowledgeDepth: s.knowledgeDepth,
+      relations: s.relations,
+      confidences: s.confidences,
+      selection: s.selection,
+      select: s.select,
+      showKnowledge: s.showKnowledge,
+    })),
+  );
   const kinds = useMemo(() => kindsOf(relations), [relations]);
   const graph = useMemo(
     () =>
@@ -104,6 +128,9 @@ export function KnowledgeView() {
           openMenu(e, umlMenuItems({ kind: "Symbol", id: item.symbol.id }, `UML of ${item.symbol.name}`));
         }}
         emptyText={empty}
+        loadingText="Loading the knowledge graph…"
+        error={error}
+        onRetry={() => void refetch()}
       />
       {graph?.truncated && <div className="canvas-note">Showing the first {KNOWLEDGE_CAP} symbols. Focus on one or lower the depth.</div>}
       <Legend kinds={kinds} />
@@ -181,7 +208,7 @@ export function OverviewView() {
   const knowledge = useKnowledge();
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
   const diagrams = useQuery({ queryKey: ["uml-availability", JSON.stringify({ kind: "Project" })], queryFn: () => api.umlAvailability({ kind: "Project" }), retry: false });
-  const { select, openFlow } = useUi();
+  const { select, openFlow } = useUi(useShallow((s) => ({ select: s.select, openFlow: s.openFlow })));
   const k = knowledge.data;
   const stats = useMemo(() => {
     if (!index) return undefined;
@@ -197,7 +224,7 @@ export function OverviewView() {
       unresolved,
     };
   }, [index]);
-  if (!index || !stats) return <div className="empty">Loading…</div>;
+  if (!index || !stats) return <Loading label="Loading the project overview…" />;
   perf.firstView("overview");
 
   const name = (id: string) => index.byId.get(id)?.qualified_name ?? id;

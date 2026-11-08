@@ -27,6 +27,7 @@ import { NamespaceNode, TypeCard } from "../components/StructureNodes";
 import { layoutGraph } from "../graph/layout";
 import type { GEdge, GGraph } from "../graph/model";
 import * as perf from "../perf";
+import { Loading, LoadingBadge, LoadingOverlay } from "../components/Loading";
 
 /** Above this many nodes the minimap is left out. */
 const MINIMAP_MAX_NODES = 1500;
@@ -132,6 +133,12 @@ interface Props {
   /** Right-click on a node (the app's context menu). */
   onNodeContextMenu?: (event: React.MouseEvent, node: Node) => void;
   emptyText?: string;
+  /** What is loading while `graph` is still undefined (shown with a spinner). */
+  loadingText?: string;
+  /** The data behind `graph` could not be loaded. */
+  error?: unknown;
+  /** Retries loading after an error. */
+  onRetry?: () => void;
   /** Fit only the first N nodes initially (keeps long flows readable). */
   fitFirst?: number;
   /** Remember positions the user drags nodes to (off for views whose shape changes often). */
@@ -140,13 +147,15 @@ interface Props {
   refit?: boolean;
 }
 
-function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, fitFirst, savePositions = true, refit = false }: Props) {
+function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, loadingText, error, onRetry, fitFirst, savePositions = true, refit = false }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [busy, setBusy] = useState(false);
   const { fitView, getInternalNode, getViewport, setCenter } = useReactFlow();
   const queryClient = useQueryClient();
   const saved = useQuery({ queryKey: ["layout", layoutKey], queryFn: () => api.layout(layoutKey) });
+  /** Nodes of the layout in progress (for the overlay). */
+  const [laying, setLaying] = useState(0);
   const manual = useRef<SavedPositions>({});
   const fittedKey = useRef<string | null>(null);
   /** Nodes to fit once React Flow has measured them (empty array = fit everything). */
@@ -167,17 +176,24 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
   }, [saved.data]);
 
   useEffect(() => {
-    if (!graph || !saved.isFetched) return;
+    if (!graph) return;
     let cancelled = false;
     // A newer graph replaces this one: stop its layout instead of letting it run on.
     const stop = new AbortController();
     setBusy(true);
+    setLaying(graph.nodes.length);
     const layoutStarted = performance.now();
-    layoutGraph(graph, stop.signal)
-      .then((positions) => {
+    // ELK and the saved positions load side by side; a failed read only loses the manual moves.
+    const positionsSaved = savePositions
+      ? queryClient
+          .ensureQueryData({ queryKey: ["layout", layoutKey], queryFn: () => api.layout(layoutKey) })
+          .catch((): SavedPositions => ({}))
+      : Promise.resolve<SavedPositions>({});
+    Promise.all([layoutGraph(graph, stop.signal), positionsSaved])
+      .then(([positions, savedPositions]) => {
         if (cancelled) return;
         perf.timed(`layout ${layoutKey} (${graph.nodes.length} nodes, ${(performance.now() - layoutStarted).toFixed(0)} ms in ELK) + setNodes`, () => {
-        const overrides = savePositions ? (saved.data ?? {}) : {};
+        const overrides = savePositions ? savedPositions : {};
         setNodes(
           graph.nodes.map((n) => {
             const laid = positions.get(n.id);
@@ -224,7 +240,7 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
     };
     // selectedId is applied by the effect below; re-layout only when the graph changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph, saved.isFetched, layoutKey]);
+  }, [graph, layoutKey]);
 
   useEffect(() => {
     setNodes((ns) => ns.map((n) => (n.selected === (n.id === selectedId) ? n : { ...n, selected: n.id === selectedId })));
@@ -262,7 +278,19 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
     await queryClient.invalidateQueries({ queryKey: ["layout", layoutKey] });
   };
 
-  if (!graph) return <div className="empty">{emptyText ?? "Loading…"}</div>;
+  if (!graph) {
+    if (error) {
+      return (
+        <div className="empty">
+          <div>
+            <p>Could not load this view: {String(error instanceof Error ? error.message : error)}</p>
+            {onRetry && <button onClick={onRetry}>Try again</button>}
+          </div>
+        </div>
+      );
+    }
+    return <Loading label={loadingText ?? "Loading…"} />;
+  }
   if (graph.nodes.length === 0) return <div className="empty">{emptyText ?? "Nothing to show."}</div>;
 
   return (
@@ -291,8 +319,9 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         {/* The minimap draws every node, visible or not: too costly on very large graphs. */}
         {nodes.length <= MINIMAP_MAX_NODES && <MiniMap pannable zoomable nodeColor="#3a4150" maskColor="rgba(10,12,16,0.7)" />}
       </ReactFlow>
+      {busy && nodes.length === 0 && <LoadingOverlay label="Arranging the graph…" detail={`${laying.toLocaleString()} nodes`} />}
       <div className="canvas-tools">
-        {busy && <span className="muted">laying out…</span>}
+        {busy && nodes.length > 0 && <LoadingBadge label="re-arranging…" />}
         {savePositions && Object.keys(saved.data ?? {}).length > 0 && (
           <button onClick={resetLayout} title="Discard manually moved positions">
             Reset layout

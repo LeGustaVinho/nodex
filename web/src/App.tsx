@@ -21,6 +21,7 @@ import { EnvironmentDialog } from "./panels/EnvironmentDialog";
 import { SettingsDialog, useSettingsMenu } from "./panels/SettingsDialog";
 import { Welcome } from "./panels/Welcome";
 import * as perf from "./perf";
+import { ActivityBar, Loading } from "./components/Loading";
 
 // Loaded on first use: Monaco, Mermaid and the knowledge views are large.
 const loadCodePanel = () => import("./panels/CodePanel");
@@ -35,7 +36,7 @@ function CodeSlot() {
   }, []);
   if (!hasCode) return <div className="code-empty muted">Select something to see its code.</div>;
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<Loading label="Loading the code editor…" />}>
       <CodePanel />
     </Suspense>
   );
@@ -342,6 +343,7 @@ export function App() {
       <SettingsDialog />
       <Toasts />
       <ConnectionOverlay />
+      <ActivityBar />
     </>
   );
 
@@ -354,7 +356,7 @@ export function App() {
     );
   }
 
-  const loading = <div className="empty">Loading…</div>;
+  const loading = <Loading label="Loading the view…" />;
   return (
     <div className="app">
       <TopBar />
