@@ -15,7 +15,8 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { toPng } from "html-to-image";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Positions as SavedPositions } from "../api";
 import { typeColor } from "../catalog";
 import { BlueprintNode } from "../components/BlueprintNode";
@@ -24,13 +25,32 @@ import { ExprNode } from "../components/ExprNode";
 import { OwnershipEdge } from "../components/OwnershipEdge";
 import { HierarchyGroup, HierarchyNode } from "../components/HierarchyNodes";
 import { NamespaceNode, TypeCard } from "../components/StructureNodes";
+import { edgeFocus } from "../graph/explore";
 import { layoutGraph } from "../graph/layout";
-import type { GEdge, GGraph } from "../graph/model";
+import type { GEdge, GGraph, GNode } from "../graph/model";
+import type { EdgeMode } from "../store";
 import * as perf from "../perf";
 import { Loading, LoadingBadge, LoadingOverlay } from "../components/Loading";
 
 /** Above this many nodes the minimap is left out. */
 const MINIMAP_MAX_NODES = 1500;
+/** Above this many edges, explorer edges recede until a node is selected. */
+const FAINT_EDGES = 250;
+
+/** Colours of the selection's edges when only those are drawn. */
+export const EDGE_IN_COLOR = "#e3b341";
+export const EDGE_OUT_COLOR = "#58a6ff";
+
+/** Asks the canvas on screen to fit the whole graph. */
+export const fitCanvas = () => window.dispatchEvent(new Event("nodex:fit"));
+/** Asks the canvas on screen to save itself as a PNG image. */
+export const exportCanvas = () => window.dispatchEvent(new Event("nodex:export"));
+
+/** True when a key press targets a text field (canvas shortcuts must not steal it). */
+export function isTyping(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable || !!el.closest(".monaco-editor"));
+}
 
 const nodeTypes: NodeTypes = {
   blueprint: BlueprintNode,
@@ -145,13 +165,31 @@ interface Props {
   savePositions?: boolean;
   /** Fit the whole graph after every layout, not only the first (views that grow in place). */
   refit?: boolean;
+  /**
+   * Explorer behaviour: the selected node (`anchor`) lights up its relations and dims the rest,
+   * `edgeMode` limits the edges drawn to the selection's, labels show on lit edges only.
+   */
+  explore?: { anchor: string | null; edgeMode: EdgeMode };
+  /** A node that keeps its place on screen when the graph is laid out again (a box just opened). */
+  anchorId?: string | null;
+  /** Click on the empty canvas. */
+  onPaneClick?: () => void;
+  /** Hover tooltip of a node or an edge. */
+  nodeTip?: (node: GNode) => ReactNode;
+  edgeTip?: (edge: GEdge) => ReactNode;
+  /** File name of the PNG export (without extension). */
+  exportName?: string;
 }
 
-function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, loadingText, error, onRetry, fitFirst, savePositions = true, refit = false }: Props) {
+function Canvas(props: Props) {
+  const { graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, loadingText, error, onRetry, fitFirst, savePositions = true, refit = false } = props;
+  const { explore, anchorId, nodeTip, edgeTip, exportName } = props;
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [busy, setBusy] = useState(false);
-  const { fitView, getInternalNode, getViewport, setCenter } = useReactFlow();
+  const { fitView, getInternalNode, getViewport, setCenter, setViewport, getNodes, getNodesBounds } = useReactFlow();
+  const wrap = useRef<HTMLDivElement>(null);
+  const [tip, setTip] = useState<{ x: number; y: number; content: ReactNode } | null>(null);
   const queryClient = useQueryClient();
   const saved = useQuery({ queryKey: ["layout", layoutKey], queryFn: () => api.layout(layoutKey) });
   /** Nodes of the layout in progress (for the overlay). */
@@ -194,6 +232,14 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         if (cancelled) return;
         perf.timed(`layout ${layoutKey} (${graph.nodes.length} nodes, ${(performance.now() - layoutStarted).toFixed(0)} ms in ELK) + setNodes`, () => {
         const overrides = savePositions ? savedPositions : {};
+        // A box just opened or closed keeps its place on screen: note where it is now.
+        const before = anchorId ? getInternalNode(anchorId) : undefined;
+        const anchorScreen = before
+          ? (() => {
+              const { x, y, zoom } = getViewport();
+              return { x: before.internals.positionAbsolute.x * zoom + x, y: before.internals.positionAbsolute.y * zoom + y, zoom };
+            })()
+          : null;
         setNodes(
           graph.nodes.map((n) => {
             const laid = positions.get(n.id);
@@ -218,9 +264,13 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
             sourceHandle: e.sourceHandle,
             targetHandle: e.targetHandle,
             ...edgeStyle(e),
+            data: { g: e },
           })),
         );
-        if (fittedKey.current !== layoutKey || refit) {
+        const anchorNew = anchorScreen && anchorId ? absolutePosition(graph, positions, anchorId) : null;
+        if (anchorScreen && anchorNew && fittedKey.current === layoutKey) {
+          void setViewport({ x: anchorScreen.x - anchorNew.x * anchorScreen.zoom, y: anchorScreen.y - anchorNew.y * anchorScreen.zoom, zoom: anchorScreen.zoom });
+        } else if (fittedKey.current !== layoutKey || refit) {
           fittedKey.current = layoutKey;
           // Opened at a node (a debugger stop, a search hit): start there. Wide Blueprints: start
           // readable at the entry instead of shrinking everything.
@@ -263,6 +313,87 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
     }
   }, [selectedId, setNodes, getInternalNode, getViewport, setCenter]);
 
+  // Explorer: what the selection lights up.
+  const anchor = explore?.anchor ?? null;
+  const edgeMode = explore?.edgeMode ?? "all";
+  const focus = useMemo(() => (graph && explore ? edgeFocus(graph, anchor, edgeMode) : null), [graph, !!explore, anchor, edgeMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shownNodes = useMemo(() => {
+    if (!focus?.litNodes) return nodes;
+    const lit = focus.litNodes;
+    return nodes.map((n) => (lit.has(n.id) ? n : { ...n, className: "dim" }));
+  }, [nodes, focus]);
+  const shownEdges = useMemo(() => {
+    if (!focus) return edges;
+    const faint = !focus.litNodes && edges.length > FAINT_EDGES;
+    const coloured = edgeMode !== "all";
+    return edges.map((e) => {
+      if (focus.hidden.has(e.id)) return { ...e, hidden: true };
+      const lit = focus.lit.has(e.id);
+      const color = coloured ? (focus.incoming.has(e.id) ? EDGE_IN_COLOR : focus.outgoing.has(e.id) ? EDGE_OUT_COLOR : null) : null;
+      const style = { ...(e.style ?? {}) };
+      if (color) style.stroke = color;
+      if (lit) {
+        style.opacity = 1;
+        style.strokeWidth = Math.max(Number(style.strokeWidth ?? 1.6), 2.4);
+      } else if (focus.litNodes) style.opacity = 0.08;
+      else if (faint) style.opacity = 0.14;
+      const markerEnd = color && e.markerEnd && typeof e.markerEnd === "object" ? { ...e.markerEnd, color } : e.markerEnd;
+      return { ...e, style, markerEnd, label: lit ? e.label : undefined, zIndex: lit ? 5 : 0 };
+    });
+  }, [edges, focus, edgeMode]);
+
+  const fitAll = useCallback(() => void fitView({ padding: 0.1, duration: 250 }), [fitView]);
+  const exportPng = useCallback(async () => {
+    const viewport = wrap.current?.querySelector<HTMLElement>(".react-flow__viewport");
+    if (!viewport) return;
+    const bounds = getNodesBounds(getNodes());
+    const pad = 40;
+    const scale = Math.min(2, 8000 / Math.max(1, bounds.width + 2 * pad), 8000 / Math.max(1, bounds.height + 2 * pad));
+    const width = Math.round((bounds.width + 2 * pad) * scale);
+    const height = Math.round((bounds.height + 2 * pad) * scale);
+    const url = await toPng(viewport, {
+      backgroundColor: "#15181d",
+      width,
+      height,
+      style: { width: `${width}px`, height: `${height}px`, transform: `translate(${(pad - bounds.x) * scale}px, ${(pad - bounds.y) * scale}px) scale(${scale})` },
+    });
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(exportName ?? layoutKey).replace(/[^\w.-]+/g, "_")}.png`;
+    a.click();
+  }, [getNodes, getNodesBounds, exportName, layoutKey]);
+
+  useEffect(() => {
+    const onFit = () => fitAll();
+    const onExport = () => void exportPng();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "f" && !e.ctrlKey && !e.metaKey && !e.altKey && !isTyping(e.target) && !document.querySelector(".palette-backdrop")) fitAll();
+    };
+    window.addEventListener("nodex:fit", onFit);
+    window.addEventListener("nodex:export", onExport);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("nodex:fit", onFit);
+      window.removeEventListener("nodex:export", onExport);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [fitAll, exportPng]);
+
+  const gnodes = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.id, n])), [graph]);
+  const showTip = (event: React.MouseEvent, content: ReactNode) => {
+    const rect = wrap.current?.getBoundingClientRect();
+    if (!rect || content == null) return setTip(null);
+    setTip({ x: event.clientX - rect.left, y: event.clientY - rect.top, content });
+  };
+  const nodeTipAt = (e: React.MouseEvent, n: Node) => {
+    const g = gnodes.get(n.id);
+    if (g && nodeTip) showTip(e, nodeTip(g));
+  };
+  const edgeTipAt = (e: React.MouseEvent, edge: Edge) => {
+    const g = (edge.data as { g?: GEdge } | undefined)?.g;
+    if (g && edgeTip) showTip(e, edgeTip(g));
+  };
+
   const persist = useCallback(
     (moved: Node[]) => {
       for (const n of moved) manual.current[n.id] = { x: Math.round(n.position.x), y: Math.round(n.position.y) };
@@ -294,10 +425,10 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
   if (graph.nodes.length === 0) return <div className="empty">{emptyText ?? "Nothing to show."}</div>;
 
   return (
-    <div className="canvas">
+    <div className="canvas" ref={wrap}>
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={shownNodes}
+        edges={shownEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
@@ -305,6 +436,14 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         onNodeDoubleClick={(_, n) => onNodeDoubleClick?.(n)}
         onNodeContextMenu={onNodeContextMenu ? (e, n) => onNodeContextMenu(e, n) : undefined}
         onNodeDragStop={(_, __, moved) => savePositions && persist(moved)}
+        onPaneClick={props.onPaneClick}
+        onNodeMouseEnter={nodeTip ? nodeTipAt : undefined}
+        onNodeMouseMove={nodeTip ? nodeTipAt : undefined}
+        onNodeMouseLeave={() => setTip(null)}
+        onEdgeMouseEnter={edgeTip ? edgeTipAt : undefined}
+        onEdgeMouseMove={edgeTip ? edgeTipAt : undefined}
+        onEdgeMouseLeave={() => setTip(null)}
+        onMoveStart={() => setTip(null)}
         nodesConnectable={false}
         zoomOnDoubleClick={false}
         edgesFocusable={false}
@@ -319,6 +458,7 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         {/* The minimap draws every node, visible or not: too costly on very large graphs. */}
         {nodes.length <= MINIMAP_MAX_NODES && <MiniMap pannable zoomable nodeColor="#3a4150" maskColor="rgba(10,12,16,0.7)" />}
       </ReactFlow>
+      {tip && <CanvasTip {...tip} bounds={wrap.current?.getBoundingClientRect()} />}
       {busy && nodes.length === 0 && <LoadingOverlay label="Arranging the graph…" detail={`${laying.toLocaleString()} nodes`} />}
       <div className="canvas-tools">
         {busy && nodes.length > 0 && <LoadingBadge label="re-arranging…" />}
@@ -328,6 +468,40 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Position of a node on the canvas (positions inside a box are relative to it). */
+function absolutePosition(graph: GGraph, positions: Map<string, { x: number; y: number }>, id: string): { x: number; y: number } | null {
+  const parent = new Map(graph.nodes.map((n) => [n.id, n.parent]));
+  let x = 0;
+  let y = 0;
+  for (let cur: string | undefined = id; cur; cur = parent.get(cur)) {
+    const p = positions.get(cur);
+    if (!p) return cur === id ? null : { x, y };
+    x += p.x;
+    y += p.y;
+  }
+  return { x, y };
+}
+
+/** Tooltip next to the pointer, kept inside the canvas. */
+function CanvasTip({ x, y, content, bounds }: { x: number; y: number; content: ReactNode; bounds?: DOMRect }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x + 14, top: y + 14 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !bounds) return;
+    let left = x + 14;
+    let top = y + 14;
+    if (left + el.offsetWidth > bounds.width - 8) left = x - el.offsetWidth - 14;
+    if (top + el.offsetHeight > bounds.height - 8) top = y - el.offsetHeight - 14;
+    setPos({ left: Math.max(8, left), top: Math.max(8, top) });
+  }, [x, y, bounds]);
+  return (
+    <div ref={ref} className="canvas-tip" style={pos}>
+      {content}
     </div>
   );
 }

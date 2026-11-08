@@ -4,9 +4,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { api } from "../api";
-import { Hierarchy } from "../graph/hierarchy";
+import { HIERARCHY_CAP, Hierarchy } from "../graph/hierarchy";
 import type { StructureIndex } from "../graph/structureGraph";
 import { useUi } from "../store";
+import { useToasts } from "../toast";
 import { useStructure } from "./Views";
 
 export function useKnowledge() {
@@ -37,3 +38,10 @@ export function revealInHierarchy(h: Hierarchy, index: StructureIndex, id: strin
   ui.select({ kind: "symbol", id }, index.byId.get(id)?.origins[0] ?? null);
 }
 
+
+/** Opens `id` and every box inside it (as many as the Hierarchy can draw). */
+export function openSubtree(h: Hierarchy, id: string, expanded: ReadonlySet<string>, hidden?: ReadonlySet<string>) {
+  const { open, capped } = h.subtree(id, expanded, HIERARCHY_CAP, hidden);
+  useUi.getState().expandTree(open, id);
+  if (capped) useToasts.getState().push("info", `Some boxes stay closed: the view shows at most ${HIERARCHY_CAP} items.`);
+}

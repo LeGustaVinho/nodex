@@ -9,6 +9,12 @@ The release workflow publishes the section of the version it builds as the relea
 ### Added
 
 - Every panel can be resized: drag the edge of the sidebar, the right panel, the line between the Inspector and the code, the top of the Problems list or the top of the console. Double-click an edge to go back to the default size. Nodex keeps the sizes for the next time.
+- Hierarchy and Knowledge explore like CodeGraph's explorer. Select a node to light up its relations, or show only its relations, incoming or outgoing (key E). A filters panel turns each relation and confidence on or off and hides third-party code. Hovering a node or a wire shows its evidence. Each view has a bar with breadcrumbs, Back, counts, spacing, fit (F) and PNG export.
+- Knowledge layouts: layers from the focus (callers on the left, callees on the right), force-directed, concentric, circle and grid. Nodes can be grouped in class, file or namespace boxes.
+- Hierarchy: open one more level everywhere, open everything inside a box, hide the rolled-up links. Folders and namespaces can be selected and show what they hold. A box keeps its place on screen when it opens.
+- The Inspector of a symbol has tabs: Overview, Evidence (filtered by confidence), Flows (from the front end to the data written, callers and callees, where errors are caught), Data (primary and foreign keys, one or many) and Actions (impact radius, tests, file skeleton, copy, open in VS Code).
+- The Overview lists every entry point, route, hotspot, test, data model and unresolved relation, with a filter, and shows how sure Nodex is of the relations and the files per language.
+- The palette has more commands (fit, export, edges shown, layouts, lists, reload the project) and highlights what matches.
 
 ### Changed
 
@@ -23,6 +29,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Architecture view of a project with many interdependent namespaces never finished laying out.
 - After opening another project, the sidebar could keep showing the previous one.
 - In a Unity project without the Nodex package, the code panel next to a Blueprint showed only its title.
+- The minimap of the graph views was drawn at the top left, over the graph, instead of the bottom right.
 
 ## [0.1.0] - 2026-11-08
 

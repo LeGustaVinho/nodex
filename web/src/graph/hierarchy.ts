@@ -164,12 +164,16 @@ export class Hierarchy {
     return false;
   }
 
-  /** Items drawn when `expanded` containers are open, parents before children (at most `cap`). */
-  visible(expanded: ReadonlySet<string>, cap = Infinity): { ids: string[]; truncated: boolean } {
+  /**
+   * Items drawn when `expanded` containers are open, parents before children (at most `cap`).
+   * Hidden items (third-party code) are left out with everything inside them.
+   */
+  visible(expanded: ReadonlySet<string>, cap = Infinity, hidden?: ReadonlySet<string>): { ids: string[]; truncated: boolean } {
     const ids: string[] = [];
     let truncated = false;
     const walk = (list: string[]) => {
       for (const id of list) {
+        if (hidden?.has(id)) continue;
         if (ids.length >= cap) {
           truncated = true;
           return;
@@ -181,6 +185,78 @@ export class Hierarchy {
     };
     walk(this.roots);
     return { ids, truncated };
+  }
+
+  /** Children of `id` that are shown (not hidden). */
+  shownChildren(id: string, hidden?: ReadonlySet<string>): string[] {
+    const kids = this.items.get(id)?.children ?? [];
+    return hidden ? kids.filter((k) => !hidden.has(k)) : kids;
+  }
+
+  /**
+   * Containers to open for one more level everywhere: the closed boxes on screen, as many as fit
+   * under `cap` items in all. `capped` tells whether some had to stay closed.
+   */
+  nextLevel(expanded: ReadonlySet<string>, cap: number, hidden?: ReadonlySet<string>): { open: string[]; capped: boolean } {
+    const { ids } = this.visible(expanded, Infinity, hidden);
+    let budget = cap - ids.length;
+    const open: string[] = [];
+    let capped = false;
+    for (const id of ids) {
+      if (expanded.has(id)) continue;
+      const kids = this.shownChildren(id, hidden).length;
+      if (kids === 0) continue;
+      if (kids > budget) {
+        capped = true;
+        continue;
+      }
+      budget -= kids;
+      open.push(id);
+    }
+    return { open, capped };
+  }
+
+  /** Every container inside `id` (and `id`), breadth first, as many as fit under `cap` items. */
+  subtree(id: string, expanded: ReadonlySet<string>, cap: number, hidden?: ReadonlySet<string>): { open: string[]; capped: boolean } {
+    let budget = cap - this.visible(expanded, Infinity, hidden).ids.length;
+    const open: string[] = [];
+    let capped = false;
+    let frontier = [id];
+    while (frontier.length) {
+      const next: string[] = [];
+      for (const cur of frontier) {
+        const kids = this.shownChildren(cur, hidden);
+        if (kids.length === 0) continue;
+        if (!expanded.has(cur)) {
+          if (kids.length > budget) {
+            capped = true;
+            continue;
+          }
+          budget -= kids.length;
+        }
+        open.push(cur);
+        next.push(...kids);
+      }
+      frontier = next;
+    }
+    return { open, capped };
+  }
+
+  /** Items made only of third-party code: their own file, or every child, is third-party. */
+  vendorItems(isVendorFile: (path: string) => boolean): Set<string> {
+    const out = new Set<string>();
+    const visit = (id: string): boolean => {
+      const item = this.items.get(id)!;
+      const kids = item.children.map(visit);
+      let vendor: boolean;
+      if (item.symbol) vendor = item.symbol.origins.length > 0 && item.symbol.origins.every((o) => isVendorFile(o.file));
+      else if (item.kind === "folder") vendor = isVendorFile(`${item.id.slice(4)}/x`) || (kids.length > 0 && kids.every(Boolean));
+      else vendor = kids.length > 0 && kids.every(Boolean);
+      if (vendor) out.add(id);
+      return vendor;
+    };
+    this.roots.forEach(visit);
+    return out;
   }
 }
 
@@ -210,12 +286,19 @@ export interface RolledEdge {
 const STRENGTH: Record<Confidence, number> = { Exact: 0, Inferred: 1, Unresolved: 2 };
 
 /** Aggregates `edges` onto the visible items (see the module comment). */
-export function rollup(h: Hierarchy, edges: StructEdge[], visible: ReadonlySet<string>, kinds: ReadonlySet<StructEdgeKind>): RolledEdge[] {
+export function rollup(
+  h: Hierarchy,
+  edges: StructEdge[],
+  visible: ReadonlySet<string>,
+  kinds: ReadonlySet<StructEdgeKind>,
+  confidences?: ReadonlySet<Confidence>,
+  hidden?: ReadonlySet<string>,
+): RolledEdge[] {
   const memo = new Map<string, string | null>();
   const nearest = (id: string): string | null => {
     const known = memo.get(id);
     if (known !== undefined) return known;
-    let cur: string | null = h.get(id) ? id : null;
+    let cur: string | null = h.get(id) && !hidden?.has(id) ? id : null;
     while (cur && !visible.has(cur)) cur = h.parentOf(cur);
     memo.set(id, cur);
     return cur;
@@ -223,6 +306,7 @@ export function rollup(h: Hierarchy, edges: StructEdge[], visible: ReadonlySet<s
   const out = new Map<string, RolledEdge>();
   for (const e of edges) {
     if (e.kind === "Contains" || !kinds.has(e.kind)) continue;
+    if (confidences && !confidences.has(e.confidence ?? "Exact")) continue;
     const a = nearest(e.from);
     const b = nearest(e.to);
     if (!a || !b || a === b || h.isAncestor(a, b) || h.isAncestor(b, a)) continue;
@@ -261,6 +345,25 @@ export interface HierarchyNodeData {
   /** Direct children count (shown on collapsed items). */
   childCount: number;
   expanded: boolean;
+  /** Entry point label (`GET /api/orders`, `Main`): drawn with a golden border. */
+  entry?: string | null;
+  test?: boolean;
+  /** Third-party code (drawn faded, dashed). */
+  vendor?: boolean;
+  /** Relations drawn to and from the node (a thicker border for busier nodes). */
+  degree?: number;
+}
+
+/** Options of the Hierarchy graph. */
+export interface HierarchyOptions {
+  /** Confidences of the relations rolled up (default: all). */
+  confidences?: ReadonlySet<Confidence>;
+  /** Items left out (third-party code). */
+  hidden?: ReadonlySet<string>;
+  /** Draw the rolled-up relations (default true). */
+  links?: boolean;
+  /** Multiplies the layout's gaps. */
+  spacing?: number;
 }
 
 export const LEAF_WIDTH = 190;
@@ -274,8 +377,9 @@ export function hierarchyGraph(
   index: StructureIndex,
   expanded: ReadonlySet<string>,
   kinds: ReadonlySet<StructEdgeKind>,
+  opts: HierarchyOptions = {},
 ): GGraph & { truncated: boolean } {
-  const { ids, truncated } = h.visible(expanded, HIERARCHY_CAP);
+  const { ids, truncated } = h.visible(expanded, HIERARCHY_CAP, opts.hidden);
   const visible = new Set(ids);
   const nodes: GNode[] = ids.map((id) => {
     const item = h.get(id)!;
@@ -284,7 +388,7 @@ export function hierarchyGraph(
     return {
       id,
       type: open ? "hgroup" : "hnode",
-      data: { item, childCount: item.children.length, expanded: open } satisfies HierarchyNodeData,
+      data: { item, childCount: h.shownChildren(id, opts.hidden).length, expanded: open } satisfies HierarchyNodeData,
       width: LEAF_WIDTH,
       height: LEAF_HEIGHT,
       ports: [],
@@ -292,7 +396,8 @@ export function hierarchyGraph(
       container: open,
     };
   });
-  const edges: GEdge[] = rollup(h, index.graph.edges, visible, kinds).map((r) => ({
+  const rolled = opts.links === false ? [] : rollup(h, index.graph.edges, visible, kinds, opts.confidences, opts.hidden);
+  const edges: GEdge[] = rolled.map((r) => ({
     id: `${r.source}->${r.target}`,
     source: r.source,
     target: r.target,
@@ -302,16 +407,36 @@ export function hierarchyGraph(
     weight: r.count,
     data: r,
   }));
-  return { nodes, edges, direction: "DOWN", aspectRatio: 1.8, truncated };
+  return { nodes, edges, direction: "DOWN", aspectRatio: 1.8, truncated, spacing: opts.spacing };
 }
 
-/** Relation groups the Hierarchy and Knowledge views can toggle. */
+/** Relation groups the Hierarchy and Knowledge views can toggle (each relation can be toggled too). */
 export const RELATION_GROUPS: { id: string; label: string; kinds: StructEdgeKind[] }[] = [
   { id: "calls", label: "calls", kinds: ["Calls", "Raises", "Subscribes"] },
   { id: "types", label: "types", kinds: ["Inherits", "Implements", "Compatible", "Instantiates", "References"] },
   { id: "imports", label: "imports", kinds: ["Imports"] },
   { id: "knowledge", label: "knowledge", kinds: ["HttpCalls", "ResolvesDi", "DependsOn", "Tests", "Throws", "CaughtBy", "Mutates"] },
 ];
+
+/** Plain-language name of each relation. */
+export const RELATION_LABEL: Partial<Record<StructEdgeKind, string>> = {
+  Calls: "calls",
+  Raises: "raises",
+  Subscribes: "notifies",
+  Inherits: "extends",
+  Implements: "implements",
+  Compatible: "fits",
+  Instantiates: "creates",
+  References: "uses",
+  Imports: "imports",
+  HttpCalls: "HTTP calls",
+  ResolvesDi: "DI provides",
+  DependsOn: "DI depends on",
+  Tests: "tests",
+  Throws: "throws",
+  CaughtBy: "caught by",
+  Mutates: "changes",
+};
 
 export function kindsOf(groups: readonly string[]): Set<StructEdgeKind> {
   return new Set(RELATION_GROUPS.filter((g) => groups.includes(g.id)).flatMap((g) => g.kinds));

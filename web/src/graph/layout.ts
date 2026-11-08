@@ -1,5 +1,6 @@
 import ELK, { type ElkExtendedEdge, type ElkNode, type ElkPort } from "elkjs/lib/elk-api.js";
 import elkWorkerUrl from "elkjs/lib/elk-worker.min.js?url";
+import { customLayout } from "./explore";
 import type { GGraph, GNode } from "./model";
 
 // ELK runs in a web worker so large graphs never block the UI. The worker starts with the first
@@ -48,7 +49,7 @@ const CACHE_SIZE = 24;
 
 /** Everything about a graph that changes its layout (ids, sizes, ports, nesting, layout edges). */
 export function layoutSignature(g: GGraph): string {
-  const parts: string[] = [g.direction, String(g.aspectRatio ?? "")];
+  const parts: string[] = [g.direction, String(g.aspectRatio ?? ""), g.layout ?? "", g.focus ?? "", String(g.spacing ?? 1)];
   for (const n of g.nodes) {
     const ports = n.ports.map((p) => `${p.id}${p.side[0]}`).join(",");
     const box = n.box ? `${n.box.width}x${n.box.height}+${n.box.offsetX}` : "";
@@ -74,6 +75,12 @@ function hash(text: string): string {
 }
 
 async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions> {
+  const factor = g.spacing ?? 1;
+  if (g.layout === "layers" || g.layout === "concentric" || g.layout === "circle" || g.layout === "grid") {
+    const positions: Positions = customLayout(g, g.layout, g.focus ?? null, factor);
+    attachNodes(g, positions);
+    return positions;
+  }
   const laidOut = g.nodes.filter((n) => !n.attach);
   const nodeIds = new Set(laidOut.map((n) => n.id));
   const kids = new Map<string | undefined, GNode[]>();
@@ -138,19 +145,26 @@ async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions
     });
   });
   aborted.catch(() => {}); // Aborting after the layout finished is not an error.
+  const gap = (n: number) => String(Math.round(n * factor));
+  const algorithm: Record<string, string> =
+    g.layout === "stress"
+      ? { "elk.algorithm": "stress", "elk.stress.desiredEdgeLength": gap(260), "elk.spacing.nodeNode": gap(40) }
+      : {
+          "elk.algorithm": "layered",
+          "elk.direction": g.direction,
+          "elk.spacing.nodeNode": gap(g.direction === "RIGHT" ? 36 : 48),
+          "elk.layered.spacing.nodeNodeBetweenLayers": gap(g.direction === "RIGHT" ? 70 : 80),
+        };
   const layout = elk.layout({
     id: "root",
     layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": g.direction,
-      "elk.spacing.nodeNode": g.direction === "RIGHT" ? "36" : "48",
-      "elk.layered.spacing.nodeNodeBetweenLayers": g.direction === "RIGHT" ? "70" : "80",
+      ...algorithm,
       ...(ordered
         ? { "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES", "elk.layered.crossingMinimization.forceNodeModelOrder": "true" }
         : {}),
       "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       "elk.separateConnectedComponents": "true",
-      "elk.spacing.componentComponent": "60",
+      "elk.spacing.componentComponent": gap(60),
       "elk.layered.compaction.postCompaction.strategy": "LEFT",
       ...(nested ? { "elk.hierarchyHandling": "INCLUDE_CHILDREN" } : {}),
     },
@@ -176,14 +190,18 @@ async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions
     }
   };
   read(result.children ?? []);
-  if (g.aspectRatio) packComponents(g, positions, g.aspectRatio);
-  // Attached nodes follow their anchor.
+  if (g.aspectRatio) packComponents(g, positions, g.aspectRatio, 60 * factor);
+  attachNodes(g, positions);
+  return positions;
+}
+
+/** Attached nodes follow their anchor. */
+function attachNodes(g: GGraph, positions: Positions) {
   for (const n of g.nodes) {
     if (!n.attach) continue;
     const anchor = positions.get(n.attach.to);
     if (anchor) positions.set(n.id, { x: anchor.x + n.attach.dx, y: anchor.y + n.attach.dy });
   }
-  return positions;
 }
 
 /**

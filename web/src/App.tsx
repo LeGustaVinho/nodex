@@ -12,7 +12,6 @@ import { Inspector } from "./panels/Inspector";
 import { Palette } from "./panels/Palette";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
-import { RELATION_GROUPS } from "./graph/hierarchy";
 import { Splitter } from "./components/Splitter";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 import { ConfidenceToggles } from "./components/ConfidenceToggles";
@@ -165,53 +164,8 @@ function TopBar() {
         ))}
       </nav>
       <div className="context">
-        {(ui.view === "knowledge" || ui.view === "uml") && (
-          <>
-            {ui.view === "knowledge" && <span className="chip" title={ui.knowledgeFocus ?? "Every knowledge relation of the project"}>
-              {ui.knowledgeFocus ? (index?.byId.get(ui.knowledgeFocus)?.name ?? ui.knowledgeFocus) : "whole project"}
-              {ui.knowledgeFocus && (
-                <button className="chip-x" onClick={() => ui.showKnowledge(null)} title="Show every knowledge relation">
-                  ×
-                </button>
-              )}
-            </span>}
-            {ui.view === "knowledge" && ui.knowledgeFocus && (
-              <label className="toggle" title="How many steps of relations to follow">
-                depth
-                <select value={ui.knowledgeDepth} onChange={(e) => ui.setKnowledgeDepth(Number(e.target.value))}>
-                  {[1, 2, 3].map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {ui.view === "knowledge" && <ConfidenceToggles />}
-          </>
-        )}
-        {(ui.view === "hierarchy" || ui.view === "knowledge") && (
-          <>
-            <div className="segmented" role="group" aria-label="Relations">
-              {RELATION_GROUPS.map((g) => (
-                <button
-                  key={g.id}
-                  className={ui.relations.includes(g.id) ? "on" : ""}
-                  aria-pressed={ui.relations.includes(g.id)}
-                  title={`Show ${g.label} relations`}
-                  onClick={() => ui.toggleRelation(g.id)}
-                >
-                  {g.label}
-                </button>
-              ))}
-            </div>
-            {ui.view === "hierarchy" && (
-              <button onClick={ui.collapseTree} title="Close every box">
-                Collapse all
-              </button>
-            )}
-          </>
-        )}
+        {/* Hierarchy and Knowledge keep their controls in their own stage bar. */}
+        {ui.view === "uml" && <ConfidenceToggles />}
         {ui.view === "types" && (
           <>
             <span className="chip">

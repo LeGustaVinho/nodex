@@ -50,6 +50,12 @@ export interface GGraph {
   direction: "RIGHT" | "DOWN";
   /** Width/height ratio ELK aims for when it packs unconnected parts side by side. */
   aspectRatio?: number;
+  /** How to arrange the nodes (default: ELK's layered algorithm). */
+  layout?: "layered" | "stress" | "layers" | "concentric" | "circle" | "grid";
+  /** Node the `layers` and `concentric` layouts start from. */
+  focus?: string | null;
+  /** Multiplies every gap (compact 0.7, normal 1, wide 1.6). */
+  spacing?: number;
 }
 
 /** Rough text width-based line count, used to estimate node heights before rendering. */

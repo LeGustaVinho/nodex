@@ -1,6 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { openMenu } from "../components/ContextMenu";
-import { umlMenuItems } from "../uml/menu";
 import { api } from "../api";
 import { conceptColor, conceptInfo, flavorInfo, operationColor, operationInfo, typeColor, useCatalog } from "../catalog";
 import type { Access } from "../gen/Access";
@@ -8,110 +6,8 @@ import type { Concept } from "../gen/Concept";
 import type { Expr } from "../gen/Expr";
 import type { Language } from "../gen/Language";
 import { useUi } from "../store";
-import { useKnowledge } from "../views/hierarchyAccess";
 import { useStructure } from "../views/Views";
-import type { StructEdge } from "../gen/StructEdge";
-import type { StructureIndex } from "../graph/structureGraph";
-
-const KNOWLEDGE_KINDS = new Set(["HttpCalls", "ResolvesDi", "DependsOn", "Tests", "Throws", "CaughtBy", "Mutates"]);
-
-const VERB: Record<string, [string, string]> = {
-  HttpCalls: ["sends HTTP requests to", "receives HTTP requests from"],
-  ResolvesDi: ["is provided by", "provides"],
-  DependsOn: ["is injected with", "is injected into"],
-  Tests: ["tests", "is tested by"],
-  Throws: ["throws", "is thrown by"],
-  CaughtBy: ["is caught by", "catches errors of"],
-  Mutates: ["changes", "is changed by"],
-};
-
-/** Knowledge about a symbol: why it runs, what it does to the world, and the evidence. */
-function KnowledgeSection({ id, index }: { id: string; index: StructureIndex }) {
-  const knowledge = useKnowledge();
-  const focusCode = useUi((s) => s.focusCode);
-  const select = useUi((s) => s.select);
-  const info = knowledge.data?.symbols.find((s) => s.symbol === id);
-  const routes = knowledge.data?.routes.filter((r) => r.handler === id) ?? [];
-  const model = knowledge.data?.models.find((m) => m.symbol === id)?.model;
-  const edges = index.graph.edges.filter((e) => KNOWLEDGE_KINDS.has(e.kind) && (e.from === id || e.to === id));
-  if (!info && routes.length === 0 && !model && edges.length === 0) return null;
-  const name = (other: string) => index.byId.get(other)?.name ?? other.replace(/^ext:/, "");
-  const row = (e: StructEdge) => {
-    const out = e.from === id;
-    const other = out ? e.to : e.from;
-    const [verbOut, verbIn] = VERB[e.kind] ?? [e.kind, e.kind];
-    return (
-      <div key={`${e.kind}:${e.from}:${e.to}`} className="evidence">
-        <div className="value-row">
-          <span>{out ? verbOut : verbIn}</span>
-          <button className="link" onClick={() => select({ kind: "symbol", id: other }, index.byId.get(other)?.origins[0] ?? null)}>
-            {name(other)}
-          </button>
-          {e.confidence && <span className={`conf conf-${e.confidence.toLowerCase()}`}>{e.confidence.toLowerCase()}</span>}
-        </div>
-        {(e.evidence || e.site) && (
-          <div className="evidence-detail">
-            {e.evidence && <span>{e.evidence}</span>}
-            {e.site && (
-              <button className="link muted" onClick={() => focusCode(e.site!)}>
-                {e.site.file}:{e.site.start_line}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-  return (
-    <div className="insp-section">
-      <div className="section-title">Knowledge</div>
-      {info && (
-        <div className="value-row">
-          {info.entry && <span className="badge" title="Runs without being called by project code">entry: {info.entry.label}</span>}
-          {info.test && <span className="badge">test</span>}
-          {info.complexity > 0 && <span className="badge" title="Cyclomatic complexity: 1 + the decisions it makes">complexity {info.complexity}</span>}
-          {info.auth?.anonymous && <span className="badge small" title="Explicitly open to anonymous callers">anonymous</span>}
-          {info.auth?.roles.map((r) => (
-            <span key={`role:${r}`} className="badge small" title="Role required to call it">
-              role {r}
-            </span>
-          ))}
-          {info.auth?.policies.map((p) => (
-            <span key={`policy:${p}`} className="badge small" title="Policy or guard that protects it">
-              {p}
-            </span>
-          ))}
-          {info.capabilities.map((c) => (
-            <span key={c} className="badge small cap">
-              {c}
-            </span>
-          ))}
-        </div>
-      )}
-      {routes.map((r) => (
-        <div key={`${r.method} ${r.path}`} className="value-row">
-          <span className={`method method-${r.method.toLowerCase()}`}>{r.method}</span>
-          <code>{r.path}</code>
-          <span className="muted">{r.framework}</span>
-        </div>
-      ))}
-      {model && (
-        <table className="model-fields">
-          <tbody>
-            {model.fields.map((f) => (
-              <tr key={f.name}>
-                <td className={f.primary_key ? "pk" : ""}>{f.name}</td>
-                <td className="muted">{f.ty}</td>
-                <td className="muted">{f.target ? `-> ${f.target}` : ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {edges.map(row)}
-    </div>
-  );
-}
+import { ContainerInspector, SymbolInspector } from "./SymbolInspector";
 
 function Flavors({ flavors, language }: { flavors: string[]; language?: Language }) {
   const catalog = useCatalog();
@@ -221,10 +117,9 @@ function exprAt(root: Expr | null, path: string): Expr | null {
 export function Inspector() {
   const { selection } = useUi();
   const { index } = useStructure();
-  const flowSymbol = selection && selection.kind !== "symbol" ? selection.flow : null;
+  const flowSymbol = selection && (selection.kind === "flow-node" || selection.kind === "expr") ? selection.flow : null;
   const flow = useQuery({ queryKey: ["flow", flowSymbol], queryFn: () => api.flow(flowSymbol!), enabled: !!flowSymbol });
   const openFlow = useUi((s) => s.openFlow);
-  const showCalls = useUi((s) => s.showCalls);
 
   if (!selection) {
     return (
@@ -331,74 +226,8 @@ export function Inspector() {
     );
   }
 
+  if (selection.kind === "container") return <ContainerInspector id={selection.id} />;
   const symbol = index?.byId.get(selection.id);
   if (!symbol || !index) return <div className="inspector">…</div>;
-  const structural = (e: StructEdge) => e.kind !== "Contains" && !KNOWLEDGE_KINDS.has(e.kind);
-  const outgoing = index.graph.edges.filter((e) => e.from === symbol.id && structural(e));
-  const incoming = index.graph.edges.filter((e) => e.to === symbol.id && structural(e));
-  const name = (id: string) => index.byId.get(id)?.qualified_name ?? id;
-  return (
-    <div className="inspector">
-      <div className="insp-head">
-        <span className="insp-concept">{symbol.name}</span>
-        <span className="muted">
-          {symbol.external ? "external " : ""}
-          {symbol.kind}
-        </span>
-      </div>
-      {symbol.signature && <pre className="code-snippet">{symbol.signature}</pre>}
-      {symbol.doc && <p className="doc">{symbol.doc}</p>}
-      {symbol.has_flow && (
-        <div className="button-row">
-          <button className="primary" onClick={() => openFlow(symbol.id)}>
-            Open Blueprint
-          </button>
-          <button onClick={() => showCalls(symbol.id)}>Show calls</button>
-          <button onClick={() => useUi.getState().showKnowledge(symbol.id)}>Knowledge</button>
-          <button onClick={(e) => openMenu(e, umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`))} title="UML diagrams of this symbol">
-            UML ▾
-          </button>
-        </div>
-      )}
-      {!symbol.has_flow && !symbol.external && (
-        <div className="button-row">
-          <button onClick={() => useUi.getState().showKnowledge(symbol.id)} title="HTTP calls, DI, tests, throws and writes around it">
-            Show knowledge
-          </button>
-          <button onClick={(e) => openMenu(e, umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`))} title="UML diagrams of this symbol">
-            UML ▾
-          </button>
-        </div>
-      )}
-      <KnowledgeSection id={symbol.id} index={index} />
-      <Flavors flavors={symbol.flavors} language={symbol.language} />
-      {(outgoing.length > 0 || incoming.length > 0) && (
-        <div className="insp-section">
-          <div className="section-title">Relations</div>
-          {outgoing.map((e) => (
-            <div key={`o${e.to}${e.kind}`} className="value-row">
-              {e.kind.toLowerCase()} → <code>{name(e.to)}</code>
-              {e.confidence && <span className={`conf conf-${e.confidence.toLowerCase()}`} title={e.evidence ?? undefined}>{e.confidence.toLowerCase()}</span>}
-            </div>
-          ))}
-          {incoming.map((e) => (
-            <div key={`i${e.from}${e.kind}`} className="value-row">
-              <code>{name(e.from)}</code> → {e.kind.toLowerCase()} this
-              {e.confidence && <span className={`conf conf-${e.confidence.toLowerCase()}`} title={e.evidence ?? undefined}>{e.confidence.toLowerCase()}</span>}
-            </div>
-          ))}
-        </div>
-      )}
-      {symbol.origins.length > 1 && (
-        <div className="insp-section">
-          <div className="section-title">Declared in</div>
-          {symbol.origins.map((o) => (
-            <div key={`${o.file}:${o.start_line}`} className="value-row">
-              {o.file}:{o.start_line}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return <SymbolInspector key={symbol.id} symbol={symbol} index={index} />;
 }
