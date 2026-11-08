@@ -3,7 +3,7 @@
 Nodex turns source code into language-agnostic, Blueprint-style node graphs so a programmer can read code in a language they do not know.
 The same logic looks the same in every language: a C# `foreach`, a TypeScript `for..of` and a Rust `for x in iter` are one **For Each** node.
 
-**Status**: milestones M0–M4.1 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces for .NET programs with replay, exceptions and a call Timeline. Unity Play Mode traces, TypeScript and Rust are on the roadmap.
+**Status**: milestones M0–M4.1 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces for .NET programs with replay, exceptions and a call Timeline. Unity Play Mode traces, TypeScript and Rust are on the roadmap. M9 adds a knowledge graph for C#, TypeScript/JavaScript and Rust — entry points, HTTP routes and the front-end calls that reach them, dependency injection, tests, exceptions and data models — ported from CodeGraph.
 Full documentation lives in the Obsidian vault at `D:\MEGA\Obsidian\Default\Nodex` (start at `Nodex.md`).
 
 ## Quick start
@@ -36,6 +36,9 @@ The server prints a link with a session token and opens it in your browser.
 
 ## Views
 
+- **Overview** — what the project is: entry points, HTTP routes, hotspots (cyclomatic complexity), data models, and relations by kind.
+- **Hierarchy** — folders and namespaces, modules, types and members as boxes that open in place; relations roll up onto the visible boxes.
+- **Knowledge** — HTTP calls from front-end code to back-end routes, dependency injection, tests, thrown and caught exceptions, and data writes, around one symbol or for the whole project. Relations no compiler proves are drawn dashed (inferred) or dotted red (unresolved).
 - **Architecture** — namespaces, imported namespaces and packages.
 - **Types** — classes, interfaces and records, with *extends*, *implements*, *uses* and *creates* edges.
 - **Calls** — callers and callees of a function, including events it raises and who handles them (needs the sidecar).
@@ -50,13 +53,15 @@ The server prints a link with a session token and opens it in your browser.
 | `crates/nodex-ir` | Language-agnostic IR; generates TypeScript types into `web/src/gen` |
 | `crates/nodex-lang-api` | `LanguageFrontend` trait and the lowering kit |
 | `crates/nodex-lang-csharp` | C#/Unity frontend (tree-sitter) |
-| `crates/nodex-core` | Project model, linker, concept catalog, canonical forms |
+| `crates/nodex-core` | Project model, linker, concept catalog, canonical forms, knowledge graph (routes, HTTP links, DI, tests, caught exceptions) |
 | `crates/nodex-trace` | Trace protocol decoder, span resolver, recorder (counts, values, replay timeline) |
 | `crates/nodex-server` | `nodex` CLI, HTTP/WebSocket API, file watcher, semantic worker, run manager, embedded UI |
 | `web/` | React + React Flow + ELK + Monaco UI |
 | `catalog/` | Concept and flavor definitions (single source for code, UI and docs) |
 | `fixtures/` | C#, Unity and Rosetta (same algorithm in C#/TS/Rust) test inputs |
 | `sidecars/` | Planned .NET and Unity helpers (Roslyn semantics, trace runtime, IL weaver) |
+
+Press **Ctrl+K** (or `/`) anywhere to search symbols and views.
 
 ## Development
 
