@@ -79,7 +79,12 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .react-flow__edge-textbg { fill: var(--bg); }
 
 /* Right column */
-.right { display: grid; grid-template-rows: minmax(0, 45%) minmax(0, 1fr); border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
+/* A column of panels: cards on top (Unity, debugger) keep their own height, the Inspector takes up
+   to 45 %, and the code panel always gets the rest, never less than a few lines. */
+.right { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
+.right > * { flex: none; }
+.right > .inspector { flex: 0 1 45%; min-height: 0; }
+.right > :last-child { flex: 1 1 0; min-height: 160px; }
 .inspector { overflow: auto; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .empty-note { color: var(--muted); }
 .insp-head { display: flex; align-items: baseline; gap: 8px; border-left: 4px solid var(--accent-ui); padding-left: 8px; margin-bottom: 6px; }
@@ -331,7 +336,7 @@ button.run.stop { background: #5a2323; border-color: #8a3434; }
 .dbg-more { width: 100%; text-align: left; background: transparent; border-color: transparent; color: var(--muted); font-size: 11px; padding: 2px 6px; }
 
 /* Unity */
-.unity-card { border-bottom: 1px solid var(--line); padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+.unity-card { border-bottom: 1px solid var(--line); padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; max-height: 35vh; overflow: auto; }
 .unity-card p { margin: 0; }
 .unity-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .unity-actions { display: inline-flex; gap: 6px; }
