@@ -15,6 +15,11 @@ const FLAVORS: &[(&str, &str)] = &[
     ("rust", include_str!("../../../catalog/flavors/rust.toml")),
 ];
 
+/// The text of every embedded catalog file (what the lowering cache is keyed on).
+pub(crate) fn embedded_sources() -> impl Iterator<Item = &'static str> {
+    [CONCEPTS, OPERATIONS].into_iter().chain(FLAVORS.iter().map(|(_, text)| *text))
+}
+
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct CategoryInfo {

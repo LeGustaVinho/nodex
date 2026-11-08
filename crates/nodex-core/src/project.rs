@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::{knowledge, link, semantic};
+use crate::{cache, knowledge, link, semantic};
 
 /// Directories never scanned (build output, dependencies, engine caches, VCS).
 pub use nodex_lang_api::IGNORED_DIRS;
@@ -52,6 +52,23 @@ struct FileEntry {
     ir: FileIr,
 }
 
+/// A file lowered while opening, with what the lowering cache needs to keep it.
+struct Lowered {
+    rel: String,
+    entry: FileEntry,
+    stat: Option<cache::Stat>,
+    blob: Blob,
+}
+
+enum Blob {
+    /// Read back from the cache: its bytes are still in the loaded bundle.
+    Cached,
+    /// Lowered now and encoded for the cache.
+    Fresh(Vec<u8>),
+    /// Not for the cache (there is none, or the file did not encode).
+    None,
+}
+
 pub struct Project {
     root: PathBuf,
     frontends: Vec<Arc<dyn LanguageFrontend>>,
@@ -65,6 +82,8 @@ pub struct Project {
     version: u64,
     /// Where each flow graph lives: symbol → (file, index in its flows). Built on first use.
     flow_index: Option<HashMap<String, (String, usize)>>,
+    /// Files the open read back from the lowering cache instead of lowering them.
+    from_cache: usize,
 }
 
 struct SemanticEntry {
@@ -200,6 +219,18 @@ impl Project {
         frontends: Vec<Arc<dyn LanguageFrontend>>,
         progress: &(dyn Fn(OpenProgress) + Sync),
     ) -> anyhow::Result<Self> {
+        Self::open_cached(root, frontends, None, progress)
+    }
+
+    /// [`Project::open_with_progress`] with a lowering cache under `cache` (see [`cache`]):
+    /// files whose size and modification time match the last open are read back instead of
+    /// lowered, and the cache is brought up to date afterwards.
+    pub fn open_cached(
+        root: &Path,
+        frontends: Vec<Arc<dyn LanguageFrontend>>,
+        cache: Option<&Path>,
+        progress: &(dyn Fn(OpenProgress) + Sync),
+    ) -> anyhow::Result<Self> {
         let root = dunce_canonical(root).with_context(|| format!("cannot open {}", root.display()))?;
         if !root.is_dir() {
             bail!("{} is not a directory", root.display());
@@ -215,10 +246,25 @@ impl Project {
             locator: None,
             version: 0,
             flow_index: None,
+            from_cache: 0,
         };
-        let timer = crate::perf::phase("open.walk");
-        let paths = project.source_paths(progress);
-        timer.finish(format_args!("({} files)", paths.len()));
+        // The cache is read while the walk runs: both mostly wait on the disk.
+        let (paths, cached) = rayon::join(
+            || {
+                let timer = crate::perf::phase("open.walk");
+                let paths = project.source_paths(progress);
+                timer.finish(format_args!("({} files)", paths.len()));
+                paths
+            },
+            || {
+                cache.map(|base| {
+                    let timer = crate::perf::phase("open.cache.load");
+                    let cached = cache::LowerCache::load(base, &project.root);
+                    timer.finish(format_args!("({} files)", cached.len()));
+                    cached
+                })
+            },
+        );
         // Detection (each language walks the top of the tree for its manifests) runs only for the
         // languages that have files, and at the same time as lowering: neither needs the other.
         let present: std::collections::HashSet<Language> =
@@ -235,25 +281,48 @@ impl Project {
                 timer.finish(format_args!("({} descriptors)", found.len()));
                 found
             },
-            || project.lower_paths(&paths, progress),
+            || project.lower_paths(&paths, cached.as_ref(), progress),
         );
         project.descriptors = descriptors;
-        project.files.extend(lowered.into_iter().map(|(rel, entry)| (rel, Arc::new(entry))));
+        project.from_cache = lowered.iter().filter(|l| matches!(l.blob, Blob::Cached)).count();
+        if let Some(cached) = &cached {
+            // Rewrite the bundle only when something changed: a file lowered now, or one gone.
+            let fresh = lowered.iter().any(|l| matches!(l.blob, Blob::Fresh(_)));
+            if fresh || project.from_cache != cached.len() {
+                let timer = crate::perf::phase("open.cache.save");
+                cached.save(lowered.iter().filter_map(|l| {
+                    let stat = l.stat?;
+                    let bytes = match &l.blob {
+                        Blob::Cached => cached.bytes(&l.rel, stat)?,
+                        Blob::Fresh(bytes) => bytes,
+                        Blob::None => return None,
+                    };
+                    Some(cache::Entry { rel: &l.rel, stat, bytes })
+                }));
+                timer.finish("");
+            }
+        }
+        project.files.extend(lowered.into_iter().map(|l| (l.rel, Arc::new(l.entry))));
         Ok(project)
     }
 
-    /// Lowers `paths` in parallel.
-    fn lower_paths(&self, paths: &[PathBuf], progress: &(dyn Fn(OpenProgress) + Sync)) -> Vec<(String, FileEntry)> {
+    /// Files the open read back from the lowering cache (0 without a cache).
+    pub fn files_from_cache(&self) -> usize {
+        self.from_cache
+    }
+
+    /// Lowers `paths` in parallel, reading unchanged files back from `cache`.
+    fn lower_paths(&self, paths: &[PathBuf], cache: Option<&cache::LowerCache>, progress: &(dyn Fn(OpenProgress) + Sync)) -> Vec<Lowered> {
         let timer = crate::perf::phase("open.lower");
         let total = paths.len();
         progress(OpenProgress { phase: "reading", done: 0, total });
         // About fifty updates whatever the size, from whichever thread reaches each step.
         let step = total.div_ceil(50).max(1);
         let done = std::sync::atomic::AtomicUsize::new(0);
-        let lowered: Vec<(String, FileEntry)> = paths
+        let lowered: Vec<Lowered> = paths
             .par_iter()
             .filter_map(|p| {
-                let lowered = self.lower_path(p);
+                let lowered = self.lower_path_cached(p, cache);
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if n % step == 0 || n == total {
                     progress(OpenProgress { phase: "reading", done: n, total });
@@ -261,7 +330,8 @@ impl Project {
                 lowered
             })
             .collect();
-        timer.finish(format_args!("({} files lowered)", lowered.len()));
+        let cached = lowered.iter().filter(|l| matches!(l.blob, Blob::Cached)).count();
+        timer.finish(format_args!("({} files, {} lowered, {cached} from the cache)", lowered.len(), lowered.len() - cached));
         lowered
     }
 
@@ -315,6 +385,7 @@ impl Project {
             locator: None,
             version: 0,
             flow_index: None,
+            from_cache: 0,
         }
     }
 
@@ -361,6 +432,11 @@ impl Project {
     }
 
     fn lower_path(&self, path: &Path) -> Option<(String, FileEntry)> {
+        self.lower_path_cached(path, None).map(|l| (l.rel, l.entry))
+    }
+
+    /// Lowers the file at `path`, or reads it back from `cache` when it has not changed.
+    fn lower_path_cached(&self, path: &Path, cache: Option<&cache::LowerCache>) -> Option<Lowered> {
         let frontend = self.frontend_for(path)?;
         let rel = self.relative(path)?;
         if Self::is_ignored(&rel) {
@@ -370,10 +446,23 @@ impl Project {
         if meta.len() > MAX_FILE_BYTES {
             return None;
         }
+        let language = frontend.id();
+        // Stat before reading: a change made while reading leaves a newer time on disk, so
+        // the next open lowers the file again.
+        let stat = cache.and_then(|_| cache::Stat::of(&meta));
+        if let (Some(cache), Some(stat)) = (cache, stat)
+            && let Some(ir) = cache.get(&rel, stat)
+        {
+            return Some(Lowered { rel, entry: FileEntry { language, ir }, stat: Some(stat), blob: Blob::Cached });
+        }
         let bytes = std::fs::read(path).ok()?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let ir = frontend.lower_file(&SourceFile { rel_path: rel.clone(), text });
-        Some((rel, FileEntry { language: frontend.id(), ir }))
+        let blob = match stat.and_then(|_| cache::encode(&ir)) {
+            Some(bytes) => Blob::Fresh(bytes),
+            None => Blob::None,
+        };
+        Some(Lowered { rel, entry: FileEntry { language, ir }, stat, blob })
     }
 
     /// Re-lowers (or removes) the file at `path` after a change on disk. Returns the relative
@@ -630,7 +719,7 @@ fn relative_to(root: &Path, path: &Path) -> Option<String> {
 }
 
 /// Canonicalizes without the `\\?\` prefix Windows adds, so paths stay readable.
-fn dunce_canonical(path: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn dunce_canonical(path: &Path) -> std::io::Result<PathBuf> {
     let canonical = path.canonicalize()?;
     #[cfg(windows)]
     {

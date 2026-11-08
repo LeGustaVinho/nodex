@@ -6,6 +6,7 @@
 //! [`LanguageFrontend`]: nodex_lang_api::LanguageFrontend
 //! [`StructureGraph`]: nodex_ir::StructureGraph
 
+pub mod cache;
 pub mod canon;
 pub mod catalog;
 pub mod knowledge;

@@ -19,7 +19,7 @@
 //! `cargo xtask version <x.y.z>` sets the version everywhere it is written; `cargo xtask notes
 //! <x.y.z>` prints that version's CHANGELOG section (the release notes).
 //!
-//! Performance: `cargo xtask bench-open <folder> [--semantic] [--runs N]` times opening a project
+//! Performance: `cargo xtask bench-open <folder> [--semantic] [--runs N] [--no-cache]` times opening a project
 //! phase by phase (see `crates/nodex-server/examples/bench_open.rs`); `cargo xtask gen-corpus
 //! <out> [--files N] [--lang cs|ts|rs]` writes a large synthetic project from a sample fixture.
 
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
             eprintln!("       cargo xtask version <x.y.z>");
             eprintln!("       cargo xtask notes <x.y.z>");
             eprintln!("       cargo xtask licenses   (after dist --no-bundle)");
-            eprintln!("       cargo xtask bench-open <folder> [--semantic] [--runs N]");
+            eprintln!("       cargo xtask bench-open <folder> [--semantic] [--runs N] [--no-cache]");
             eprintln!("       cargo xtask gen-corpus <out> [--files N] [--lang cs|ts|rs]");
             return ExitCode::from(2);
         }

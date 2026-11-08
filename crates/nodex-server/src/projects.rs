@@ -160,6 +160,11 @@ pub fn data_dir() -> PathBuf {
     base.unwrap_or_else(std::env::temp_dir).join("nodex")
 }
 
+/// Where the lowering cache of every opened project lives (one folder per project root).
+pub fn cache_dir() -> PathBuf {
+    data_dir().join("cache")
+}
+
 fn recent_file() -> Option<PathBuf> {
     let file = config_dir().map(|d| d.join("recent.json"))?;
     // Earlier builds kept the list in %APPDATA%\nodex: bring it over once.
@@ -229,7 +234,7 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
         let progress = |p: nodex_core::OpenProgress| {
             let _ = events.send(ServerEvent::ProjectProgress { phase: p.phase.to_owned(), done: p.done, total: p.total });
         };
-        Project::open_with_progress(&dir, frontends, &progress)
+        Project::open_cached(&dir, frontends, Some(&cache_dir()), &progress)
     })
         .await
         .map_err(|e| e.to_string())?

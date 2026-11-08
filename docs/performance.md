@@ -9,7 +9,10 @@ opened. This page records how it is measured and the numbers after each round of
 cargo xtask bench-open <folder> [--runs N] [--semantic] [--slowest N]
 ```
 
-It opens the folder in-process the way the server does, then prints one line per step:
+It opens the folder in-process the way the server does, through the lowering cache (see
+[Reopening](#reopening-the-lowering-cache)). It removes the folder's cache first, so run 1 is a
+cold open and later runs are warm reopens; `--no-cache` opens without it. Then it prints one line
+per step:
 
 - `open`: walk plus lowering;
 - `structure + knowledge`: the first `/api/structure`;
@@ -17,7 +20,7 @@ It opens the folder in-process the way the server does, then prints one line per
 - `time to first data`, the sum of the three.
 
 The timings per language of `detect` come first. Stderr carries the finer `nodex_perf` lines
-(`open.detect`, `open.walk`, `open.lower`, `structure.link`, `structure.semantic`,
+(`open.detect`, `open.walk`, `open.cache.load`, `open.lower`, `open.cache.save`, `structure.link`, `structure.semantic`,
 `structure.knowledge`, `structure.merge`). The server writes the same lines to its log.
 
 The other options:
@@ -154,9 +157,72 @@ Semantic analysis on warcodes, which runs in the background and refreshes the gr
 
 ### Not done yet
 
-- **A per-file cache on disk.** It would make reopening a project fast; this round was about the
-  first open.
 - **Lazy flow graphs.** Lowering builds every Blueprint up front, and knowledge reads them for
   complexity and throws.
 - **Faster MSBuild loading for Unity solutions.** It takes about 5–6 s on warcodes.
 - **Reusing rust-analyzer's `.scip` output** when nothing changed.
+
+## Reopening: the lowering cache
+
+Lowering was the main cost of an open, so reopening a project Nodex has opened before reads
+the files that did not change back from disk instead of lowering them again
+(`crates/nodex-core/src/cache.rs`).
+
+- **Where**: one bundle per project, `<data dir>/cache/<hash of the root>/files.bin`. The data
+  dir is `%LOCALAPPDATA%\io.github.legustavinho.nodex` on Windows.
+- **Key**: each entry is keyed by its relative path, size and modification time. The whole
+  bundle is keyed by a stamp of:
+  - the Nodex version;
+  - the embedded catalog;
+  - the bundle layout;
+  - the size and time of the running executable, so a development rebuild never reads a stale
+    lowering.
+- **Value**: the file's `FileIr` as MessagePack with named fields, LZ4-compressed, with a
+  checksum. Named fields are needed because symbols leave their default fields out, which
+  postcard or bincode cannot read back. The compression makes it about 6× smaller: field
+  names and the file path in every span repeat a lot.
+- **Open**: the bundle is read while the walk runs. Files whose size and time match are decoded
+  instead of lowered, in parallel.
+- **Write**: afterwards the bundle is rewritten in one atomic write (temporary file + rename),
+  only if a file was lowered or one disappeared. Gone files are pruned. Files changed in the
+  last 2 seconds are left out, because a second change within the timestamp resolution could
+  keep the same size and time.
+- **Safety**: a missing, truncated, damaged or old-format bundle, or a damaged entry, only means
+  those files are lowered again. The open never fails because of the cache
+  (`crates/nodex-core/tests/lowering_cache.rs`).
+
+The server's open and `nodex <folder>` use the cache.
+
+Measured with `cargo xtask bench-open <folder> --runs 2`, same machine, release build. Run 1 is
+cold (the bench removes the folder's cache first) and run 2 is warm. Two repetitions were
+within about 10% of each other. The structure and knowledge payload hashes are identical
+between the cold and warm runs on all four projects.
+
+| step | warcodes cold | warm | cs10k cold | warm | ts10k cold | warm | rs10k cold | warm |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| cache load | – | 5 | – | 26 | – | 12 | – | 14 |
+| lowering (or reading back) | 752 | 41 | 963 | 464 | 462 | 90 | 437 | 117 |
+| detect (alongside) | 35 | 44 | 1,032 | 275 | 503 | 188 | 442 | 138 |
+| cache save | 20 | – | 126 | – | 61 | – | 65 | – |
+| **open** | **796** | **61** | **1,322** | **608** | **658** | **277** | **579** | **214** |
+| structure + knowledge | 121 | 122 | 1,215 | 1,015 | 460 | 406 | 564 | 504 |
+| **time to first data** | **935** | **202** | **2,649** | **1,720** | **1,162** | **726** | **1,197** | **769** |
+| bundle on disk | 18 MB | | 85 MB | | 43 MB | | 49 MB | |
+
+What is left on a warm reopen:
+
+- **The structure + knowledge build** is now most of the time to first data (it is not cached).
+- **cs10k reads back slowly** (464 ms for 373 MB of decoded MessagePack). The time goes into the
+  Windows heap allocator, not the format. A probe with mimalloc as the global allocator showed:
+  - decode on 32 threads: 280 → 41 ms;
+  - decompression: 120 → 13 ms;
+  - freeing the decoded files: 1.4 s → 0.12 s.
+
+  The same contention makes later opens in one process slower. Runs 3 and 4 of a
+  `--runs 5` bench took about 2 s to read cs10k back, after a whole project had been freed.
+  Switching the app's global allocator is a separate decision; it would speed up the cold
+  open as well.
+- **Detection** still runs on every open (275 ms on cs10k) and now outlasts the warm lowering on
+  ts10k and rs10k.
+- **Old projects' bundles** are never removed: each project opened once keeps its folder under
+  `cache/` until the user deletes it.

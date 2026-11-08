@@ -9,6 +9,9 @@
 //! `/api/knowledge` would. With `--semantic`, the semantic providers then run once and the graph
 //! is rebuilt with their facts. `--slowest N` lowers every file again, one at a time, and lists
 //! the N slowest. The `nodex_perf` lines on stderr break each step down further.
+//!
+//! Opens go through the lowering cache the server uses; the folder's cache is removed first, so
+//! run 1 is a cold open and later runs are warm reopens. `--no-cache` opens without it.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -20,6 +23,7 @@ struct Args {
     semantic: bool,
     runs: usize,
     slowest: usize,
+    cache: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -27,18 +31,20 @@ fn parse_args() -> Result<Args, String> {
     let mut semantic = false;
     let mut runs = 1;
     let mut slowest = 0;
+    let mut cache = true;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--semantic" => semantic = true,
+            "--no-cache" => cache = false,
             "--runs" => runs = args.next().and_then(|n| n.parse().ok()).ok_or("--runs needs a number")?,
             "--slowest" => slowest = args.next().and_then(|n| n.parse().ok()).ok_or("--slowest needs a number")?,
             _ if folder.is_none() => folder = Some(PathBuf::from(arg)),
             _ => return Err(format!("unexpected argument {arg}")),
         }
     }
-    let folder = folder.ok_or("usage: bench_open <folder> [--semantic] [--runs N] [--slowest N]")?;
-    Ok(Args { folder, semantic, runs: runs.max(1), slowest })
+    let folder = folder.ok_or("usage: bench_open <folder> [--semantic] [--runs N] [--slowest N] [--no-cache]")?;
+    Ok(Args { folder, semantic, runs: runs.max(1), slowest, cache })
 }
 
 fn ms(d: Duration) -> String {
@@ -72,10 +78,17 @@ fn main() {
         println!("{:<22} {}   {}", format!("{:?}", frontend.id()), ms(t), if found.is_some() { "found" } else { "-" });
     }
 
+    let cache = args.cache.then(nodex_server::projects::cache_dir);
+    if let Some(base) = &cache
+        && let Err(e) = nodex_core::cache::clear(base, &args.folder)
+    {
+        eprintln!("cannot clear the lowering cache: {e}");
+    }
     let mut last = None;
     for run in 1..=args.runs {
         println!("\n== run {run}/{} : {}", args.runs, args.folder.display());
-        let (project, open) = time(|| Project::open(&args.folder, nodex_server::frontends()));
+        let (project, open) =
+            time(|| Project::open_cached(&args.folder, nodex_server::frontends(), cache.as_deref(), &|_| {}));
         let mut project = match project {
             Ok(p) => p,
             Err(e) => {
@@ -90,7 +103,7 @@ fn main() {
         let (knowledge_json, knowledge_json_t) = time(|| serde_json::to_vec(&*knowledge).unwrap());
         let files = project.files().count();
         let flows = project.flows().count();
-        println!("open (walk + lower)    {}   {files} files, {flows} flows", ms(open));
+        println!("open (walk + lower)    {}   {files} files, {flows} flows, {} from the cache", ms(open), project.files_from_cache());
         println!("summary json           {}   {}", ms(summary_t), mb(summary.len()));
         println!("structure + knowledge  {}   {} symbols, {} edges", ms(structure_t), graph.symbols.len(), graph.edges.len());
         println!("knowledge (cached)     {}", ms(knowledge_t));

@@ -55,7 +55,7 @@ pub async fn start(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
     let project = match opts.project {
         Some(path) => {
             let started = Instant::now();
-            let project = tokio::task::spawn_blocking(move || Project::open(&path, frontends())).await??;
+            let project = tokio::task::spawn_blocking(move || Project::open_cached(&path, frontends(), Some(&projects::cache_dir()), &|_| {})).await??;
             tracing::info!("loaded {} ({} files) in {:?}", project.root().display(), project.files().count(), started.elapsed());
             project
         }
