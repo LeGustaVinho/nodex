@@ -6,6 +6,10 @@ The release workflow publishes the section of the version it builds as the relea
 
 ## [Unreleased]
 
+### Added
+
+- Every panel can be resized: drag the edge of the sidebar, the right panel, the line between the Inspector and the code, the top of the Problems list or the top of the console. Double-click an edge to go back to the default size. Nodex keeps the sizes for the next time.
+
 ### Changed
 
 - Large projects open much faster. A Unity project of 1,500 C# files shows its Overview in about 1 second instead of more than 10, and a project of 10,000 TypeScript files in about 2 seconds.
@@ -18,6 +22,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 - The Architecture view of a project with many interdependent namespaces never finished laying out.
 - After opening another project, the sidebar could keep showing the previous one.
+- In a Unity project without the Nodex package, the code panel next to a Blueprint showed only its title.
 
 ## [0.1.0] - 2026-11-08
 

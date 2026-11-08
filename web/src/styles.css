@@ -23,7 +23,11 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 
 .app {
   display: grid;
-  grid-template-columns: clamp(190px, 17vw, 270px) minmax(0, 1fr) clamp(280px, 30vw, 460px);
+  /* --sidebar-w and --right-w are set by dragging the splitters (layout.ts). */
+  grid-template-columns:
+    min(var(--sidebar-w, clamp(190px, 17vw, 270px)), 45vw)
+    minmax(0, 1fr)
+    min(var(--right-w, clamp(280px, 30vw, 460px)), 60vw);
   grid-template-rows: 44px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
@@ -48,7 +52,7 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .status.off { color: #e74c3c; }
 
 /* Sidebar */
-.sidebar { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.sidebar { position: relative; min-width: 0; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 .search { margin: 8px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; }
 .tree { overflow: auto; flex: 1; padding-bottom: 12px; }
 .row { display: flex; align-items: center; }
@@ -65,7 +69,7 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .sym-namespace { color: #9aa4b2; }
 .sym-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sym-flow { margin-left: auto; color: #4fa36b; font-size: 9px; }
-.problems { border-top: 1px solid var(--line); padding: 6px 8px; max-height: 30%; overflow: auto; }
+.problems { flex: none; border-top: 1px solid var(--line); padding: 6px 8px; height: var(--problems-h, auto); max-height: var(--problems-h, 30%); overflow: auto; }
 .problem { color: #f5b041; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 10px 0 6px; }
 
@@ -81,9 +85,9 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 /* Right column */
 /* A column of panels: cards on top (Unity, debugger) keep their own height, the Inspector takes up
    to 45 %, and the code panel always gets the rest, never less than a few lines. */
-.right { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
+.right { position: relative; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
 .right > * { flex: none; }
-.right > .inspector { flex: 0 1 45%; min-height: 0; }
+.right > .inspector { flex: 0 1 var(--inspector-h, 45%); min-height: 0; }
 .right > :last-child { flex: 1 1 0; min-height: 160px; }
 .inspector { overflow: auto; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .empty-note { color: var(--muted); }
@@ -214,7 +218,7 @@ button.run.stop { background: #5a2323; border-color: #8a3434; }
 .run-code { font-size: 11px; font-family: var(--mono); }
 .run-code.ok { color: #8fd1a0; }
 .run-code.bad { color: #e57373; }
-.console { position: absolute; left: 0; right: 0; bottom: 0; height: 34%; min-height: 120px; background: #0f1114f2; border-top: 1px solid var(--line); display: flex; flex-direction: column; z-index: 6; }
+.console { position: absolute; left: 0; right: 0; bottom: 0; height: var(--console-h, 34%); min-height: 80px; max-height: calc(100% - 40px); background: #0f1114f2; border-top: 1px solid var(--line); display: flex; flex-direction: column; z-index: 6; }
 .console-head { display: flex; align-items: center; gap: 10px; padding: 4px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .console-head .muted { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .console-head button { padding: 0 8px; }
@@ -541,3 +545,14 @@ button.semantic { cursor: pointer; background: transparent; }
   .loading, .loading-overlay { animation: none; }
 }
 .code-error { position: absolute; left: 8px; right: 8px; top: 8px; z-index: 6; background: #3a1d1d; border: 1px solid #6b2a2a; color: #f5b5b5; border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+
+/* Splitters (components/Splitter.tsx): drag to resize a panel, double-click to reset it. */
+.splitter { flex: none; position: relative; z-index: 10; touch-action: none; background: transparent; transition: background 0.12s; }
+.splitter-x { width: 6px; cursor: col-resize; }
+.splitter-y { height: 6px; margin: -3px 0; cursor: row-resize; }
+.splitter:hover, .splitter:focus-visible, body.resizing-x .splitter-x:active, body.resizing-y .splitter-y:active { background: rgba(245, 176, 65, 0.55); outline: none; }
+.splitter.edge-right { position: absolute; top: 0; bottom: 0; right: -4px; }
+.splitter.edge-left { position: absolute; top: 0; bottom: 0; left: -4px; }
+.splitter.edge-top { position: absolute; left: 0; right: 0; top: -3px; margin: 0; }
+body.resizing-x, body.resizing-x * { cursor: col-resize !important; user-select: none; }
+body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select: none; }
