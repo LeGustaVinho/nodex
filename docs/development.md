@@ -96,7 +96,7 @@ cargo install tauri-cli --version "^2" --locked
 cargo xtask dist
 ```
 
-The installer lands in `target/release/bundle/nsis/`. It installs per user in `%LOCALAPPDATA%\Nodex` (no administrator rights) and adds "Open with Nodex" to folders in Explorer. Nodex keeps its settings in `%APPDATA%\io.github.legustavinho.nodex` and its logs, debug adapters and sample copies in `%LOCALAPPDATA%\io.github.legustavinho.nodex`.
+The app is built in its own target folder: `target/desktop/release/Nodex.exe`, and the installer in `target/desktop/release/bundle/nsis/`. (The app is `Nodex.exe` and the CLI is `nodex.exe`, one and the same file name on Windows: in a shared `target/release/` a release build of the CLI replaced the app.) The installer installs per user in `%LOCALAPPDATA%\Nodex` (no administrator rights) and adds "Open with Nodex" to folders in Explorer. Nodex keeps its settings in `%APPDATA%\io.github.legustavinho.nodex` and its logs, debug adapters and sample copies in `%LOCALAPPDATA%\io.github.legustavinho.nodex`.
 
 Other tasks:
 

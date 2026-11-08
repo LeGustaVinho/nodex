@@ -8,13 +8,15 @@
 //! 3. the sample projects (`samples/`);
 //! 4. the installer, with `cargo tauri build` and `crates/nodex-desktop/tauri.bundle.json`, which
 //!    adds the staged resources (kept out of `tauri.conf.json` so plain `cargo build` works
-//!    without them).
+//!    without them). The app is built in its own target folder, `target/desktop/` (see
+//!    [`desktop_target`]): the app is `Nodex.exe` and the `nodex` CLI is `nodex.exe`, the same
+//!    file on Windows, so a release build of the CLI in `target/release/` overwrote the app.
 //!
 //! Options: `--no-bundle` stops after staging; `--skip-web` reuses `web/dist`.
 //! Needs pnpm, npm, the .NET SDK and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).
 //!
 //! With `TAURI_SIGNING_PRIVATE_KEY` set (the release workflow), it also signs the installer for
-//! the updater and writes `target/release/bundle/latest.json`, the update manifest.
+//! the updater and writes `target/desktop/release/bundle/latest.json`, the update manifest.
 //!
 //! `cargo xtask version <x.y.z>` sets the version everywhere it is written; `cargo xtask notes
 //! <x.y.z>` prints that version's CHANGELOG section (the release notes).
@@ -78,6 +80,11 @@ fn stage_dir(root: &Path) -> PathBuf {
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the repository").to_path_buf()
+}
+
+/// Where `cargo tauri build` builds the desktop app: `release/Nodex.exe` and `release/bundle/`.
+fn desktop_target(root: &Path) -> PathBuf {
+    root.join("target").join("desktop")
 }
 
 fn dist(args: &[String]) -> Result {
@@ -155,7 +162,9 @@ fn dist(args: &[String]) -> Result {
     if !has_cli {
         return Err("the Tauri CLI is missing: cargo install tauri-cli --version \"^2\" --locked".into());
     }
-    let nsis = root.join("target/release/bundle/nsis");
+    let target = desktop_target(&root);
+    let bundles = target.join("release").join("bundle");
+    let nsis = bundles.join("nsis");
     // Installers of other versions would be published too.
     let _ = fs::remove_dir_all(&nsis);
     let signed = std::env::var_os("TAURI_SIGNING_PRIVATE_KEY").is_some_and(|k| !k.is_empty());
@@ -169,17 +178,21 @@ fn dist(args: &[String]) -> Result {
     if let Some(sign) = std::env::var("WINDOWS_SIGN_COMMAND").ok().filter(|c| !c.trim().is_empty()) {
         tauri.args(["--config", &format!(r#"{{"bundle":{{"windows":{{"signCommand":{}}}}}}}"#, json_string(&sign))]);
     }
-    run(tauri.env("CARGO_ENCODED_RUSTFLAGS", remap_flags(&root)).current_dir(&desktop))?;
+    run(tauri
+        .env("CARGO_ENCODED_RUSTFLAGS", remap_flags(&root))
+        .env("CARGO_TARGET_DIR", &target)
+        .current_dir(&desktop))?;
 
     let version = workspace_version(&root)?;
     let installer = nsis.join(format!("Nodex_{version}_x64-setup.exe"));
     require(&installer)?;
+    println!("App: {}", target.join("release").join("Nodex.exe").display());
     println!("Installer: {}", installer.display());
     if signed {
         let sig_path = nsis.join(format!("Nodex_{version}_x64-setup.exe.sig"));
         let signature = fs::read_to_string(&sig_path).map_err(|e| format!("no updater signature at {}: {e}", sig_path.display()))?;
         let manifest = update_manifest(&version, &release_notes(&version).unwrap_or_default(), signature.trim());
-        let path = root.join("target/release/bundle/latest.json");
+        let path = bundles.join("latest.json");
         fs::write(&path, manifest).map_err(|e| e.to_string())?;
         println!("Update manifest: {}", path.display());
     }
