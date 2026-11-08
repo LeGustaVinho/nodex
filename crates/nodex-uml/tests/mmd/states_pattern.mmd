@@ -1,0 +1,8 @@
+stateDiagram-v2
+  state "Red" as n0
+  state "Green" as n1
+  state "Yellow" as n2
+  [*] --> n0
+  n1 --> n2 : Tick (Next)
+  n0 --> n1 : Tick (Next)
+  n2 --> n0 : Tick (Next)

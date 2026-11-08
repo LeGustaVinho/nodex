@@ -303,8 +303,8 @@ export function hierarchyGraph(
 export const RELATION_GROUPS: { id: string; label: string; kinds: StructEdgeKind[] }[] = [
   { id: "calls", label: "calls", kinds: ["Calls", "Raises", "Subscribes"] },
   { id: "types", label: "types", kinds: ["Inherits", "Implements", "Compatible", "Instantiates", "References"] },
-  { id: "imports", label: "imports", kinds: ["Imports", "DependsOn"] },
-  { id: "knowledge", label: "knowledge", kinds: ["HttpCalls", "ResolvesDi", "Tests", "Throws", "CaughtBy", "Mutates"] },
+  { id: "imports", label: "imports", kinds: ["Imports"] },
+  { id: "knowledge", label: "knowledge", kinds: ["HttpCalls", "ResolvesDi", "DependsOn", "Tests", "Throws", "CaughtBy", "Mutates"] },
 ];
 
 export function kindsOf(groups: readonly string[]): Set<StructEdgeKind> {

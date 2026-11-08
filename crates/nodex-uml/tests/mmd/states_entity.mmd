@@ -1,0 +1,10 @@
+stateDiagram-v2
+  state "Pending" as n0
+  state "Paid" as n1
+  state "Cancelled" as n2
+  [*] --> n0
+  n0 --> n2 : POST /api/Orders/‹id›/cancel [order != null]
+  n2 --> [*]
+  note right of n1 : never set
+  classDef ctx fill:#1b1f26,stroke:#4b5563,color:#9aa4b2,stroke-dasharray:4 3
+  class n1 ctx

@@ -4,6 +4,7 @@ import type { DiFact } from "./DiFact";
 import type { HttpCallFact } from "./HttpCallFact";
 import type { ModelInfo } from "./ModelInfo";
 import type { ResolvedRoute } from "./ResolvedRoute";
+import type { StateMachineFact } from "./StateMachineFact";
 import type { SymbolInfo } from "./SymbolInfo";
 
 /**
@@ -13,4 +14,8 @@ export type ProjectKnowledge = { routes: Array<ResolvedRoute>, http_calls: Array
 /**
  * Symbols with knowledge or a body, sorted by id.
  */
-symbols: Array<SymbolInfo>, };
+symbols: Array<SymbolInfo>, 
+/**
+ * State machines declared with a library.
+ */
+state_machines: Array<StateMachineFact>, };

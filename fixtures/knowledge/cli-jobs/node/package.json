@@ -1,0 +1,1 @@
+{ "name": "cli-jobs-node", "dependencies": { "commander": "^12.0.0", "node-cron": "^3.0.0", "kafkajs": "^2.2.0", "amqplib": "^0.10.0" } }

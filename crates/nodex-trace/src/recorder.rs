@@ -13,6 +13,10 @@ use crate::resolve::{Location, Resolver};
 pub const MAX_TIMELINE: usize = 2_000_000;
 /// Call spans beyond this are not stored.
 pub const MAX_SPANS: usize = 500_000;
+/// Longest argument, return or exception text kept on a call span.
+pub const MAX_SPAN_TEXT: usize = 120;
+/// Arguments kept per call span.
+pub const MAX_SPAN_ARGS: usize = 6;
 
 /// The node a thread is executing.
 #[derive(Serialize, TS, Clone, Debug, PartialEq)]
@@ -73,7 +77,7 @@ pub struct StepsPage {
 }
 
 /// One execution of a function on a thread (for the flame chart).
-#[derive(Serialize, TS, Clone, Debug, PartialEq)]
+#[derive(Serialize, TS, Clone, Debug, PartialEq, Default)]
 #[ts(export)]
 pub struct CallSpan {
     pub thread: i32,
@@ -90,6 +94,24 @@ pub struct CallSpan {
     pub threw: bool,
     /// Still running when the recording was read.
     pub open: bool,
+    /// Identifier of this execution, unique and stable within a run (assigned when it starts).
+    pub id: u32,
+    /// The execution that was running on the same thread when this one started (its caller),
+    /// `None` for an outermost call. Refers to [`CallSpan::id`] even when that span is not in
+    /// the same page.
+    pub parent: Option<u32>,
+    /// Flow node of the caller that was executing when this call started (the call statement),
+    /// when the caller's position is known.
+    pub call_site: Option<String>,
+    /// For a resumed async method or iterator (`resumed`), the most recent fresh call of the same
+    /// function: the invocation this continuation belongs to.
+    pub resumes: Option<u32>,
+    /// Argument values as `name = value`, shortened.
+    pub args: Vec<String>,
+    /// Returned value, shortened.
+    pub ret: Option<String>,
+    /// Exception message when an exception was thrown while this call ran, shortened.
+    pub exception: Option<String>,
 }
 
 #[derive(Serialize, TS, Clone, Debug, Default, PartialEq)]
@@ -111,6 +133,19 @@ struct SpanRec {
     depth: u32,
     resumed: bool,
     threw: bool,
+    calling: Calling,
+}
+
+/// Who started an execution and what it carried, kept from `Enter` to the span.
+#[derive(Clone, Default)]
+struct Calling {
+    id: u32,
+    parent: Option<u32>,
+    call_site: Option<u32>,
+    resumes: Option<u32>,
+    args: Vec<String>,
+    ret: Option<String>,
+    exception: Option<String>,
 }
 
 enum Entry {
@@ -128,6 +163,17 @@ struct Frame {
     args: Vec<String>,
     start: i64,
     resumed: bool,
+    calling: Calling,
+}
+
+/// Shortens a value shown on a call span.
+fn short(text: &str) -> String {
+    if text.chars().count() <= MAX_SPAN_TEXT {
+        return text.to_owned();
+    }
+    let mut out: String = text.chars().take(MAX_SPAN_TEXT - 1).collect();
+    out.push('…');
+    out
 }
 
 #[derive(Default)]
@@ -182,6 +228,10 @@ pub struct Recorder {
     dropped: u64,
     /// Highest frame number received per process (see [`RecordKind::Sequence`]).
     sequences: HashMap<i32, i32>,
+    /// Next [`CallSpan::id`].
+    next_call: u32,
+    /// Latest fresh (not resumed) call of each flow, for [`CallSpan::resumes`].
+    last_call: HashMap<u32, u32>,
 }
 
 impl Recorder {
@@ -227,6 +277,8 @@ impl Recorder {
             events: 0,
             dropped: 0,
             sequences: HashMap::new(),
+            next_call: 0,
+            last_call: HashMap::new(),
         }
     }
 
@@ -306,6 +358,22 @@ impl Recorder {
                     *self.calls.entry(f).or_default() += 1;
                     self.changed_calls.insert(f);
                 }
+                // The caller is whatever runs on this thread now. A resumed async method or
+                // iterator is started by the scheduler (often nothing traced), so it also
+                // records the latest fresh call of its function: the invocation it continues.
+                let id = self.next_call;
+                self.next_call += 1;
+                let caller = self.threads.get(&r.thread).and_then(|s| s.last());
+                let calling = Calling {
+                    id,
+                    parent: caller.map(|c| c.calling.id),
+                    call_site: caller.and_then(|c| c.last_node),
+                    resumes: if is_resume { flow.and_then(|f| self.last_call.get(&f).copied()) } else { None },
+                    ..Calling::default()
+                };
+                if let (Some(f), false) = (flow, is_resume) {
+                    self.last_call.insert(f, id);
+                }
                 self.threads.entry(r.thread).or_default().push(Frame {
                     method: r.method,
                     flow,
@@ -313,6 +381,7 @@ impl Recorder {
                     args: Vec::new(),
                     start: r.micros,
                     resumed: is_resume,
+                    calling,
                 });
             }
             RecordKind::Step => {
@@ -360,6 +429,12 @@ impl Recorder {
                     .map(|f| {
                         if r.kind == RecordKind::Arg {
                             f.args.push(text.clone());
+                            if f.calling.args.len() < MAX_SPAN_ARGS {
+                                f.calling.args.push(short(&text));
+                            }
+                        }
+                        if r.kind == RecordKind::Return {
+                            f.calling.ret = Some(short(&value));
                         }
                         (f.flow, f.last_node, f.args.join(", "))
                     });
@@ -385,6 +460,9 @@ impl Recorder {
             }
             RecordKind::Exit => self.pop(r.thread, r.method, r.micros),
             RecordKind::Throw => {
+                if let Some(top) = self.threads.get_mut(&r.thread).and_then(|s| s.last_mut()) {
+                    top.calling.exception = Some(short(r.text.as_deref().unwrap_or("exception")));
+                }
                 let current = self.threads.get(&r.thread).and_then(|s| s.last()).map(|f| (f.flow, f.last_node));
                 let Some((Some(flow), Some(node))) = current else { return };
                 *self.throws.entry((flow, node)).or_default() += 1;
@@ -423,6 +501,7 @@ impl Recorder {
                     resumed: f.resumed,
                     // Only frames above the one that returned normally were unwound.
                     threw: threw || i > 0,
+                    calling: f.calling,
                 });
             }
         }
@@ -533,40 +612,90 @@ impl Recorder {
     /// Function executions over time, for the flame chart (finished ones plus those still
     /// running), ordered by start time. Times are microseconds since the program started tracing.
     pub fn calls(&self, limit: usize) -> CallsPage {
+        let mut spans = self.all_spans();
+        let total = spans.len() as u32;
+        spans.truncate(limit);
+        CallsPage { total, start: self.first_micros.unwrap_or(0), end: self.last_micros, spans }
+    }
+
+    /// The execution `root` and every call made under it (its callees, theirs, ... and the
+    /// continuations of resumed async methods it started), in start order, at most `limit`.
+    /// Empty when `root` is unknown.
+    pub fn span_tree(&self, root: u32, limit: usize) -> CallsPage {
+        let all = self.all_spans();
+        let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
+        let mut root_at = None;
+        for (i, s) in all.iter().enumerate() {
+            if s.id == root {
+                root_at = Some(i);
+            }
+            // A continuation started by no traced caller belongs to the invocation it resumes.
+            if let Some(p) = s.parent.or(s.resumes) {
+                children.entry(p).or_default().push(i);
+            }
+        }
+        let Some(root_at) = root_at else { return CallsPage::default() };
+        let mut picked = vec![root_at];
+        let mut truncated = false;
+        let mut queue = std::collections::VecDeque::from([root]);
+        while let Some(id) = queue.pop_front() {
+            for &i in children.get(&id).map(Vec::as_slice).unwrap_or(&[]) {
+                if picked.len() >= limit.max(1) {
+                    truncated = true;
+                    break;
+                }
+                picked.push(i);
+                queue.push_back(all[i].id);
+            }
+        }
+        // `total` counts the whole tree only when it fit.
+        let total = if truncated { picked.len() as u32 + 1 } else { picked.len() as u32 };
+        picked.sort_by_key(|&i| (all[i].start, all[i].depth, all[i].id));
+        let spans: Vec<CallSpan> = picked.into_iter().map(|i| all[i].clone()).collect();
+        let start = spans.first().map(|s| s.start).unwrap_or(0);
+        let end = spans.iter().map(|s| s.end).max().unwrap_or(start);
+        CallsPage { total, start, end, spans }
+    }
+
+    fn call_span(&self, thread: i32, flow: u32, depth: u32, times: (i64, i64), state: (bool, bool, bool), calling: &Calling) -> CallSpan {
+        let (start, end) = times;
+        let (resumed, threw, open) = state;
+        CallSpan {
+            thread,
+            flow: self.strings.name(flow).to_owned(),
+            start,
+            end,
+            depth,
+            resumed,
+            threw,
+            open,
+            id: calling.id,
+            parent: calling.parent,
+            call_site: calling.call_site.map(|n| self.strings.name(n).to_owned()),
+            resumes: calling.resumes,
+            args: calling.args.clone(),
+            ret: calling.ret.clone(),
+            exception: calling.exception.clone(),
+        }
+    }
+
+    /// Finished executions plus those still running, by start time.
+    fn all_spans(&self) -> Vec<CallSpan> {
         let mut spans: Vec<CallSpan> = self
             .spans
             .iter()
-            .map(|s| CallSpan {
-                thread: s.thread,
-                flow: self.strings.name(s.flow).to_owned(),
-                start: s.start,
-                end: s.end,
-                depth: s.depth,
-                resumed: s.resumed,
-                threw: s.threw,
-                open: false,
-            })
+            .map(|s| self.call_span(s.thread, s.flow, s.depth, (s.start, s.end), (s.resumed, s.threw, false), &s.calling))
             .collect();
         for (&thread, stack) in &self.threads {
             for (depth, f) in stack.iter().enumerate() {
                 if let Some(flow) = f.flow {
-                    spans.push(CallSpan {
-                        thread,
-                        flow: self.strings.name(flow).to_owned(),
-                        start: f.start,
-                        end: self.last_micros.max(f.start),
-                        depth: depth as u32,
-                        resumed: f.resumed,
-                        threw: false,
-                        open: true,
-                    });
+                    let end = self.last_micros.max(f.start);
+                    spans.push(self.call_span(thread, flow, depth as u32, (f.start, end), (f.resumed, false, true), &f.calling));
                 }
             }
         }
-        spans.sort_by_key(|s| (s.start, s.depth));
-        let total = spans.len() as u32;
-        spans.truncate(limit);
-        CallsPage { total, start: self.first_micros.unwrap_or(0), end: self.last_micros, spans }
+        spans.sort_by_key(|s| (s.start, s.depth, s.id));
+        spans
     }
 
     /// Recorded steps of one flow, in execution order, with the values written at each step.
@@ -738,5 +867,129 @@ mod tests {
         assert_eq!(calls.spans.len(), 2, "one closed, one still open");
         assert!(calls.spans.iter().any(|s| s.open && s.depth == 0));
         assert!(calls.spans.iter().any(|s| !s.open && s.depth == 1 && s.end == 5));
+    }
+
+    fn on(kind: RecordKind, thread: i32, method: i32, arg: i32, micros: i64, text: Option<&str>) -> Record {
+        Record { kind, thread, micros, method, arg, text: text.map(str::to_owned) }
+    }
+
+    /// `setup()` plus method 2: the resume half of the same function (an async state machine).
+    fn setup_async() -> Recorder {
+        let flow = FlowGraph {
+            symbol: "S.M(int)".into(),
+            name: "M".into(),
+            language: Language::Csharp,
+            span: span(0, 100),
+            nodes: vec![node("entry", Concept::Entry, 0, 10), node("a", Concept::Var, 20, 30), node("b", Concept::Return, 40, 50)],
+            edges: Vec::new(),
+        };
+        let method = |id: i32, kind: &str| MethodMap {
+            id,
+            name: "S::M".into(),
+            kind: kind.into(),
+            points: vec![PointMap { file: "A.cs".into(), start: 12, end: 13 }, PointMap { file: "A.cs".into(), start: 40, end: 50 }],
+            locals: HashMap::new(),
+            params: Vec::new(),
+        };
+        let map = TraceMap { version: 1, methods: vec![method(1, "method"), method(2, "resume")] };
+        Recorder::new(&map, Resolver::new([&flow]))
+    }
+
+    #[test]
+    fn spans_know_their_caller_call_site_and_values() {
+        let mut r = setup();
+        r.record(&at(RecordKind::Enter, 1, 0, 0, None)); // outer call, id 0
+        r.record(&at(RecordKind::Arg, 1, 0, 0, Some("5")));
+        r.record(&at(RecordKind::Step, 1, 1, 1, None)); // at `a`: the call statement
+        r.record(&at(RecordKind::Enter, 1, 0, 2, None)); // recursive call, id 1
+        r.record(&at(RecordKind::Arg, 1, 0, 2, Some("4")));
+        r.record(&at(RecordKind::Step, 1, 2, 3, None));
+        r.record(&at(RecordKind::Return, 1, 0, 4, Some("1")));
+        r.record(&at(RecordKind::Step, 1, 2, 5, None));
+        r.record(&at(RecordKind::Return, 1, 0, 6, Some("2")));
+        let page = r.calls(10);
+        assert_eq!(page.spans.len(), 2);
+        let outer = &page.spans[0];
+        let inner = &page.spans[1];
+        assert_eq!((outer.id, outer.parent, outer.call_site.as_deref()), (0, None, None));
+        assert_eq!((inner.id, inner.parent, inner.call_site.as_deref()), (1, Some(0), Some("a")));
+        assert_eq!(outer.args, vec!["n = 5"]);
+        assert_eq!(inner.args, vec!["n = 4"]);
+        assert_eq!(outer.ret.as_deref(), Some("2"));
+        assert_eq!(inner.ret.as_deref(), Some("1"));
+        assert!(outer.exception.is_none() && outer.resumes.is_none());
+    }
+
+    #[test]
+    fn threads_keep_separate_callers() {
+        let mut r = setup();
+        r.record(&on(RecordKind::Enter, 1, 1, 0, 0, None)); // id 0 on thread 1
+        r.record(&on(RecordKind::Enter, 2, 1, 0, 1, None)); // id 1 on thread 2: no caller there
+        r.record(&on(RecordKind::Step, 1, 1, 1, 2, None));
+        r.record(&on(RecordKind::Enter, 1, 1, 0, 3, None)); // id 2, called by id 0
+        r.record(&on(RecordKind::Exit, 1, 1, 0, 4, None));
+        r.record(&on(RecordKind::Exit, 2, 1, 0, 5, None));
+        r.record(&on(RecordKind::Exit, 1, 1, 0, 6, None));
+        let by_id = |id: u32| r.calls(10).spans.into_iter().find(|s| s.id == id).expect("span");
+        assert_eq!(by_id(1).parent, None, "another thread's frame is not a caller");
+        assert_eq!(by_id(2).parent, Some(0));
+        assert_eq!(by_id(2).call_site.as_deref(), Some("a"));
+        let tree = r.span_tree(0, 100);
+        assert_eq!(tree.spans.iter().map(|s| s.id).collect::<Vec<_>>(), vec![0, 2]);
+        assert_eq!(tree.total, 2);
+        assert!(r.span_tree(99, 100).spans.is_empty(), "unknown root");
+    }
+
+    #[test]
+    fn an_exception_is_kept_on_the_call_it_left() {
+        let mut r = setup();
+        r.record(&at(RecordKind::Enter, 1, 0, 0, None)); // id 0
+        r.record(&at(RecordKind::Step, 1, 1, 1, None));
+        r.record(&at(RecordKind::Enter, 1, 0, 2, None)); // id 1
+        r.record(&at(RecordKind::Step, 1, 2, 3, None));
+        r.record(&at(RecordKind::Throw, 0, 0, 4, Some("InvalidOperationException: nope")));
+        r.record(&at(RecordKind::Exit, 1, 0, 5, None));
+        let inner = r.calls(10).spans.into_iter().find(|s| s.id == 1).expect("inner");
+        assert_eq!(inner.exception.as_deref(), Some("InvalidOperationException: nope"));
+        assert_eq!(inner.parent, Some(0));
+    }
+
+    #[test]
+    fn resumed_async_calls_point_at_the_invocation_they_continue() {
+        let mut r = setup_async();
+        r.record(&on(RecordKind::Enter, 1, 1, 0, 0, None)); // id 0: the call
+        r.record(&on(RecordKind::Exit, 1, 1, 0, 1, None)); // returns at the first await
+        r.record(&on(RecordKind::Enter, 7, 2, 0, 5, None)); // id 1: continuation on a pool thread
+        r.record(&on(RecordKind::Exit, 7, 2, 0, 6, None));
+        let resumed = r.calls(10).spans.into_iter().find(|s| s.id == 1).expect("continuation");
+        assert!(resumed.resumed);
+        assert_eq!(resumed.parent, None);
+        assert_eq!(resumed.resumes, Some(0));
+        let tree = r.span_tree(0, 100);
+        assert_eq!(tree.spans.iter().map(|s| s.id).collect::<Vec<_>>(), vec![0, 1], "the continuation belongs to the call");
+    }
+
+    #[test]
+    fn long_values_are_shortened_and_trees_are_capped() {
+        let mut r = setup();
+        let long = "x".repeat(500);
+        r.record(&at(RecordKind::Enter, 1, 0, 0, None));
+        r.record(&at(RecordKind::Arg, 1, 0, 0, Some(&long)));
+        r.record(&at(RecordKind::Step, 1, 1, 1, None));
+        for i in 0..5 {
+            r.record(&at(RecordKind::Enter, 1, 0, 2 + i * 2, None));
+            r.record(&at(RecordKind::Exit, 1, 0, 3 + i * 2, None));
+        }
+        let page = r.calls(10);
+        let root = page.spans.iter().find(|s| s.id == 0).expect("root");
+        assert_eq!(root.args[0].chars().count(), MAX_SPAN_TEXT);
+        assert!(root.args[0].ends_with('\u{2026}'));
+        let tree = r.span_tree(0, 3);
+        assert_eq!(tree.spans.len(), 3);
+        assert!(tree.total > 3, "a capped tree says there is more");
+        // Paging the flat list keeps global ids.
+        let first = r.calls(2);
+        assert_eq!(first.total, 6);
+        assert!(first.spans.iter().all(|s| s.parent.is_none_or(|p| p == 0)));
     }
 }

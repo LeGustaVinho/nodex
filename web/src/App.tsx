@@ -17,11 +17,15 @@ import { TimelineView } from "./views/Timeline";
 import { RELATION_GROUPS } from "./graph/hierarchy";
 import { HierarchyView, KnowledgeView, OverviewView } from "./views/Knowledge";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
+import { UmlView } from "./views/UmlView";
+import { ConfidenceToggles } from "./components/ConfidenceToggles";
+import { ContextMenuHost } from "./components/ContextMenu";
 
 const VIEWS: { id: View; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "What the project is: entry points, routes, hotspots, data models" },
   { id: "hierarchy", label: "Hierarchy", hint: "Folders, namespaces, types and members as boxes you can open" },
   { id: "knowledge", label: "Knowledge", hint: "HTTP calls, dependency injection, tests, throws and writes around a symbol" },
+  { id: "uml", label: "UML", hint: "Class, package and component diagrams of the project, a folder, a file or the selected code" },
   { id: "architecture", label: "Architecture", hint: "Namespaces, modules, packages and their dependencies" },
   { id: "types", label: "Types", hint: "Classes, interfaces and how they relate" },
   { id: "calls", label: "Calls", hint: "Who calls a function, and what it calls" },
@@ -43,7 +47,10 @@ function useLiveUpdates() {
           const trace = useTrace.getState();
           if (event.type === "run-status") trace.setStatus(event.data);
           else if (event.type === "run-output") trace.appendOutput(event.data.lines);
-          else if (event.type === "trace-frame") trace.applyFrame(event.data);
+          else if (event.type === "trace-frame") {
+            trace.applyFrame(event.data);
+            refreshRecordedDiagrams(queryClient);
+          }
           else if (event.type === "project-loading") useUi.getState().setProjectLoading(event.data.path);
           else if (event.type === "project-failed") useUi.getState().setProjectLoading(null);
           else if (event.type === "debug-status") useDebug.getState().setStatus(event.data);
@@ -74,7 +81,9 @@ function useLiveUpdates() {
           }
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys =
-              event.type === "graph-changed" ? ["structure", "knowledge", "project", "flow", "source"] : ["structure", "knowledge", "project", "flow"];
+              event.type === "graph-changed"
+                ? ["structure", "knowledge", "project", "flow", "source", "uml", "uml-availability"]
+                : ["structure", "knowledge", "project", "flow", "uml", "uml-availability"];
             for (const key of keys) {
               void queryClient.invalidateQueries({ queryKey: [key] });
             }
@@ -119,17 +128,17 @@ function TopBar() {
         ))}
       </nav>
       <div className="context">
-        {ui.view === "knowledge" && (
+        {(ui.view === "knowledge" || ui.view === "uml") && (
           <>
-            <span className="chip" title={ui.knowledgeFocus ?? "Every knowledge relation of the project"}>
+            {ui.view === "knowledge" && <span className="chip" title={ui.knowledgeFocus ?? "Every knowledge relation of the project"}>
               {ui.knowledgeFocus ? (index?.byId.get(ui.knowledgeFocus)?.name ?? ui.knowledgeFocus) : "whole project"}
               {ui.knowledgeFocus && (
                 <button className="chip-x" onClick={() => ui.showKnowledge(null)} title="Show every knowledge relation">
                   ×
                 </button>
               )}
-            </span>
-            {ui.knowledgeFocus && (
+            </span>}
+            {ui.view === "knowledge" && ui.knowledgeFocus && (
               <label className="toggle" title="How many steps of relations to follow">
                 depth
                 <select value={ui.knowledgeDepth} onChange={(e) => ui.setKnowledgeDepth(Number(e.target.value))}>
@@ -141,19 +150,7 @@ function TopBar() {
                 </select>
               </label>
             )}
-            <div className="segmented" role="group" aria-label="Confidence">
-              {(["Exact", "Inferred", "Unresolved"] as const).map((c) => (
-                <button
-                  key={c}
-                  className={ui.confidences.includes(c) ? "on" : ""}
-                  aria-pressed={ui.confidences.includes(c)}
-                  title={{ Exact: "Proven by the code or a compiler", Inferred: "Deduced from a convention or a unique match", Unresolved: "Shown by the code, target unknown" }[c]}
-                  onClick={() => ui.toggleConfidence(c)}
-                >
-                  {c.toLowerCase()}
-                </button>
-              ))}
-            </div>
+            {ui.view === "knowledge" && <ConfidenceToggles />}
           </>
         )}
         {(ui.view === "hierarchy" || ui.view === "knowledge") && (
@@ -247,6 +244,7 @@ function TopBar() {
   );
 }
 
+
 /** Shows whether exact (compiler-grade) analysis is loading, ready or unavailable. */
 function SemanticBadge() {
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
@@ -260,6 +258,18 @@ function SemanticBadge() {
       {label}
     </span>
   );
+}
+
+let lastUmlRefresh = 0;
+
+/** While a run records, activity and sequence diagrams show what ran: refresh them now and then. */
+function refreshRecordedDiagrams(client: ReturnType<typeof useQueryClient>) {
+  const ui = useUi.getState();
+  if (ui.view !== "uml" || (ui.umlKind !== "Activity" && ui.umlKind !== "Sequence")) return;
+  const now = Date.now();
+  if (now - lastUmlRefresh < 2000) return;
+  lastUmlRefresh = now;
+  void client.invalidateQueries({ queryKey: ["uml"] });
 }
 
 export function App() {
@@ -284,6 +294,7 @@ export function App() {
         {view === "overview" && <OverviewView />}
         {view === "hierarchy" && <HierarchyView />}
         {view === "knowledge" && <KnowledgeView />}
+        {view === "uml" && <UmlView />}
         {view === "architecture" && <ArchitectureView />}
         {view === "types" && <TypesView />}
         {view === "calls" && <CallsView />}
@@ -298,6 +309,7 @@ export function App() {
         <CodePanel />
       </section>
       <Palette />
+      <ContextMenuHost />
     </div>
   );
 }

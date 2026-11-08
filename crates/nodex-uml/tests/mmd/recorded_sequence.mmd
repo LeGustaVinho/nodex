@@ -1,0 +1,15 @@
+sequenceDiagram
+  actor n0 as Operator
+  participant n1 as Program
+  participant n2 as InMemoryOrderRepository
+  participant n3 as OrderService
+  n0->>+n1: Main()
+  loop 3× (0.0–0.0 ms)
+    n1->>+n2: Add()
+    deactivate n2
+  end
+  n1->>+n3: ShipAsync(id = 2)
+  n3->>+n2: Find()
+  n2-->>-n3: Order #35;2
+  n3--x-n1: InvalidOperationException: not paid
+  deactivate n1

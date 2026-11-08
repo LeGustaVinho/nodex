@@ -43,6 +43,7 @@ const edgeTypes: EdgeTypes = { ownership: OwnershipEdge };
 export const KNOWLEDGE_COLORS: Record<string, string> = {
   httpcalls: "#f0883e",
   resolvesdi: "#39c5bb",
+  dependson: "#2ea89f",
   tests: "#a371f7",
   throws: "#e5534b",
   caughtby: "#e5534b",
@@ -102,13 +103,14 @@ function kindStyle(e: GEdge): Partial<Edge> {
       return { style: { stroke: "#7b8794", strokeWidth: 1.4 }, markerEnd: { type: MarkerType.ArrowClosed, color: "#7b8794" } };
     case "httpcalls":
     case "resolvesdi":
+    case "dependson":
     case "tests":
     case "throws":
     case "caughtby":
     case "mutates": {
       const color = KNOWLEDGE_COLORS[e.kind];
-      const label = { httpcalls: "HTTP", resolvesdi: "provides", tests: "tests", throws: "throws", caughtby: "caught by", mutates: "changes" }[e.kind];
-      const dash = e.kind === "caughtby" || e.kind === "tests" ? "4 3" : undefined;
+      const label = { httpcalls: "HTTP", resolvesdi: "provides", dependson: "injected", tests: "tests", throws: "throws", caughtby: "caught by", mutates: "changes" }[e.kind];
+      const dash = e.kind === "caughtby" || e.kind === "tests" || e.kind === "dependson" ? "4 3" : undefined;
       return { style: { stroke: color, strokeWidth: e.kind === "httpcalls" ? 2.4 : 1.7, strokeDasharray: dash }, markerEnd: { type: MarkerType.ArrowClosed, color }, label };
     }
     default:
@@ -123,6 +125,8 @@ interface Props {
   selectedId: string | null;
   onNodeClick?: (node: Node) => void;
   onNodeDoubleClick?: (node: Node) => void;
+  /** Right-click on a node (the app's context menu). */
+  onNodeContextMenu?: (event: React.MouseEvent, node: Node) => void;
   emptyText?: string;
   /** Fit only the first N nodes initially (keeps long flows readable). */
   fitFirst?: number;
@@ -132,7 +136,7 @@ interface Props {
   refit?: boolean;
 }
 
-function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, emptyText, fitFirst, savePositions = true, refit = false }: Props) {
+function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, fitFirst, savePositions = true, refit = false }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [busy, setBusy] = useState(false);
@@ -258,6 +262,7 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         onNodesChange={onNodesChange}
         onNodeClick={(_, n) => onNodeClick?.(n)}
         onNodeDoubleClick={(_, n) => onNodeDoubleClick?.(n)}
+        onNodeContextMenu={onNodeContextMenu ? (e, n) => onNodeContextMenu(e, n) : undefined}
         onNodeDragStop={(_, __, moved) => savePositions && persist(moved)}
         nodesConnectable={false}
         zoomOnDoubleClick={false}

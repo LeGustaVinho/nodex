@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { api } from "../api";
+import { openMenu } from "../components/ContextMenu";
 import type { Symbol } from "../gen/Symbol";
+import { type FileNode, fileTree } from "../graph/fileTree";
+import { umlMenuItems } from "../uml/menu";
 import { isScopeKind, isTypeKind } from "../graph/structureGraph";
 import { useUi } from "../store";
 import { useStructure } from "../views/Views";
@@ -33,7 +36,9 @@ export function Sidebar() {
   const ui = useUi();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [tab, setTab] = useState<"symbols" | "files">("symbols");
   const q = query.trim().toLowerCase();
+  const files = useMemo(() => fileTree((project.data?.files ?? []).map((f) => f.path)), [project.data]);
 
   const namespaces = useMemo(() => {
     if (!index) return [];
@@ -108,10 +113,65 @@ export function Sidebar() {
 
   const problems = project.data?.files.filter((f) => f.diagnostics.length > 0) ?? [];
 
+  const fileMenu = (e: React.MouseEvent, node: FileNode) =>
+    openMenu(e, umlMenuItems(node.folder ? { kind: "Folder", path: node.path } : { kind: "File", path: node.path }, `UML of ${node.name}`));
+  const renderFile = (node: FileNode, depth: number): React.ReactNode => {
+    if (q && !node.path.toLowerCase().includes(q)) return null;
+    const key = `file:${node.path}`;
+    return (
+      <div key={key}>
+        <div className="row" style={{ paddingLeft: 6 + depth * 14 }} onContextMenu={(e) => fileMenu(e, node)}>
+          <span className="caret" onClick={() => node.folder && toggle(key)}>
+            {node.folder ? (isOpen(key) ? "▾" : "▸") : ""}
+          </span>
+          <button
+            className="row-main"
+            title={`${node.path} — right-click for UML diagrams`}
+            onClick={() =>
+              node.folder
+                ? toggle(key)
+                : ui.focusCode({ file: node.path, start_byte: 0, end_byte: 0, start_line: 1, start_col: 1, end_line: 1, end_col: 1 })
+            }
+          >
+            <span className="sym-icon">{node.folder ? "▣" : "▤"}</span>
+            <span className="sym-name">{node.name}</span>
+            {node.folder && <span className="muted small">{node.files}</span>}
+          </button>
+        </div>
+        {node.folder && isOpen(key) && node.children.map((c) => renderFile(c, depth + 1))}
+      </div>
+    );
+  };
+
   return (
     <aside className="sidebar">
-      <input className="search" placeholder="Search types and members…" value={query} onChange={(e) => setQuery(e.target.value)} />
-      <div className="tree">
+      <div className="segmented sidebar-tabs" role="tablist">
+        <button className={tab === "symbols" ? "on" : ""} aria-selected={tab === "symbols"} onClick={() => setTab("symbols")}>
+          Symbols
+        </button>
+        <button className={tab === "files" ? "on" : ""} aria-selected={tab === "files"} onClick={() => setTab("files")} title="Folders and files; right-click for UML diagrams">
+          Files
+        </button>
+      </div>
+      <input
+        className="search"
+        placeholder={tab === "files" ? "Filter files…" : "Search types and members…"}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {tab === "files" && (
+        <div className="tree">
+          <div className="row" onContextMenu={(e) => openMenu(e, umlMenuItems({ kind: "Project" }, "UML of the project"))}>
+            <span className="caret" />
+            <button className="row-main" title="Right-click for UML diagrams of the whole project" onClick={() => ui.showUml({ kind: "Project" })}>
+              <span className="sym-icon">◆</span>
+              <span className="sym-name">{project.data?.name ?? "project"}</span>
+            </button>
+          </div>
+          {files.map((f) => renderFile(f, 1))}
+        </div>
+      )}
+      {tab === "symbols" && <div className="tree">
         {namespaces.map((ns) => {
           const types = index
             .typesIn(ns.qualified_name)
@@ -137,7 +197,7 @@ export function Sidebar() {
             </div>
           );
         })}
-      </div>
+      </div>}
       {problems.length > 0 && (
         <div className="problems">
           <div className="section-title">Problems</div>
@@ -155,7 +215,11 @@ export function Sidebar() {
 function TreeRow(props: { symbol: Symbol; depth: number; caret?: string; onCaret?: () => void; active?: boolean; onClick: () => void }) {
   const { symbol, depth, caret, onCaret, active, onClick } = props;
   return (
-    <div className={`row ${active ? "active" : ""}`} style={{ paddingLeft: 6 + depth * 14 }}>
+    <div
+      className={`row ${active ? "active" : ""}`}
+      style={{ paddingLeft: 6 + depth * 14 }}
+      onContextMenu={(e) => openMenu(e, umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`))}
+    >
       <span
         className="caret"
         onClick={(e) => {

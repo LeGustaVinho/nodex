@@ -1,0 +1,88 @@
+classDiagram
+  direction TB
+  namespace Sample {
+    class n0["Program"] {
+      <<static>>
+      +Main(args)$ Task
+    }
+  }
+  namespace Sample.Domain {
+    class n1["Circle"] {
+      -_radius: double
+      +Area() double
+    }
+    class n2["IEntity"] {
+      <<interface>>
+      +Id: int
+    }
+    class n3["Order"] {
+      <<record>>
+      +Amount: decimal
+      +Customer: string
+      +Id: int
+      +IsLarge: bool
+      +Status: OrderStatus
+      +WithStatus(status: OrderStatus) Order
+    }
+    class n4["OrderStatus"] {
+      <<enumeration>>
+      Cancelled
+      Paid
+      Pending
+      Shipped
+    }
+    class n5["Rectangle"] {
+      +Height: double
+      +Width: double
+      +Area() double
+    }
+    class n6["Shape"] {
+      <<abstract>>
+      +Id: int
+      +Area()* double
+      +Describe() string
+    }
+  }
+  namespace Sample.Services {
+    class n7["AuditScope"] {
+      -_name: string
+      +Dispose()
+    }
+    class n8["IOrderRepository"] {
+      <<interface>>
+      +Add(order: Order)
+      +All() IEnumerable~Order~
+      +Find(id: int) Order?
+      +Replace(order: Order)
+    }
+    class n9["InMemoryOrderRepository"] {
+      -_gate: object
+      -_orders: Dictionary~int, Order~
+      +Add(order: Order)
+      +All() IEnumerable~Order~
+      +Find(id: int) Order?
+      +Replace(order: Order)
+    }
+    class n10["OrderService"] {
+      +OrderShipped: Action~Order~?
+      -_repository: IOrderRepository
+      +CountPending() int
+      +DescribeAll() IEnumerable~string~
+      +ShipAsync(id: int) Task
+      +TotalForCustomer(customer: string) decimal
+      +TotalForCustomerLinq(customer: string) decimal
+    }
+  }
+  n6 <|-- n1
+  n3 *-- "1" n4 : Status
+  n6 <|-- n5
+  n2 <|.. n6
+  n0 ..> n3 : create
+  n0 ..> n9 : create
+  n0 ..> n10 : create
+  n8 ..> n3
+  n9 *-- "0..*" n3 : _orders [int]
+  n8 <|.. n9
+  n10 *-- "0..1" n3 : OrderShipped
+  n10 ..> n7 : create
+  n10 --> "1" n8 : _repository

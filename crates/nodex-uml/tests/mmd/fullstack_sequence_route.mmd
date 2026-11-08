@@ -1,0 +1,21 @@
+sequenceDiagram
+  actor n0 as Authenticated client
+  participant n1 as OrdersController
+  participant n2 as OrderService
+  participant n3 as Database (EF Core)
+  n0->>+n1: POST /api/Orders/{id}/cancel
+  critical try
+    Note right of n2: via IOrderService (dependency injection)
+    n1->>+n2: await CancelOrderAsync(id, "requested by customer")
+    n2->>n3: FindAsync(id) · Orders
+    opt order == null
+      n2--xn1: throw OrderNotFoundException
+    end
+    n2->>n2: Audit(order, reason)
+    n2->>n3: SaveChangesAsync()
+    deactivate n2
+    n1-->>n0: NoContent()
+  option catch OrderNotFoundException
+    n1-->>n0: NotFound(ex.Message)
+  end
+  n1-->>-n0: HTTP response: Task#lt;IActionResult#gt;

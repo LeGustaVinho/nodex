@@ -13,7 +13,9 @@ pub mod routes;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use nodex_ir::knowledge::{EntryKind, EntryPoint, ModelInfo, ProjectKnowledge, ResolvedRoute, RouteFact, SymbolInfo};
+use nodex_ir::knowledge::{
+    AuthInfo, EntryKind, EntryPoint, ModelInfo, ProjectKnowledge, ResolvedRoute, RouteFact, RoutePrefix, StateMachineFact, SymbolInfo,
+};
 use nodex_ir::{FileIr, Language, StructEdge, StructEdgeKind, StructureGraph, Symbol, SymbolId, SymbolKind};
 
 /// Exact construction targets reported by semantic providers: file → (start, end, type).
@@ -60,6 +62,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     // Exception types caught around each statement: file → (start, end, types).
     let mut protected: HashMap<&str, Vec<(u32, u32, Vec<String>)>> = HashMap::new();
     let mut handlers = Vec::new();
+    let mut state_machines: Vec<StateMachineFact> = Vec::new();
     // Every throw: (function, exception type, types caught around the throw in that function).
     let mut throw_sites: Vec<(SymbolId, SymbolId, Vec<String>)> = Vec::new();
 
@@ -136,6 +139,25 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
             };
             add_cap(&mut caps, &m.owner, tag);
         }
+        for a in &k.auth {
+            let entry = infos.entry(a.owner.clone()).or_insert_with(|| info(&a.owner));
+            let auth = entry.auth.get_or_insert_with(AuthInfo::default);
+            for r in &a.roles {
+                if !auth.roles.contains(r) {
+                    auth.roles.push(r.clone());
+                }
+            }
+            for p in &a.policies {
+                if !auth.policies.contains(p) {
+                    auth.policies.push(p.clone());
+                }
+            }
+            auth.anonymous |= a.anonymous;
+            if !a.anonymous {
+                add_cap(&mut caps, &a.owner, "AUTH_REQUIRED");
+            }
+        }
+        state_machines.extend(k.state_machines.iter().cloned());
         handlers.extend(k.handlers.iter().cloned());
         out.project.http_calls.extend(k.http_calls.iter().cloned());
         out.project.di.extend(k.di.iter().cloned());
@@ -162,7 +184,12 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     out.project.routes = resolve_routes(files, &symbols, package_roots);
     for r in &out.project.routes {
         let entry = infos.entry(r.handler.clone()).or_insert_with(|| info(&r.handler));
-        set_entry(entry, Some(EntryPoint { kind: EntryKind::Route, label: format!("{} {}", r.method, r.path) }));
+        let point = if r.method == "PAGE" {
+            EntryPoint { kind: EntryKind::Ui, label: format!("page {}", r.path) }
+        } else {
+            EntryPoint { kind: EntryKind::Route, label: format!("{} {}", r.method, r.path) }
+        };
+        set_entry(entry, Some(point));
     }
 
     // A class of test cases is a test too (test edges by naming convention start from it).
@@ -182,6 +209,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     all_edges.extend(throws.iter().cloned());
     let base = global::Ctx { symbols: &symbols, children: &children, types: &types, edges: &all_edges };
     let di = global::di_edges(&base, files);
+    let injections = global::injection_edges(&base, files, &infos);
     let dispatch = global::di_dispatch(&base, &di);
     let (models, by_property) = global::models(&base, files);
     let mutates = global::mutation_edges(files, &by_property);
@@ -236,7 +264,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
         thrown.difference(&escaping).map(|(f, t)| ((*f).to_owned(), (*t).to_owned())).collect();
     let caught = global::caught_by_edges(&ctx, &sites, &handlers, &infos, &inferred, &caught_locally);
 
-    for e in di.into_iter().chain(dispatch).chain(mutates).chain(tests).chain(http).chain(caught) {
+    for e in di.into_iter().chain(injections).chain(dispatch).chain(mutates).chain(tests).chain(http).chain(caught) {
         edges.entry((e.from.clone(), e.to.clone(), e.kind)).or_insert(e);
     }
 
@@ -256,6 +284,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     }
 
     out.project.symbols = infos.into_values().filter(|i| symbols.contains_key(i.symbol.as_str())).collect();
+    out.project.state_machines = merge_machines(state_machines);
     out.project.models.sort_by(|a, b| a.symbol.cmp(&b.symbol));
     out.project.models.dedup_by(|a, b| a.symbol == b.symbol);
     out.edges = edges.into_values().collect();
@@ -297,27 +326,140 @@ pub fn resolve_routes(files: &[&FileIr], symbols: &HashMap<&str, &Symbol>, packa
     for s in symbols.values().filter(|s| matches!(s.kind, SymbolKind::Function | SymbolKind::Method) && !s.external) {
         functions.entry(s.name.as_str()).or_default().push(s);
     }
+    let mounts = Mounts::new(files, package_roots);
     let mut out: Vec<ResolvedRoute> = Vec::new();
     for file in files {
         let package = package_of(&file.file, package_roots);
         for r in &file.knowledge.routes {
-            let path = match prefix_of(r.framework.as_str(), package) {
-                Some(prefix) if r.method != "PAGE" => routes::join_route(prefix, &r.path),
-                _ => routes::join_route("", &r.path),
-            };
-            out.push(ResolvedRoute {
-                handler: resolve_handler(r, file.language, &functions, symbols).unwrap_or_else(|| r.handler.clone()),
-                method: r.method.clone(),
-                normalized: routes::normalize_route(&path),
-                path,
-                framework: r.framework.clone(),
-                span: r.span.clone(),
-            });
+            let handler = resolve_handler(r, file.language, &functions, symbols).unwrap_or_else(|| r.handler.clone());
+            let handler_name = symbols.get(handler.as_str()).map(|s| s.name.clone()).unwrap_or_default();
+            // Mounted routers take every prefix they are mounted under (one route per mount).
+            let mounted = if r.method == "PAGE" { Vec::new() } else { mounts.prefixes(&file.file, r.router.as_deref(), &handler_name, 0) };
+            let local: Vec<String> = if mounted.is_empty() { vec![String::new()] } else { mounted };
+            for mount in local {
+                let declared = routes::join_route(&mount, &r.path);
+                let path = match prefix_of(r.framework.as_str(), package) {
+                    Some(prefix) if r.method != "PAGE" => routes::join_route(prefix, &declared),
+                    _ => declared,
+                };
+                out.push(ResolvedRoute {
+                    handler: handler.clone(),
+                    method: r.method.clone(),
+                    normalized: routes::normalize_route(&path),
+                    path,
+                    framework: r.framework.clone(),
+                    span: r.span.clone(),
+                });
+            }
         }
     }
     out.sort_by(|a, b| (&a.normalized, &a.method, &a.handler).cmp(&(&b.normalized, &b.method, &b.handler)));
     out.dedup_by(|a, b| a.normalized == b.normalized && a.method == b.method && a.handler == b.handler);
     out
+}
+
+/// Prefixes of routers mounted elsewhere: `app.use('/api', ordersRouter)` (Express, Koa),
+/// `.nest("/api", order_routes())` (axum), `web::scope("/api").service(h)` (actix),
+/// `.mount("/api", routes![a, b])` (Rocket).
+///
+/// A mount `target` names what it mounts:
+/// - `module:<path>`: the routers of a project file (an imported router, `require('./x')`);
+/// - `fn:<name>`: the routes built by a function of that name in the same package;
+/// - `handler:<name>`: one route handler of that name in the same package;
+/// - anything else: a router variable of the same file.
+///
+/// A mount declared on a router that is itself mounted takes that router's prefixes too.
+struct Mounts<'a> {
+    entries: Vec<(&'a str, &'a str, &'a RoutePrefix)>,
+    roots: &'a [String],
+}
+
+impl<'a> Mounts<'a> {
+    fn new(files: &[&'a FileIr], roots: &'a [String]) -> Self {
+        let mut entries = Vec::new();
+        for f in files {
+            for p in f.knowledge.prefixes.iter().filter(|p| p.kind == "mount") {
+                entries.push((f.file.as_str(), package_of(&f.file, roots), p));
+            }
+        }
+        Self { entries, roots }
+    }
+
+    /// Every prefix a route of `file` declared on `router` (handler `handler`) is served under;
+    /// empty when nothing mounts it.
+    fn prefixes(&self, file: &str, router: Option<&str>, handler: &str, depth: usize) -> Vec<String> {
+        if depth > 6 {
+            return Vec::new();
+        }
+        let package = package_of(file, self.roots);
+        let stem = strip_ext(file);
+        let mut out = Vec::new();
+        for (mount_file, mount_package, m) in &self.entries {
+            let hit = if let Some(module) = m.target.strip_prefix("module:") {
+                module == stem || format!("{module}/index") == stem
+            } else if let Some(f) = m.target.strip_prefix("fn:") {
+                *mount_package == package && router.is_some_and(|r| r == m.target || r.strip_prefix("fn:") == Some(f))
+            } else if let Some(h) = m.target.strip_prefix("handler:") {
+                *mount_package == package && !handler.is_empty() && h == handler
+            } else {
+                *mount_file == file && router == Some(m.target.as_str())
+            };
+            if !hit {
+                continue;
+            }
+            // The router that declares the mount may be mounted itself.
+            let outer = self.prefixes(mount_file, m.router.as_deref(), "", depth + 1);
+            if outer.is_empty() {
+                out.push(m.prefix.clone());
+            } else {
+                out.extend(outer.into_iter().map(|o| routes::join_route(&o, &m.prefix)));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+}
+
+/// `src/routes/orders.ts` → `src/routes/orders`.
+fn strip_ext(file: &str) -> &str {
+    let name_at = file.rfind('/').map(|i| i + 1).unwrap_or(0);
+    match file[name_at..].find('.') {
+        Some(dot) => &file[..name_at + dot],
+        None => file,
+    }
+}
+
+/// One machine per owner and name (a partial class configures it in several files).
+fn merge_machines(machines: Vec<StateMachineFact>) -> Vec<StateMachineFact> {
+    let mut by_key: BTreeMap<(String, String, String), StateMachineFact> = BTreeMap::new();
+    for m in machines {
+        let key = (m.owner.clone(), m.name.clone(), m.framework.clone());
+        match by_key.get_mut(&key) {
+            None => {
+                by_key.insert(key, m);
+            }
+            Some(acc) => {
+                for s in m.states {
+                    if !acc.states.contains(&s) {
+                        acc.states.push(s);
+                    }
+                }
+                for t in m.transitions {
+                    if !acc.transitions.contains(&t) {
+                        acc.transitions.push(t);
+                    }
+                }
+                for t in m.triggers {
+                    if !acc.triggers.contains(&t) {
+                        acc.triggers.push(t);
+                    }
+                }
+                acc.initial = acc.initial.take().or(m.initial);
+            }
+        }
+    }
+    by_key.into_values().collect()
 }
 
 /// The function a route names (`ordersController.list`, `Handlers.Get`, `handlers::list`): with a
@@ -390,17 +532,22 @@ impl TypeLookup {
 }
 
 /// Keeps the strongest reason a symbol is an entry point: a program entry beats a route, which
-/// beats a test, an export, a framework hook or a server start.
+/// beats a command, a message consumer, a job, an event handler, a UI handler, a test, an
+/// export, a framework hook or a server start.
 fn set_entry(info: &mut SymbolInfo, entry: Option<EntryPoint>) {
     let Some(entry) = entry else { return };
     let rank = |k: EntryKind| match k {
         EntryKind::Main => 0,
         EntryKind::Route => 1,
-        EntryKind::EventHandler => 2,
-        EntryKind::Test => 3,
-        EntryKind::Export => 4,
-        EntryKind::Framework => 5,
-        EntryKind::ServerStart => 6,
+        EntryKind::Command => 2,
+        EntryKind::Message => 3,
+        EntryKind::Job => 4,
+        EntryKind::EventHandler => 5,
+        EntryKind::Ui => 6,
+        EntryKind::Test => 7,
+        EntryKind::Export => 8,
+        EntryKind::Framework => 9,
+        EntryKind::ServerStart => 10,
     };
     if info.entry.as_ref().is_none_or(|old| rank(entry.kind) < rank(old.kind)) {
         info.entry = Some(entry);
@@ -442,5 +589,5 @@ fn external_class(id: &str, name: &str, language: Language) -> Symbol {
 }
 
 fn info(id: &str) -> SymbolInfo {
-    SymbolInfo { symbol: id.to_owned(), complexity: 0, capabilities: Vec::new(), entry: None, test: false }
+    SymbolInfo { symbol: id.to_owned(), complexity: 0, capabilities: Vec::new(), entry: None, test: false, auth: None }
 }

@@ -1,0 +1,22 @@
+flowchart TB
+  n0["(root)<br/>1 type"]
+  subgraph g1["Review"]
+    direction TB
+    n1["Review<br/>2 types"]
+    n2["Controllers<br/>2 types"]
+    n3["Handlers<br/>1 type"]
+  end
+  n4["nest-a/src<br/>1 type · 2 functions"]
+  n5["nest-b/src<br/>1 type · 2 functions"]
+  subgraph g2["rust"]
+    direction TB
+    n6["handlers<br/>1 function"]
+    n7["models<br/>1 type · 2 functions"]
+    n8["routes<br/>1 function"]
+  end
+  n9["server/src<br/>5 functions"]
+  n10["web/src<br/>3 functions"]
+  n10 -->|"HTTP"| n2
+  n10 -->|"HTTP"| n9
+  classDef pkg fill:#1d232c,stroke:#8b98a8,color:#eef1f4
+  class n0,n1,n2,n3,n4,n5,n6,n7,n8,n9,n10 pkg

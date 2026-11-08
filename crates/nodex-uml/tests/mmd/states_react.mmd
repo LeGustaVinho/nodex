@@ -1,0 +1,14 @@
+stateDiagram-v2
+  state "idle" as n0
+  state "uploading" as n1
+  state "done" as n2
+  state "error" as n3
+  [*] --> n0
+  n1 --> n0 : reset
+  n2 --> n0 : reset
+  n3 --> n0 : reset
+  n2 --> n1 : upload
+  n3 --> n1 : upload
+  n0 --> n1 : upload
+  n1 --> n2 : upload
+  n1 --> n3 : upload

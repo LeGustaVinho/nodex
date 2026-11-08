@@ -1,8 +1,11 @@
 import { create } from "zustand";
 import type { Span } from "./gen/Span";
+import type { UmlKind } from "./gen/UmlKind";
+import type { UmlOptions } from "./gen/UmlOptions";
+import type { UmlScope } from "./gen/UmlScope";
 import type { DetailLevel } from "./graph/flowGraph";
 
-export type View = "overview" | "hierarchy" | "knowledge" | "architecture" | "types" | "calls" | "timeline" | "blueprint";
+export type View = "overview" | "hierarchy" | "knowledge" | "uml" | "architecture" | "types" | "calls" | "timeline" | "blueprint";
 
 /** What the inspector and code panel show. */
 export type Selection =
@@ -47,6 +50,13 @@ interface UiState {
   knowledgeDepth: number;
   /** Confidences drawn by the Knowledge view (`Exact`, `Inferred`, `Unresolved`). */
   confidences: string[];
+  /** UML view: which diagram, of what, how. */
+  umlKind: UmlKind;
+  umlScope: UmlScope;
+  umlOpts: Partial<UmlOptions>;
+  /** Shows a UML diagram; keeps the current kind or scope when not given. */
+  showUml: (scope?: UmlScope, kind?: UmlKind) => void;
+  setUmlOpts: (opts: Partial<UmlOptions>) => void;
   setView: (v: View) => void;
   showKnowledge: (symbol: string | null) => void;
   setKnowledgeDepth: (depth: number) => void;
@@ -80,15 +90,32 @@ function initialFlow(): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-function writeHash(view: View, flowSymbol: string | null) {
-  const hash = view === "blueprint" && flowSymbol ? `#flow=${encodeURIComponent(flowSymbol)}` : "";
+/** Deep link: `#uml=<kind>&scope=<json>` opens a UML diagram. */
+export function parseUmlHash(hash: string): { kind: UmlKind; scope: UmlScope } | null {
+  const m = /^#uml=([A-Za-z]+)(?:&scope=(.+))?$/.exec(hash);
+  if (!m) return null;
+  try {
+    const scope = m[2] ? (JSON.parse(decodeURIComponent(m[2])) as UmlScope) : { kind: "Project" as const };
+    return { kind: m[1] as UmlKind, scope };
+  } catch {
+    return null;
+  }
+}
+
+export function umlHash(kind: UmlKind, scope: UmlScope): string {
+  return `#uml=${kind}&scope=${encodeURIComponent(JSON.stringify(scope))}`;
+}
+
+function writeHash(view: View, flowSymbol: string | null, uml?: { kind: UmlKind; scope: UmlScope }) {
+  const hash = view === "blueprint" && flowSymbol ? `#flow=${encodeURIComponent(flowSymbol)}` : view === "uml" && uml ? umlHash(uml.kind, uml.scope) : "";
   if (window.location.hash !== hash) window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
 }
 
 const startFlow = initialFlow();
+const startUml = parseUmlHash(window.location.hash);
 
 export const useUi = create<UiState>((set) => ({
-  view: startFlow ? "blueprint" : "overview",
+  view: startFlow ? "blueprint" : startUml ? "uml" : "overview",
   flowSymbol: startFlow,
   namespace: null,
   callFocus: null,
@@ -114,6 +141,7 @@ export const useUi = create<UiState>((set) => ({
       expanded: {},
       detailKey: null,
       projectLoading: null,
+      umlScope: { kind: "Project" },
     });
   },
   connected: false,
@@ -123,6 +151,18 @@ export const useUi = create<UiState>((set) => ({
   knowledgeFocus: null,
   knowledgeDepth: 2,
   confidences: ["Exact", "Inferred", "Unresolved"],
+  umlKind: startUml?.kind ?? "Class",
+  umlScope: startUml?.scope ?? { kind: "Project" },
+  umlOpts: {},
+  showUml: (scope, kind) =>
+    set((s) => {
+      const next = { kind: kind ?? s.umlKind, scope: scope ?? s.umlScope };
+      writeHash("uml", null, next);
+      // The function a diagram starts from belongs to the old scope.
+      const umlOpts = scope && JSON.stringify(scope) !== JSON.stringify(s.umlScope) ? { ...s.umlOpts, focus: null } : s.umlOpts;
+      return { view: "uml", umlKind: next.kind, umlScope: next.scope, umlOpts };
+    }),
+  setUmlOpts: (opts) => set((s) => ({ umlOpts: { ...s.umlOpts, ...opts } })),
   showKnowledge: (knowledgeFocus) => {
     writeHash("knowledge", null);
     set({ knowledgeFocus, view: "knowledge" });
@@ -138,7 +178,7 @@ export const useUi = create<UiState>((set) => ({
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setView: (view) =>
     set((s) => {
-      writeHash(view, s.flowSymbol);
+      writeHash(view, s.flowSymbol, { kind: s.umlKind, scope: s.umlScope });
       return { view };
     }),
   openFlow: (flowSymbol) => {

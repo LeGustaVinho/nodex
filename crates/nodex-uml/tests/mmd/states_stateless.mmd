@@ -1,0 +1,13 @@
+stateDiagram-v2
+  state "Closed" as n0
+  state n0 {
+    state "Locked" as n2
+  }
+  state "Open" as n1
+  state "Broken" as n3
+  [*] --> n0
+  n1 --> n0 : Close
+  n0 --> n2 : Lock [HasKey]
+  n0 --> n1 : Open
+  n2 --> n3 : Kick
+  n2 --> n0 : Unlock

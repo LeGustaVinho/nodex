@@ -6,10 +6,11 @@
 //! pass walks the same syntax tree as the structure and flow passes, after them, and attaches
 //! every fact to the Nodex symbol that owns its code.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use nodex_ir::knowledge::{
-    ConfigFact, DiFact, EntityFact, EntryKind, FileKnowledge, GlobalHandlerFact, HttpCallFact, MutationFact, RouteFact,
+    AuthFact, ConfigFact, DiFact, EntityFact, EntryKind, FileKnowledge, GlobalHandlerFact, HttpCallFact, MutationFact, RouteFact,
+    StateMachineFact, StateTransition,
 };
 use nodex_ir::{Symbol, SymbolKind};
 use nodex_lang_api::knowledge::{AUTH_MARKERS, Owners, call_capabilities, http_method_of, unquote};
@@ -27,6 +28,107 @@ impl Attr {
     /// First positional argument as a string literal.
     fn first_string(&self) -> Option<String> {
         self.args.iter().find(|a| !a.contains('=') || a.trim_start().starts_with('"')).and_then(|a| unquote(a))
+    }
+
+    /// A named argument as a string literal: `Roles = "Admin,Ops"`.
+    fn named(&self, name: &str) -> Option<String> {
+        self.args.iter().find_map(|a| {
+            let (key, value) = a.split_once('=')?;
+            (key.trim() == name).then(|| unquote(value.trim())).flatten()
+        })
+    }
+}
+
+/// Authorization declared by attributes or endpoint conventions.
+#[derive(Clone, Default)]
+struct AuthSpec {
+    /// `[Authorize]` (or a policy/role) is present.
+    required: bool,
+    anonymous: bool,
+    roles: Vec<String>,
+    policies: Vec<String>,
+}
+
+impl AuthSpec {
+    fn from_attrs(attrs: &[Attr]) -> Self {
+        let mut spec = AuthSpec::default();
+        for a in attrs {
+            match a.name.as_str() {
+                "AllowAnonymous" => spec.anonymous = true,
+                "Authorize" => {
+                    spec.required = true;
+                    if let Some(roles) = a.named("Roles") {
+                        spec.add_roles(&roles);
+                    }
+                    if let Some(policy) = a.named("Policy").or_else(|| a.args.iter().find(|x| !x.contains('=')).and_then(|x| unquote(x))) {
+                        spec.add_policy(&policy);
+                    }
+                }
+                n if AUTH_MARKERS.contains(&n) => spec.required = true,
+                _ => {}
+            }
+        }
+        spec
+    }
+
+    fn add_roles(&mut self, text: &str) {
+        for r in text.split(',').map(str::trim).filter(|r| !r.is_empty()) {
+            if !self.roles.iter().any(|x| x == r) {
+                self.roles.push(r.to_owned());
+            }
+        }
+    }
+
+    fn add_policy(&mut self, p: &str) {
+        if !p.is_empty() && !self.policies.iter().any(|x| x == p) {
+            self.policies.push(p.to_owned());
+        }
+    }
+
+    /// The action's own attributes refine the class's: `[AllowAnonymous]` wins; roles add up.
+    fn refine(&self, action: &AuthSpec) -> AuthSpec {
+        if action.anonymous {
+            return AuthSpec { anonymous: true, ..AuthSpec::default() };
+        }
+        let mut out = self.clone();
+        out.required |= action.required;
+        for r in &action.roles {
+            out.add_roles(r);
+        }
+        for p in &action.policies {
+            out.add_policy(p);
+        }
+        out
+    }
+
+    fn is_set(&self) -> bool {
+        self.required || self.anonymous
+    }
+
+    /// `.RequireAuthorization("p")`, `.RequireAuthorization(p => p.RequireRole("Admin"))`.
+    fn from_call(call: &Call) -> Option<Self> {
+        let mut spec = AuthSpec::default();
+        match call.name.as_str() {
+            "AllowAnonymous" => spec.anonymous = true,
+            "RequireAuthorization" => {
+                spec.required = true;
+                for a in &call.args {
+                    if let Some(p) = unquote(a) {
+                        spec.add_policy(&p);
+                    }
+                    let mut rest = a.as_str();
+                    while let Some(at) = rest.find("RequireRole(") {
+                        rest = &rest[at + "RequireRole(".len()..];
+                        let inner = rest.split(')').next().unwrap_or("");
+                        for r in inner.split(',').filter_map(unquote) {
+                            spec.add_roles(&r);
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        }
+        Some(spec)
     }
 }
 
@@ -82,6 +184,10 @@ struct ClassCtx {
     auth: bool,
     route: Option<String>,
     exception_filter: bool,
+    /// Authorization attributes of the class.
+    auth_spec: AuthSpec,
+    /// Base types as written, with generic arguments (`IConsumer<OrderPlaced>`).
+    bases: Vec<String>,
 }
 
 struct Walker<'a, 't> {
@@ -91,6 +197,12 @@ struct Walker<'a, 't> {
     out: FileKnowledge,
     /// `var api = app.MapGroup("/api")`: group variable → full prefix.
     groups: HashMap<String, String>,
+    /// `var api = app.MapGroup("/api").RequireAuthorization()`: group variable → authorization.
+    group_auth: HashMap<String, AuthSpec>,
+    /// `var add = new Command("add")`: variable → command name.
+    commands: HashMap<String, String>,
+    /// State machines being collected: (owner type, machine variable) → fact.
+    machines: BTreeMap<(String, String), StateMachineFact>,
     /// Lambdas with a Blueprint of their own, by start byte.
     callbacks: &'a HashMap<usize, String>,
     _tree: std::marker::PhantomData<&'t ()>,
@@ -104,12 +216,49 @@ pub fn extract(src: Src, root: Node, symbols: &[Symbol], callbacks: &HashMap<usi
         symbols,
         out: FileKnowledge::default(),
         groups: HashMap::new(),
+        group_auth: HashMap::new(),
+        commands: HashMap::new(),
+        machines: BTreeMap::new(),
         callbacks,
         _tree: std::marker::PhantomData,
     };
     w.collect_groups(root);
     w.walk(root, None);
+    let machines = std::mem::take(&mut w.machines);
+    w.out.state_machines.extend(machines.into_values().map(nest_names).filter(|m| !m.states.is_empty() || !m.triggers.is_empty()));
     w.out
+}
+
+/// Substates are recorded as `Parent.Child`: transitions and the initial state use the same names.
+fn nest_names(mut m: StateMachineFact) -> StateMachineFact {
+    let full: HashMap<String, String> =
+        m.states.iter().filter_map(|s| s.rsplit_once('.').map(|(_, short)| (short.to_owned(), s.clone()))).collect();
+    let name = |s: &mut String| {
+        if let Some(f) = full.get(s.as_str()) {
+            *s = f.clone();
+        }
+    };
+    for t in &mut m.transitions {
+        name(&mut t.from);
+        name(&mut t.to);
+    }
+    if let Some(i) = &mut m.initial {
+        name(i);
+    }
+    m
+}
+
+/// `State.Off` → `Off`, `"Jump"` → `Jump`.
+fn member_name(text: &str) -> String {
+    let t = unquote(text).unwrap_or_else(|| text.trim().to_owned());
+    t.rsplit('.').next().unwrap_or(&t).trim().to_owned()
+}
+
+/// The machine variable a Stateless chain configures: `_machine.Configure(State.A).Permit(...)` → `_machine`.
+fn machine_of(receiver: &str) -> Option<String> {
+    let at = receiver.find(".Configure(")?;
+    let name = receiver[..at].trim().trim_start_matches("this.");
+    Some(name.to_owned())
 }
 
 impl<'a, 't> Walker<'a, 't> {
@@ -123,7 +272,9 @@ impl<'a, 't> Walker<'a, 't> {
                 return;
             }
             "method_declaration" => self.method(node, class),
+            "constructor_declaration" => self.constructor(node),
             "property_declaration" => self.property(node),
+            "object_creation_expression" => self.creation(node),
             "invocation_expression" => self.invocation(node),
             "element_access_expression" => self.element_access(node),
             _ => {}
@@ -164,12 +315,103 @@ impl<'a, 't> Walker<'a, 't> {
                 });
             }
         }
+        // Primary constructor parameters are injected like a constructor's.
+        if let (Some(id), Some(list)) = (&id, first_child_of_kind(node, "parameter_list")) {
+            let ctor = self
+                .symbols
+                .iter()
+                .find(|s| s.kind == SymbolKind::Constructor && s.parent.as_deref() == Some(id.as_str()) && s.flavors.iter().any(|f| f == "primary-constructor"))
+                .map(|s| s.id.clone())
+                .unwrap_or_else(|| id.clone());
+            self.injected_parameters(&ctor, list);
+        }
+        let full_bases: Vec<String> = first_child_of_kind(node, "base_list").map(|b| named_children(b).into_iter().map(|n| src.norm(n)).collect()).unwrap_or_default();
         ClassCtx {
             controller,
             auth: attrs.iter().any(|a| AUTH_MARKERS.contains(&a.name.as_str())),
             route,
             exception_filter: bases.iter().any(|b| matches!(b.as_str(), "IExceptionFilter" | "IAsyncExceptionFilter" | "IExceptionHandler")),
+            auth_spec: AuthSpec::from_attrs(&attrs),
+            bases: full_bases,
         }
+    }
+
+    /// `public OrderService(IOrderRepository repo, ILogger<OrderService> log)`: each service
+    /// parameter is an injection point (core keeps those the container provides).
+    fn constructor(&mut self, node: Node<'t>) {
+        let Some(id) = self.owners.declared_at(node.start_byte(), node.end_byte(), |k| k == SymbolKind::Constructor).map(str::to_owned) else { return };
+        if let Some(list) = node.child_by_field_name("parameters").or_else(|| first_child_of_kind(node, "parameter_list")) {
+            self.injected_parameters(&id, list);
+        }
+    }
+
+    fn injected_parameters(&mut self, owner: &str, list: Node<'t>) {
+        let src = self.src;
+        for p in children_of_kind(list, "parameter") {
+            let Some(ty) = p.child_by_field_name("type").map(|t| src.norm(t)) else { continue };
+            let bare = crate::syntax::bare_type_name(&ty);
+            // Services are named types: not `int`, `string`, arrays or tuples.
+            let simple = bare.rsplit('.').next().unwrap_or(&bare);
+            if !simple.chars().next().is_some_and(char::is_uppercase) || matches!(simple, "String" | "Int32" | "Boolean" | "CancellationToken") || ty.starts_with('(') {
+                continue;
+            }
+            self.out.di.push(DiFact {
+                owner: owner.to_owned(),
+                service: bare,
+                implementation: None,
+                lifetime: "inject".into(),
+                token: None,
+                framework: "aspnet".into(),
+                span: src.span(p),
+            });
+        }
+    }
+
+    /// `new Command("add", "Adds an item")`, `new StateMachine<State, Trigger>(State.Off)`.
+    fn creation(&mut self, node: Node<'t>) {
+        let src = self.src;
+        let Some(ty) = node.child_by_field_name("type").map(|t| src.norm(t)) else { return };
+        let bare = crate::syntax::bare_type_name(&ty);
+        let args: Vec<String> = node
+            .child_by_field_name("arguments")
+            .map(|l| children_of_kind(l, "argument").into_iter().map(|a| src.norm(a)).collect())
+            .unwrap_or_default();
+        let target = assigned_name(src, node);
+        match bare.rsplit('.').next().unwrap_or(&bare) {
+            "Command" | "RootCommand" => {
+                if let Some(var) = target {
+                    let name = if bare.ends_with("RootCommand") { "(root)".to_owned() } else { args.first().and_then(|a| unquote(a)).unwrap_or_else(|| var.clone()) };
+                    self.commands.insert(var, name);
+                }
+            }
+            "StateMachine" => {
+                let (Some(var), Some(owner)) = (target, self.owners.type_at(node.start_byte()).map(str::to_owned)) else { return };
+                let initial = args.first().map(|a| member_name(a));
+                let span = src.span(node);
+                let m = self.machine(&owner, &var, "stateless", span);
+                if let Some(i) = initial {
+                    if !m.states.contains(&i) {
+                        m.states.push(i.clone());
+                    }
+                    m.initial = Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn machine(&mut self, owner: &str, name: &str, framework: &str, span: nodex_ir::Span) -> &mut StateMachineFact {
+        let name = name.trim_start_matches("this.").trim_start_matches('_').to_owned();
+        self.machines.entry((owner.to_owned(), name.clone())).or_insert_with(|| StateMachineFact {
+            owner: owner.to_owned(),
+            name,
+            framework: framework.into(),
+            states: Vec::new(),
+            initial: None,
+            transitions: Vec::new(),
+            triggers: Vec::new(),
+            span,
+        })
     }
 
     fn method(&mut self, node: Node<'t>, class: Option<&ClassCtx>) {
@@ -217,11 +459,46 @@ impl<'a, 't> Walker<'a, 't> {
                 if !anonymous && (class.auth || attrs.iter().any(|a| AUTH_MARKERS.contains(&a.name.as_str()))) {
                     self.out.capability(&id, "AUTH_REQUIRED");
                 }
+                let spec = class.auth_spec.refine(&AuthSpec::from_attrs(&attrs));
+                if spec.is_set() && (routed || class.route.is_some()) {
+                    self.auth(&id, &spec, "aspnet", node);
+                }
+            }
+            // Background work and message consumers the host calls.
+            let base = |n: &str| class.bases.iter().find(|b| b.split('<').next().unwrap_or(b).rsplit('.').next() == Some(n));
+            let generic_arg = |b: &String| b.split_once('<').map(|(_, a)| a.trim_end_matches('>').to_owned()).unwrap_or_default();
+            match name.as_str() {
+                "ExecuteAsync" if base("BackgroundService").is_some() => self.out.entry(&id, EntryKind::Job, "background service"),
+                "StartAsync" if base("IHostedService").is_some() => self.out.entry(&id, EntryKind::Job, "hosted service"),
+                "Execute" if base("IJob").is_some() => self.out.entry(&id, EntryKind::Job, "Quartz job"),
+                "Invoke" if base("IInvocable").is_some() => self.out.entry(&id, EntryKind::Job, "Coravel job"),
+                "Consume" => {
+                    if let Some(b) = base("IConsumer") {
+                        self.out.entry(&id, EntryKind::Message, format!("consumes {}", generic_arg(b)));
+                    }
+                }
+                "Handle" => {
+                    if let Some(b) = base("INotificationHandler").or_else(|| base("IHandleMessages")) {
+                        self.out.entry(&id, EntryKind::Message, format!("handles {}", generic_arg(b)));
+                    }
+                }
+                _ => {}
             }
             if class.exception_filter && matches!(name.as_str(), "OnException" | "OnExceptionAsync" | "TryHandleAsync") {
                 self.out.handlers.push(GlobalHandlerFact { handler: id.clone(), exception: "*".into(), framework: "aspnet".into(), span: src.span(node) });
             }
         }
+    }
+
+    fn auth(&mut self, owner: &str, spec: &AuthSpec, framework: &str, node: Node) {
+        self.out.auth.push(AuthFact {
+            owner: owner.to_owned(),
+            roles: spec.roles.clone(),
+            policies: spec.policies.clone(),
+            anonymous: spec.anonymous,
+            framework: framework.into(),
+            span: self.src.span(node),
+        });
     }
 
     fn route(&mut self, handler: &str, method: &str, path: &str, framework: &str, node: Node, handler_ref: Option<String>) {
@@ -232,6 +509,7 @@ impl<'a, 't> Walker<'a, 't> {
             path: path.to_owned(),
             framework: framework.to_owned(),
             span: self.src.span(node),
+            router: None,
         });
     }
 
@@ -258,13 +536,31 @@ impl<'a, 't> Walker<'a, 't> {
         if node.kind() == "variable_declarator"
             && let Some(name) = node.child_by_field_name("name").or_else(|| first_child_of_kind(node, "identifier"))
             && let Some(init) = named_children(node).into_iter().rfind(|c| c.kind() == "invocation_expression")
-            && let Some(call) = Call::read(self.src, init)
-            && call.name == "MapGroup"
-            && let Some(prefix) = call.string_arg(0)
         {
-            let parent = self.groups.get(&call.receiver).cloned().unwrap_or_default();
-            let full = join_group(&parent, &prefix);
-            self.groups.insert(self.src.norm(name), full);
+            // `app.MapGroup("/api").RequireAuthorization().WithTags("x")`: the group call is inside.
+            let mut auth = AuthSpec::default();
+            let mut group = None;
+            for call in chain(self.src, init) {
+                if let Some(a) = AuthSpec::from_call(&call) {
+                    auth = auth.refine(&a);
+                } else if call.name == "MapGroup" {
+                    group = Some(call);
+                    break;
+                }
+            }
+            if let Some(call) = group
+                && let Some(prefix) = call.string_arg(0)
+            {
+                let parent = self.groups.get(&call.receiver).cloned().unwrap_or_default();
+                let full = join_group(&parent, &prefix);
+                let var = self.src.norm(name);
+                let inherited = self.group_auth.get(&call.receiver).cloned().unwrap_or_default();
+                let merged = inherited.refine(&auth);
+                if merged.is_set() {
+                    self.group_auth.insert(var.clone(), merged);
+                }
+                self.groups.insert(var, full);
+            }
         }
         for child in named_children(node) {
             self.collect_groups(child);
@@ -342,8 +638,121 @@ impl<'a, 't> Walker<'a, 't> {
                     _ => None,
                 })
                 .unwrap_or_else(|| owner.clone());
+            // Authorization of the group and of the calls chained on this one.
+            let mut spec = self.group_auth.get(&call.receiver).cloned().unwrap_or_default();
+            let mut cur = node.parent();
+            while let Some(parent) = cur.filter(|p| p.kind() == "member_access_expression").and_then(|m| m.parent()).filter(|i| i.kind() == "invocation_expression") {
+                if let Some(c) = Call::read(src, parent)
+                    && let Some(a) = AuthSpec::from_call(&c)
+                {
+                    spec = spec.refine(&a);
+                }
+                cur = parent.parent();
+            }
+            // A handler without a Blueprint of its own is the registering function: not the endpoint.
+            if spec.is_set() && handler != owner {
+                self.auth(&handler, &spec, "aspnet-minimal", node);
+                if !spec.anonymous {
+                    self.out.capability(&handler, "AUTH_REQUIRED");
+                }
+            }
             self.route(&handler, verb, &join_group(&prefix, &path), "aspnet-minimal", node, handler_ref);
             return;
+        }
+
+        // System.CommandLine: `add.SetHandler(handler, option)`, `root.SetAction(...)`.
+        if matches!(n, "SetHandler" | "SetAction")
+            && let Some(command) = self.commands.get(call.receiver.trim_start_matches("this.")).cloned()
+            && let Some(h) = call.arg_nodes.first().and_then(|a| self.callable(*a, &owner))
+        {
+            let label = if command == "(root)" { "root command".to_owned() } else { format!("command {command}") };
+            self.out.entry(&h, EntryKind::Command, label);
+            return;
+        }
+
+        // Hangfire: `RecurringJob.AddOrUpdate("id", () => svc.Run(), Cron.Daily)`, `BackgroundJob.Enqueue(...)`.
+        if matches!(call.receiver.as_str(), "RecurringJob" | "BackgroundJob" | "_recurringJobs" | "recurringJobManager")
+            && matches!(n, "AddOrUpdate" | "Enqueue" | "Schedule")
+        {
+            let job = call.arg_nodes.iter().find(|a| a.kind() == "lambda_expression").and_then(|l| self.lambda_target(*l, call.generics.first()));
+            if let Some(h) = job {
+                let label = match (n, call.string_arg(0)) {
+                    ("AddOrUpdate", Some(id)) => format!("recurring job {id}"),
+                    ("AddOrUpdate", None) => "recurring job".to_owned(),
+                    _ => "background job".to_owned(),
+                };
+                self.out.entry(&h, EntryKind::Job, label);
+            }
+            return;
+        }
+
+        // Stateless: `_machine.Configure(State.Off).Permit(Trigger.Switch, State.On)`.
+        if matches!(n, "Permit" | "PermitIf" | "PermitReentry" | "PermitReentryIf" | "SubstateOf" | "InitialTransition" | "PermitDynamic")
+            && let Some(var) = machine_of(&call.receiver)
+            && let Some(from) = call_arg_text(&call.receiver, "Configure(")
+            && let Some(type_owner) = self.owners.type_at(node.start_byte()).map(str::to_owned)
+        {
+            let from = member_name(&from);
+            let span = src.span(node);
+            let args = call.args.clone();
+            let m = self.machine(&type_owner, &var, "stateless", span);
+            if !m.states.contains(&from) {
+                m.states.push(from.clone());
+            }
+            let (to, trigger, guard) = match n {
+                "Permit" | "PermitIf" => (args.get(1).map(|a| member_name(a)), args.first().map(|a| member_name(a)), args.get(2).cloned()),
+                "PermitReentry" | "PermitReentryIf" => (Some(from.clone()), args.first().map(|a| member_name(a)), args.get(1).cloned()),
+                "PermitDynamic" => (Some("?".to_owned()), args.first().map(|a| member_name(a)), None),
+                "InitialTransition" => (args.first().map(|a| member_name(a)), Some("initial".to_owned()), None),
+                // `SubstateOf(State.Parent)`: nesting, recorded as `Parent.Child` names below.
+                _ => {
+                    if let Some(parent) = args.first().map(|a| member_name(a)) {
+                        let nested = format!("{parent}.{from}");
+                        if !m.states.contains(&parent) {
+                            m.states.push(parent);
+                        }
+                        if let Some(at) = m.states.iter().position(|s| *s == from) {
+                            m.states[at] = nested;
+                        }
+                    }
+                    return;
+                }
+            };
+            if let Some(to) = to {
+                if to != "?" && !m.states.contains(&to) {
+                    m.states.push(to.clone());
+                }
+                let t = StateTransition { from, to, trigger, guard };
+                if !m.transitions.contains(&t) {
+                    m.transitions.push(t);
+                }
+            }
+            return;
+        }
+
+        // Unity Animator: triggers and parameters it sets, states it plays.
+        if recv_lower.contains("anim")
+            && matches!(n, "SetTrigger" | "ResetTrigger" | "SetBool" | "SetInteger" | "SetFloat" | "Play" | "CrossFade" | "CrossFadeInFixedTime" | "PlayInFixedTime")
+            && let Some(literal) = call.string_arg(0)
+            && let Some(type_owner) = self.owners.type_at(node.start_byte()).map(str::to_owned)
+        {
+            let method = self.symbols.iter().find(|s| s.id == owner).map(|s| s.name.clone()).unwrap_or_default();
+            let span = src.span(node);
+            let var = call.receiver.clone();
+            let m = self.machine(&type_owner, &var, "unity-animator", span);
+            if n.starts_with("Set") || n == "ResetTrigger" {
+                if !m.triggers.contains(&literal) {
+                    m.triggers.push(literal);
+                }
+            } else {
+                if !m.states.contains(&literal) {
+                    m.states.push(literal.clone());
+                }
+                let t = StateTransition { from: "*".into(), to: literal, trigger: (!method.is_empty()).then_some(method), guard: None };
+                if !m.transitions.contains(&t) {
+                    m.transitions.push(t);
+                }
+            }
         }
 
         match n {
@@ -396,6 +805,43 @@ impl<'a, 't> Walker<'a, 't> {
                 self.http(&owner, method, url, "UnityWebRequest", node);
             }
         }
+    }
+
+    /// The method a handler argument runs: a lambda with a Blueprint, or a method group.
+    fn callable(&self, arg: Node<'t>, fallback: &str) -> Option<String> {
+        let src = self.src;
+        match arg.kind() {
+            "lambda_expression" | "anonymous_method_expression" => {
+                self.callbacks.get(&arg.start_byte()).cloned().or_else(|| self.lambda_target(arg, None)).or_else(|| Some(fallback.to_owned()))
+            }
+            "identifier" | "member_access_expression" => {
+                let name = src.norm(arg);
+                let name = name.rsplit('.').next().unwrap_or(&name).to_owned();
+                self.symbols.iter().find(|s| s.name == name && matches!(s.kind, SymbolKind::Method | SymbolKind::Function)).map(|s| s.id.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// The method an expression lambda calls: `x => x.Run()` with `AddOrUpdate<IReports>` → `Run`
+    /// of a type named like the generic argument (or the only method of that name).
+    fn lambda_target(&self, lambda: Node<'t>, generic: Option<&String>) -> Option<String> {
+        let src = self.src;
+        let body = lambda.child_by_field_name("body")?;
+        let text = src.norm(body);
+        let call = text.split('(').next()?;
+        let name = call.rsplit('.').next()?.trim();
+        let candidates: Vec<&Symbol> = self.symbols.iter().filter(|s| s.name == name && s.kind == SymbolKind::Method).collect();
+        let want = generic.map(|g| crate::syntax::bare_type_name(g));
+        let owner_name = |s: &Symbol| s.parent.as_deref().and_then(|p| self.symbols.iter().find(|x| x.id == p)).map(|p| p.name.clone()).unwrap_or_default();
+        let pick = match &want {
+            Some(w) => candidates.iter().find(|s| {
+                let o = owner_name(s);
+                o == *w || format!("I{o}") == *w
+            }),
+            None => None,
+        };
+        pick.or_else(|| (candidates.len() == 1).then(|| &candidates[0])).map(|s| s.id.clone())
     }
 
     /// `config["Jwt:Key"]`, `Configuration["X"]`.
@@ -527,5 +973,47 @@ pub fn join_aspnet(prefix: &str, path: &str) -> String {
         (true, false) => format!("/{s}"),
         (false, true) => format!("/{p}"),
         (false, false) => format!("/{p}/{s}"),
+    }
+}
+
+/// The invocations of a fluent chain, outermost first: `a.B().C()` → `C`, `B`.
+fn chain<'t>(src: Src, outer: Node<'t>) -> Vec<Call<'t>> {
+    let mut out = Vec::new();
+    let mut cur = Some(outer);
+    while let Some(node) = cur.filter(|n| n.kind() == "invocation_expression") {
+        let Some(call) = Call::read(src, node) else { break };
+        out.push(call);
+        cur = node
+            .child_by_field_name("function")
+            .filter(|f| f.kind() == "member_access_expression")
+            .and_then(|f| f.child_by_field_name("expression"));
+    }
+    out
+}
+
+/// The text of the last `name(...)` argument in a receiver: `_m.Configure(State.A).Permit(..)` → `State.A`.
+fn call_arg_text(receiver: &str, name: &str) -> Option<String> {
+    let at = receiver.rfind(name)? + name.len();
+    let rest = &receiver[at..];
+    let mut depth = 0;
+    for (i, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 0 => return Some(rest[..i].trim().to_owned()),
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The variable or field an expression is assigned to: `var x = new T()`, `_x = new T()`.
+fn assigned_name(src: Src, node: Node) -> Option<String> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "variable_declarator" => parent.child_by_field_name("name").or_else(|| first_child_of_kind(parent, "identifier")).map(|n| src.norm(n)),
+        "equals_value_clause" => parent.parent().and_then(|d| d.child_by_field_name("name").or_else(|| first_child_of_kind(d, "identifier"))).map(|n| src.norm(n)),
+        "assignment_expression" => parent.child_by_field_name("left").map(|n| src.norm(n).trim_start_matches("this.").to_owned()),
+        _ => None,
     }
 }

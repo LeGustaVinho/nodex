@@ -1,0 +1,26 @@
+flowchart TD
+  n0((" "))
+  n1("order = _repository.Find(id) ?? throw new InvalidOperationExcep…")
+  n2{"order.Status != OrderStatus.Paid?"}
+  n3("fail with new InvalidOperationException(#quot;Only paid orders can s…")
+  n4((("✕")))
+  n5("⏳ wait for Task.Delay(10)<br/>shipped = order.WithStatus(OrderStatus.Shipped)<br/>_repository.Replace(shipped)")
+  n6>"raise OrderShipped(shipped)"]
+  n7(((" ")))
+  n0 -->|"ShipAsync(id)"| n1
+  n1 --> n2
+  n2 -->|"yes"| n3
+  n3 -->|"InvalidOperationException"| n4
+  n2 -->|"no"| n5
+  n5 --> n6
+  n6 --> n7
+  classDef start fill:#eef1f4,stroke:#eef1f4,color:#0d1117
+  classDef final fill:#0d1117,stroke:#eef1f4,stroke-width:3px,color:#eef1f4
+  classDef err fill:#2b1416,stroke:#e5534b,color:#f6c9c6
+  classDef hot stroke:#2ecc71,stroke-width:2.5px
+  classDef cold fill:#15181d,stroke:#3a434f,color:#6b7684
+  class n1,n3,n5,n6 cold
+  class n3,n4 err
+  class n7 final
+  class n2 hot
+  class n0 start

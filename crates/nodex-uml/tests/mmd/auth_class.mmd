@@ -1,0 +1,46 @@
+classDiagram
+  direction TB
+  class n0["Handlers"] {
+    <<controller>>
+    +Restart()$ string
+    +Status()$ string
+  }
+  class n1["Program"] {
+    <<static>>
+  }
+  class n2["SystemClock"] {
+    <<service singleton>>
+    +Now: System.DateTime
+  }
+  namespace Auth.Controllers {
+    class n3["AdminController"] {
+      <<controller>>
+      +Health() IActionResult
+      +Purge(audit: bool) IActionResult
+      +Reports() IActionResult
+    }
+  }
+  namespace Auth.Services {
+    class n4["Formatter"] {
+      +Stamp() string
+    }
+    class n5["IClock"] {
+      <<interface>>
+      +Now: System.DateTime
+    }
+    class n6["IReportService"] {
+      <<interface>>
+      +Build() string
+      +RecordAccess(what: string)
+    }
+    class n7["ReportService"] {
+      <<service scoped>>
+      +Build() string
+      +RecordAccess(what: string)
+    }
+  }
+  n3 o-- "1" n6 : _reports
+  n4 o-- "1" n5 : injected (inferred)
+  n7 o-- "1" n5 : _clock
+  n6 <|.. n7
+  n5 <|.. n2

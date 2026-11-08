@@ -3,7 +3,7 @@
 Nodex turns source code into language-agnostic, Blueprint-style node graphs so a programmer can read code in a language they do not know.
 The same logic looks the same in every language: a C# `foreach`, a TypeScript `for..of` and a Rust `for x in iter` are one **For Each** node.
 
-**Status**: milestones M0–M4.1 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces for .NET programs with replay, exceptions and a call Timeline. Unity Play Mode traces, TypeScript and Rust are on the roadmap. M9 adds a knowledge graph for C#, TypeScript/JavaScript and Rust — entry points, HTTP routes and the front-end calls that reach them, dependency injection, tests, exceptions and data models — ported from CodeGraph.
+**Status**: milestones M0–M4.1 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces for .NET programs with replay, exceptions and a call Timeline. Unity Play Mode traces, TypeScript and Rust are on the roadmap. M9 adds a knowledge graph for C#, TypeScript/JavaScript and Rust — entry points, HTTP routes and the front-end calls that reach them, dependency injection, tests, exceptions and data models — ported from CodeGraph. It also reads authorization (roles, policies, anonymous endpoints), mounted routers (Express `app.use`, axum `nest`, actix `scope`, Rocket `mount`), commands, background jobs, message consumers, UI handlers and pages, constructor injection, and state machines declared with XState, Stateless or a Unity Animator.
 Full documentation lives in the Obsidian vault at `D:\MEGA\Obsidian\Default\Nodex` (start at `Nodex.md`).
 
 ## Quick start
@@ -36,9 +36,10 @@ The server prints a link with a session token and opens it in your browser.
 
 ## Views
 
-- **Overview** — what the project is: entry points, HTTP routes, hotspots (cyclomatic complexity), data models, and relations by kind.
+- **Overview** — what the project is: entry points (program, routes, commands, jobs, message consumers, UI), HTTP routes, hotspots (cyclomatic complexity), data models, declared state machines, and relations by kind.
 - **Hierarchy** — folders and namespaces, modules, types and members as boxes that open in place; relations roll up onto the visible boxes.
-- **Knowledge** — HTTP calls from front-end code to back-end routes, dependency injection, tests, thrown and caught exceptions, and data writes, around one symbol or for the whole project. Relations no compiler proves are drawn dashed (inferred) or dotted red (unresolved).
+- **Knowledge** — HTTP calls from front-end code to back-end routes, dependency injection (registrations and constructor injection), tests, thrown and caught exceptions, and data writes, around one symbol or for the whole project. Relations no compiler proves are drawn dashed (inferred) or dotted red (unresolved).
+- **UML** — the seven UML diagrams (Mermaid) of the project, a folder, a file, a symbol or the selected code: members with UML visibility, inheritance and realization, associations with multiplicities, composition and aggregation, entities and their keys, controllers and DI services as stereotypes; packages with coupling metrics and dependency cycles; components with the HTTP calls between front end and back end, provided interfaces, databases, caches and external APIs. Right-click a folder, a file, a symbol or a Hierarchy box, use the Inspector, the palette, or Ctrl+Shift+U in the code. Activity diagrams show how a function runs (decisions, loops with their way back, try/catch, fork/join, the HTTP requests and data changes it makes, calls expanded in place on demand); sequence diagrams follow a function's calls through other types and modules, across HTTP from front end to back end, through dependency injection to the implementation, down to the database, with alt/opt/loop/par/critical fragments. A wider scope lists its functions to start from (entry points first). State diagrams come from declared machines (XState, Stateless, Unity Animator) and from the code: enum, literal and flag fields, a stored entity's status changed by services (triggered by the route that reaches them), React `useState`, the State pattern, a local driving a loop and Rust type-states, with source states read from guard clauses, `switch` cases and helper guards. Use case diagrams show the entry points by component with their actors (roles from `[Authorize]`, `@Roles` or `requireRole`, visitors, operators, schedulers, brokers), «include» and «extend» from shared operations, and UI actions that include the API use case they call. After a run, a sequence diagram can draw the recorded calls of any call picked in the Timeline (arguments, return values, exceptions, repeated calls folded into loops), and activity and sequence diagrams mark what ran. Click an element to see why it is drawn; export Mermaid, Markdown, SVG or PNG. 
 - **Architecture** — namespaces, imported namespaces and packages.
 - **Types** — classes, interfaces and records, with *extends*, *implements*, *uses* and *creates* edges.
 - **Calls** — callers and callees of a function, including events it raises and who handles them (needs the sidecar).
@@ -54,7 +55,8 @@ The server prints a link with a session token and opens it in your browser.
 | `crates/nodex-lang-api` | `LanguageFrontend` trait and the lowering kit |
 | `crates/nodex-lang-csharp` | C#/Unity frontend (tree-sitter) |
 | `crates/nodex-core` | Project model, linker, concept catalog, canonical forms, knowledge graph (routes, HTTP links, DI, tests, caught exceptions) |
-| `crates/nodex-trace` | Trace protocol decoder, span resolver, recorder (counts, values, replay timeline) |
+| `crates/nodex-uml` | UML diagrams (use case, component, class, sequence, activity, state, package) built from the structure, knowledge and flow graphs and recorded runs, as Mermaid text |
+| `crates/nodex-trace` | Trace protocol decoder, span resolver, recorder (counts, values, replay timeline, call tree with callers and call sites) |
 | `crates/nodex-server` | `nodex` CLI, HTTP/WebSocket API, file watcher, semantic worker, run manager, embedded UI |
 | `web/` | React + React Flow + ELK + Monaco UI |
 | `catalog/` | Concept and flavor definitions (single source for code, UI and docs) |

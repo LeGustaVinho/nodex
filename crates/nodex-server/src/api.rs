@@ -178,6 +178,27 @@ pub async fn trace_calls(State(state): State<Arc<AppState>>, Query(q): Query<Cal
 }
 
 #[derive(Deserialize)]
+pub struct TreeQuery {
+    root: u32,
+    #[serde(default = "default_tree_limit")]
+    limit: usize,
+}
+
+fn default_tree_limit() -> usize {
+    5000
+}
+
+/// One execution and every call made under it (for sequence diagrams of a real run).
+pub async fn trace_tree(State(state): State<Arc<AppState>>, Query(q): Query<TreeQuery>) -> ApiResult {
+    let recorder = state.run.recorder().ok_or_else(|| not_found("recording"))?;
+    let page = recorder.lock().map_err(poisoned)?.span_tree(q.root, q.limit.min(50_000));
+    if page.spans.is_empty() {
+        return Err(not_found("call"));
+    }
+    Ok(Json(page).into_response())
+}
+
+#[derive(Deserialize)]
 pub struct TraceQuery {
     run: String,
 }

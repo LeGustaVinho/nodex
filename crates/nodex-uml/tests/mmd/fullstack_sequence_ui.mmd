@@ -1,0 +1,33 @@
+sequenceDiagram
+  actor n0 as User
+  box rgba(139,152,168,0.08) frontend-react
+    participant n1 as OrderList
+    participant n2 as orders
+  end
+  box rgba(139,152,168,0.08) backend-dotnet
+    participant n3 as OrdersController
+    participant n4 as OrderService
+  end
+  participant n5 as Database (EF Core)
+  n0->>+n1: onCancel()
+  critical try
+    n1->>+n2: await cancelOrder(id)
+    n2->>+n3: POST /api/Orders/{id}/cancel
+    critical try
+      Note right of n4: via IOrderService (dependency injection)
+      n3->>+n4: await CancelOrderAsync(id, "requested by customer")
+      n4->>n5: FindAsync(id) · Orders
+      opt order == null
+        n4--xn3: throw OrderNotFoundException
+      end
+      n4->>n4: Audit(order, reason)
+      n4->>n5: SaveChangesAsync()
+      deactivate n4
+      n3-->>n2: NoContent()
+    option catch OrderNotFoundException
+      n3-->>n2: NotFound(ex.Message)
+    end
+    n3-->>-n2: HTTP response: Task#lt;IActionResult#gt;
+    deactivate n2
+  end
+  deactivate n1

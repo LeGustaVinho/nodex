@@ -1,0 +1,19 @@
+flowchart LR
+  n0["«service»<br/>backend-dotnet<br/>17 types · 4 routes"]
+  n1["«service»<br/>backend-nest<br/>5 types · 2 routes"]
+  n2["«web app»<br/>frontend-react<br/>3 types"]
+  n2 -.->|"HTTP GET /api/Orders, POST /api/Orders/{id}/cancel"| n0
+  n3{{"External API api.stripe.com"}}:::infra
+  n1 -->|"HTTP"| n3
+  n4[/"Configuration"/]:::infra
+  n0 -->|"connection string & settings & environm…"| n4
+  n1 -->|"environment"| n4
+  n2 -->|"environment"| n4
+  n5[("Database")]:::infra
+  n1 -->|"reads & writes"| n5
+  n6[("Database (EF Core): Customer, Order, OrderItem")]:::infra
+  n0 -->|"writes & reads"| n6
+  classDef infra fill:#13202b,stroke:#58a6ff,color:#cfe3f7
+  classDef comp fill:#1d232c,stroke:#f5b041,color:#eef1f4
+  class n0,n1,n2 comp
+  linkStyle 0 stroke:#f0883e,stroke-width:2px

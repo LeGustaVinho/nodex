@@ -11,7 +11,7 @@ import { type HItem, type HierarchyNodeData, LEAF_HEIGHT, LEAF_WIDTH, edgeKindOf
 import type { GEdge, GGraph, GNode } from "./model";
 import { type StructureIndex, isTypeKind } from "./structureGraph";
 
-export const KNOWLEDGE_KINDS: ReadonlySet<StructEdgeKind> = new Set(["HttpCalls", "ResolvesDi", "Tests", "Throws", "CaughtBy", "Mutates"]);
+export const KNOWLEDGE_KINDS: ReadonlySet<StructEdgeKind> = new Set(["HttpCalls", "ResolvesDi", "DependsOn", "Tests", "Throws", "CaughtBy", "Mutates"]);
 export const KNOWLEDGE_CAP = 160;
 
 export interface KnowledgeOptions {

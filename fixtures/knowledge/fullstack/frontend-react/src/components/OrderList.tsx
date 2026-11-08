@@ -17,11 +17,18 @@ export function OrderList() {
     }
   };
 
+  const refresh = async () => {
+    setOrders(await getOrders());
+  };
+
   return (
-    <ul>
-      {orders.map((o) => (
-        <OrderRow key={o.id} order={o} onCancel={onCancel} />
-      ))}
-    </ul>
+    <div>
+      <button onClick={refresh}>Refresh</button>
+      <ul>
+        {orders.map((o) => (
+          <OrderRow key={o.id} order={o} onCancel={onCancel} />
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Symbol } from "../gen/Symbol";
 import { rankSymbols } from "../graph/search";
 import { type View, useUi } from "../store";
+import { UML_KINDS } from "../uml/uml";
 import { revealInHierarchy, useHierarchy } from "../views/Knowledge";
 import { useStructure } from "../views/Views";
 
@@ -15,6 +16,7 @@ const VIEW_COMMANDS: [View, string, string][] = [
   ["overview", "Overview", "What the project is: entry points, routes, hotspots"],
   ["hierarchy", "Hierarchy", "Folders, namespaces, types and members as nested boxes"],
   ["knowledge", "Knowledge", "HTTP calls, DI, tests, throws and writes"],
+  ["uml", "UML", "Class, package and component diagrams"],
   ["architecture", "Architecture", "Namespaces, modules and packages"],
   ["types", "Types", "Classes, interfaces and how they relate"],
   ["calls", "Calls", "Callers and callees of a function"],
@@ -63,6 +65,15 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const commands: Command[] = useMemo(() => {
     const list: Command[] = VIEW_COMMANDS.map(([id, title, hint]) => ({ title: `Go to ${title}`, hint, run: () => useUi.getState().setView(id) }));
     list.push({ title: "Close every box in the Hierarchy", hint: "Collapse all", run: () => useUi.getState().collapseTree() });
+    // UML diagrams of the project, and of the selected symbol when there is one.
+    const sel = useUi.getState().selection;
+    for (const k of UML_KINDS.filter((k) => k.ready)) {
+      list.push({ title: `UML: ${k.label} of the project`, hint: k.question, run: () => useUi.getState().showUml({ kind: "Project" }, k.id) });
+      if (sel?.kind === "symbol") {
+        const id = sel.id;
+        list.push({ title: `UML: ${k.label} of the selection`, hint: id, run: () => useUi.getState().showUml({ kind: "Symbol", id }, k.id) });
+      }
+    }
     const q = query.trim().toLowerCase();
     return q ? list.filter((c) => c.title.toLowerCase().includes(q) || c.hint.toLowerCase().includes(q)) : list;
   }, [query]);

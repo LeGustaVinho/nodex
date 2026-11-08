@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+import { openMenu } from "../components/ContextMenu";
+import { umlMenuItems } from "../uml/menu";
 import { api } from "../api";
 import { conceptColor, conceptInfo, flavorInfo, operationColor, operationInfo, typeColor, useCatalog } from "../catalog";
 import type { Access } from "../gen/Access";
@@ -11,11 +13,12 @@ import { useStructure } from "../views/Views";
 import type { StructEdge } from "../gen/StructEdge";
 import type { StructureIndex } from "../graph/structureGraph";
 
-const KNOWLEDGE_KINDS = new Set(["HttpCalls", "ResolvesDi", "Tests", "Throws", "CaughtBy", "Mutates"]);
+const KNOWLEDGE_KINDS = new Set(["HttpCalls", "ResolvesDi", "DependsOn", "Tests", "Throws", "CaughtBy", "Mutates"]);
 
 const VERB: Record<string, [string, string]> = {
   HttpCalls: ["sends HTTP requests to", "receives HTTP requests from"],
   ResolvesDi: ["is provided by", "provides"],
+  DependsOn: ["is injected with", "is injected into"],
   Tests: ["tests", "is tested by"],
   Throws: ["throws", "is thrown by"],
   CaughtBy: ["is caught by", "catches errors of"],
@@ -67,6 +70,17 @@ function KnowledgeSection({ id, index }: { id: string; index: StructureIndex }) 
           {info.entry && <span className="badge" title="Runs without being called by project code">entry: {info.entry.label}</span>}
           {info.test && <span className="badge">test</span>}
           {info.complexity > 0 && <span className="badge" title="Cyclomatic complexity: 1 + the decisions it makes">complexity {info.complexity}</span>}
+          {info.auth?.anonymous && <span className="badge small" title="Explicitly open to anonymous callers">anonymous</span>}
+          {info.auth?.roles.map((r) => (
+            <span key={`role:${r}`} className="badge small" title="Role required to call it">
+              role {r}
+            </span>
+          ))}
+          {info.auth?.policies.map((p) => (
+            <span key={`policy:${p}`} className="badge small" title="Policy or guard that protects it">
+              {p}
+            </span>
+          ))}
           {info.capabilities.map((c) => (
             <span key={c} className="badge small cap">
               {c}
@@ -341,12 +355,18 @@ export function Inspector() {
           </button>
           <button onClick={() => showCalls(symbol.id)}>Show calls</button>
           <button onClick={() => useUi.getState().showKnowledge(symbol.id)}>Knowledge</button>
+          <button onClick={(e) => openMenu(e, umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`))} title="UML diagrams of this symbol">
+            UML ▾
+          </button>
         </div>
       )}
       {!symbol.has_flow && !symbol.external && (
         <div className="button-row">
           <button onClick={() => useUi.getState().showKnowledge(symbol.id)} title="HTTP calls, DI, tests, throws and writes around it">
             Show knowledge
+          </button>
+          <button onClick={(e) => openMenu(e, umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`))} title="UML diagrams of this symbol">
+            UML ▾
           </button>
         </div>
       )}

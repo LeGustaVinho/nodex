@@ -1,0 +1,17 @@
+flowchart TD
+  n0((" "))
+  subgraph g0 ["try"]
+    n1("⏳ wait for _orderService.CancelOrderAsync(id, #quot;requested by cus…")
+    n2("return NoContent()")
+  n3(((" ")))
+  end
+  n4("return NotFound(ex.Message)")
+  n0 -->|"POST /api/Orders/{id}/cancel"| n1
+  n1 --> n2
+  n2 --> n3
+  g0 -.->|"catch OrderNotFoundException"| n4
+  n4 --> n3
+  classDef start fill:#eef1f4,stroke:#eef1f4,color:#0d1117
+  classDef final fill:#0d1117,stroke:#eef1f4,stroke-width:3px,color:#eef1f4
+  class n3 final
+  class n0 start

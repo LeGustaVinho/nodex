@@ -1,0 +1,12 @@
+flowchart LR
+  n0["«layer»<br/>Domain<br/>Csharp · 6 types"]
+  n1["«layer»<br/>Sample (root)<br/>Csharp · 1 types"]
+  n2["«layer»<br/>Services<br/>Csharp · 4 types"]
+  n1 -->|"uses ×2"| n0
+  n1 -->|"uses ×3"| n2
+  n2 -->|"uses ×11"| n0
+  n3[("Database")]:::infra
+  n2 -->|"reads"| n3
+  classDef infra fill:#13202b,stroke:#58a6ff,color:#cfe3f7
+  classDef comp fill:#1d232c,stroke:#f5b041,color:#eef1f4
+  class n0,n1,n2 comp

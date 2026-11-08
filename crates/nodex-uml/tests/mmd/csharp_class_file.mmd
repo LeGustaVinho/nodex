@@ -1,0 +1,53 @@
+classDiagram
+  direction TB
+  namespace Sample {
+    class n0["Program"] {
+      <<static>>
+    }
+  }
+  namespace Sample.Domain {
+    class n1["Order"] {
+      <<record>>
+    }
+  }
+  namespace Sample.Services {
+    class n2["AuditScope"] {
+      -_name: string
+      +Dispose()
+    }
+    class n3["IOrderRepository"] {
+      <<interface>>
+      +Add(order: Order)
+      +All() IEnumerable~Order~
+      +Find(id: int) Order?
+      +Replace(order: Order)
+    }
+    class n4["InMemoryOrderRepository"] {
+      -_gate: object
+      -_orders: Dictionary~int, Order~
+      +Add(order: Order)
+      +All() IEnumerable~Order~
+      +Find(id: int) Order?
+      +Replace(order: Order)
+    }
+    class n5["OrderService"] {
+      +OrderShipped: Action~Order~?
+      -_repository: IOrderRepository
+      +CountPending() int
+      +DescribeAll() IEnumerable~string~
+      +ShipAsync(id: int) Task
+      +TotalForCustomer(customer: string) decimal
+      +TotalForCustomerLinq(customer: string) decimal
+    }
+  }
+  n0 ..> n4 : create
+  n0 ..> n5 : create
+  n3 ..> n1
+  n4 *-- "0..*" n1 : _orders [int]
+  n3 <|.. n4
+  n5 *-- "0..1" n1 : OrderShipped
+  n5 ..> n2 : create
+  n5 --> "1" n3 : _repository
+  classDef ctx fill:#1b1f26,stroke:#4b5563,color:#9aa4b2,stroke-dasharray:4 3
+  class n0:::ctx
+  class n1:::ctx

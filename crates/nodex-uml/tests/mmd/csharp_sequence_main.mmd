@@ -1,0 +1,35 @@
+sequenceDiagram
+  actor n0 as Operator
+  participant n1 as Program
+  participant n5 as Event bus
+  n0->>+n1: program entry (Main)
+  create participant n2 as InMemoryOrderRepository
+  n1->>n2: new InMemoryOrderRepository()
+  create participant n3 as OrderService
+  n1->>n3: new OrderService(repository)
+  create participant n4 as Order
+  n1->>n4: new Order(1, "alice", 120m, OrderStatus.Paid)
+  n1->>n2: Add(new Order)
+  n1->>n4: new Order(2, "bob", 40m, OrderStatus.Pending)
+  n1->>n2: Add(new Order)
+  n1->>n4: new Order(3, "alice", 75m, OrderStatus.Paid)
+  n1->>n2: Add(new Order)
+  n1->>+n3: TotalForCustomer("alice")
+  Note right of n2: via IOrderRepository (only implementation)
+  n3->>n2: All()
+  n3-->>-n1: total
+  n1->>+n3: DescribeAll()
+  loop repeat: start int i = 0#59; while i #lt; 3#59; step i++
+    n3->>n2: Find(i + 1)
+  end
+  n3-->>-n1: IEnumerable#lt;string#gt;
+  critical try
+    n1->>+n3: await ShipAsync(2)
+    n3->>n2: Find(id)
+    opt order.Status != OrderStatus.Paid
+      n3--xn1: throw InvalidOperationException
+    end
+    n3-)n5: raise OrderShipped(shipped)
+    deactivate n3
+  end
+  deactivate n1

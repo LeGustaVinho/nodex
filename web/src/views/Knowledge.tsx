@@ -1,4 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+import { openMenu } from "../components/ContextMenu";
+import { umlMenuItems } from "../uml/menu";
+import { UML_KINDS } from "../uml/uml";
 import { useMemo } from "react";
 import { api } from "../api";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
@@ -72,6 +75,16 @@ export function HierarchyView() {
           if (childCount > 0) toggleTree(item.id);
           else if (item.symbol?.has_flow) openFlow(item.symbol.id);
         }}
+        onNodeContextMenu={(e, n) => {
+          const { item } = n.data as unknown as HierarchyNodeData;
+          // Folder (`dir:`) and namespace (`grp:ns:`) boxes are scopes too.
+          const id = item.symbol?.id ?? item.id;
+          if (item.symbol?.external) return;
+          openMenu(e, [
+            ...umlMenuItems({ kind: "Symbol", id }, `UML of ${item.symbol?.name ?? id.replace(/^(dir:|grp:ns:)/, "")}`),
+            ...(item.symbol ? [{ label: "Show in Knowledge", run: () => useUi.getState().showKnowledge(item.symbol!.id) }] : []),
+          ]);
+        }}
         emptyText="No declarations found."
       />
       {graph?.truncated && <div className="canvas-note">Showing the first {HIERARCHY_CAP} items. Close some boxes to see the rest.</div>}
@@ -110,6 +123,11 @@ export function KnowledgeView() {
           const { item } = n.data as unknown as HierarchyNodeData;
           if (item.symbol && !item.symbol.external) showKnowledge(item.symbol.id);
         }}
+        onNodeContextMenu={(e, n) => {
+          const { item } = n.data as unknown as HierarchyNodeData;
+          if (!item.symbol || item.symbol.external) return;
+          openMenu(e, umlMenuItems({ kind: "Symbol", id: item.symbol.id }, `UML of ${item.symbol.name}`));
+        }}
         emptyText={empty}
       />
       {graph?.truncated && <div className="canvas-note">Showing the first {KNOWLEDGE_CAP} symbols. Focus on one or lower the depth.</div>}
@@ -126,6 +144,7 @@ const LEGEND: { kind: StructEdgeKind; label: string; color: string; dash?: strin
   { kind: "Imports", label: "imports", color: "#7b8794" },
   { kind: "HttpCalls", label: "HTTP", color: KNOWLEDGE_COLORS.httpcalls },
   { kind: "ResolvesDi", label: "provides (DI)", color: KNOWLEDGE_COLORS.resolvesdi },
+  { kind: "DependsOn", label: "depends on (DI)", color: KNOWLEDGE_COLORS.dependson, dash: "4 3" },
   { kind: "Tests", label: "tests", color: KNOWLEDGE_COLORS.tests, dash: "4 3" },
   { kind: "Throws", label: "throws", color: KNOWLEDGE_COLORS.throws },
   { kind: "CaughtBy", label: "caught by", color: KNOWLEDGE_COLORS.caughtby, dash: "4 3" },
@@ -173,6 +192,7 @@ const KIND_LABEL: Partial<Record<StructEdgeKind, string>> = {
   Compatible: "fits",
   HttpCalls: "HTTP calls",
   ResolvesDi: "DI provides",
+  DependsOn: "DI depends on",
   Tests: "tests",
   Throws: "throws",
   CaughtBy: "caught by",
@@ -185,6 +205,7 @@ export function OverviewView() {
   const h = useHierarchy();
   const knowledge = useKnowledge();
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
+  const diagrams = useQuery({ queryKey: ["uml-availability", JSON.stringify({ kind: "Project" })], queryFn: () => api.umlAvailability({ kind: "Project" }), retry: false });
   const { select, openFlow } = useUi();
   const k = knowledge.data;
   const stats = useMemo(() => {
@@ -230,6 +251,27 @@ export function OverviewView() {
       </div>
       <div className="ov-grid">
         <section className="ov-card">
+          <h3>Diagrams</h3>
+          <p className="muted small">UML views of the whole project. Right-click a folder, a file or a symbol for its own.</p>
+          {UML_KINDS.map((kind) => {
+            const a = diagrams.data?.kinds.find((x) => x.kind === kind.id);
+            const suggested = diagrams.data?.suggested === kind.id;
+            return (
+              <button
+                key={kind.id}
+                className="ov-row"
+                disabled={!a?.available}
+                onClick={() => useUi.getState().showUml({ kind: "Project" }, kind.id)}
+                title={kind.question}
+              >
+                <span className={`badge small ${suggested ? "suggested" : ""}`}>{suggested ? "suggested" : "UML"}</span>
+                <span className="ov-main">{kind.label}</span>
+                <span className="ov-sub">{a?.reason ?? kind.question}</span>
+              </button>
+            );
+          })}
+        </section>
+        <section className="ov-card">
           <h3>Relations</h3>
           {stats.byKind.map(([kind, n]) => (
             <div key={kind} className="bar-row">
@@ -248,7 +290,7 @@ export function OverviewView() {
         </section>
         <section className="ov-card">
           <h3>Entry points</h3>
-          {entries.length === 0 && <p className="muted small">No entry points found: no Main, routes, server start or framework hooks.</p>}
+          {entries.length === 0 && <p className="muted small">No entry points found: no Main, routes, commands, jobs, message consumers, UI handlers, server start or framework hooks.</p>}
           {entries.slice(0, 12).map((s) => (
             <button key={s.symbol} className="ov-row" onClick={() => pick(s.symbol)} title={name(s.symbol)}>
               <span className="badge small">{s.entry!.kind}</span>
@@ -287,6 +329,19 @@ export function OverviewView() {
             </button>
           ))}
         </section>
+        {(k?.state_machines.length ?? 0) > 0 && (
+          <section className="ov-card">
+            <h3>State machines</h3>
+            {k!.state_machines.map((m) => (
+              <button key={`${m.owner}:${m.name}`} className="ov-row" onClick={() => pick(m.owner)} title={name(m.owner)}>
+                <span className="ov-main">{m.name}</span>
+                <span className="ov-sub">
+                  {m.framework} · {m.states.length} states · {m.transitions.length} transitions
+                </span>
+              </button>
+            ))}
+          </section>
+        )}
         {(k?.models.length ?? 0) > 0 && (
           <section className="ov-card">
             <h3>Data models</h3>

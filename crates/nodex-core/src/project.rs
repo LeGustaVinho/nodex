@@ -328,6 +328,21 @@ impl Project {
         Some(flow)
     }
 
+    /// Build units (`.csproj` projects, `package.json` packages, Cargo crates) and the
+    /// references between them.
+    pub fn units(&self) -> Vec<crate::units::BuildUnit> {
+        let manifests: Vec<(Language, PathBuf, Vec<PackageRef>)> = self
+            .descriptors
+            .iter()
+            .flat_map(|d| {
+                // Packages are known per language; give them to the unit only when it is the only one.
+                let units = d.manifests.iter().filter(|m| is_unit_manifest(m)).count();
+                d.manifests.iter().map(move |m| (d.language, m.clone(), if units == 1 { d.packages.clone() } else { Vec::new() }))
+            })
+            .collect();
+        crate::units::read_units(&self.root, &manifests)
+    }
+
     /// Frontends for the languages present in the project.
     pub fn active_frontends(&self) -> Vec<Arc<dyn LanguageFrontend>> {
         let mut used: Vec<Language> = self.files.values().map(|f| f.language).collect();
@@ -391,6 +406,11 @@ impl Project {
         let bytes = std::fs::read(path).ok()?;
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
+}
+
+fn is_unit_manifest(path: &Path) -> bool {
+    let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    name.ends_with(".csproj") || name == "package.json" || name == "Cargo.toml"
 }
 
 fn is_ignored_dir(name: &str) -> bool {

@@ -1,0 +1,10 @@
+stateDiagram-v2
+  state "none set" as n0
+  state "disposed" as n1
+  state "connected" as n2
+  [*] --> n0
+  n2 --> n1 : Dispose
+  n2 --> n0 : Close
+  n0 --> n2 : Open
+  n0 --> n1 : Dispose
+  n1 --> [*]

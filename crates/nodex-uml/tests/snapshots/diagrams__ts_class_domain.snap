@@ -1,0 +1,68 @@
+---
+source: crates/nodex-uml/tests/diagrams.rs
+expression: ts.mermaid
+---
+classDiagram
+  direction TB
+  namespace src.domain {
+    class n0["Entity"] {
+      <<interface>>
+      +id: number
+    }
+    class n1["Order"] {
+      +amount: number
+      +customer: string
+      +id: number
+      +isLarge: boolean
+      +status: OrderStatus
+      +withStatus(status: OrderStatus) Order
+    }
+    class n2["OrderStatus"] {
+      <<enumeration>>
+      Cancelled
+      Paid
+      Pending
+      Shipped
+    }
+    class n3["Priced"] {
+      <<interface>>
+      +amount: number
+      +customer: string
+    }
+    class n4["Circle"] {
+      +area() number
+    }
+    class n5["OrderEvent"] {
+      <<union>>
+    }
+    class n6["Rectangle"] {
+      +height
+      +width
+      +area() number
+    }
+    class n7["Shape"] {
+      <<abstract>>
+      +id: number
+      +area()* number
+      +describe() string
+    }
+  }
+  namespace src.services {
+    class n8["OrderService"]
+    class n9["InMemoryOrderRepository"]
+    class n10["OrderRepository"] {
+      <<interface>>
+    }
+  }
+  n0 <|.. n1
+  n1 --> "1" n2 : status
+  n7 <|-- n4
+  n7 <|-- n6
+  n0 <|.. n7
+  n8 ..> n5
+  n9 ..> n1
+  n10 ..> n1
+  classDef ctx fill:#1b1f26,stroke:#4b5563,color:#9aa4b2,stroke-dasharray:4 3
+  class n8:::ctx
+  class n9:::ctx
+  class n10:::ctx

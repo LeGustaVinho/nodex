@@ -1,0 +1,116 @@
+classDiagram
+  direction TB
+  class n0["Program"] {
+    <<static>>
+  }
+  namespace Shop.Controllers {
+    class n1["OrdersController"] {
+      <<controller>>
+      +Cancel(id: Guid) Task~IActionResult~
+      +Create(order: Order) Task~IActionResult~
+      +GetOrders() Task~IActionResult~
+    }
+  }
+  namespace Shop.Data {
+    class n2["AppDbContext"] {
+      +Customers: DbSet~Customer~
+      +OrderItems: DbSet~OrderItem~
+      +Orders: DbSet~Order~
+    }
+  }
+  namespace Shop.Exceptions {
+    class n3["OrderNotFoundException"]
+  }
+  namespace Shop.Handlers {
+    class n4["Dispatcher"] {
+      +Broadcast(message: string)
+      +Dispatch(handler: IHandler, message: string)
+    }
+    class n5["EmailHandler"] {
+      +Execute(message: string)
+    }
+    class n6["IHandler"] {
+      <<interface>>
+      +Execute(message: string)
+    }
+    class n7["PushHandler"] {
+      +Execute(message: string)
+    }
+    class n8["SmsHandler"] {
+      +Execute(message: string)
+    }
+  }
+  namespace Shop.Models {
+    class n9["Customer"] {
+      <<entity>>
+      +Email: string
+      +Id: Guid
+      +Orders: ICollection~Order~
+    }
+    class n10["Order"] {
+      <<entity>>
+      +CreatedAt: DateTime
+      +Customer: Customer
+      +CustomerId: Guid
+      +Id: Guid
+      +Items: List~OrderItem~
+      +Status: OrderStatus
+    }
+    class n11["OrderItem"] {
+      <<entity>>
+      +Id: int
+      +Order: Order
+      +OrderId: Guid
+      +Quantity: int
+      +Sku: string
+    }
+    class n12["OrderStatus"] {
+      <<enumeration>>
+      Cancelled
+      Paid
+      Pending
+    }
+  }
+  namespace Shop.Services {
+    class n13["IClock"] {
+      <<interface>>
+      +Now() DateTime
+    }
+    class n14["IOrderService"] {
+      <<interface>>
+      +CancelOrderAsync(id: Guid, reason: string) Task
+      +ListOrdersAsync() Task~List~Order~~
+      +PlaceOrderAsync(order: Order, priority: int) Task~Order~
+    }
+    class n15["OrderService"] {
+      <<service scoped>>
+      +CancelOrderAsync(id: Guid, reason: string) Task
+      +ListOrdersAsync() Task~List~Order~~
+      +PlaceOrderAsync(order: Order, priority: int) Task~Order~
+    }
+    class n16["SystemClock"] {
+      <<service singleton>>
+      +Now() DateTime
+    }
+  }
+  n1 ..> n10
+  n1 o-- "1" n14 : _orderService
+  n2 --> "0..*" n9 : Customers
+  n2 --> "0..*" n10 : Orders
+  n2 --> "0..*" n11 : OrderItems
+  n4 *-- "0..*" n6 : _handlers
+  n6 <|.. n5
+  n6 <|.. n7
+  n6 <|.. n8
+  n9 "1" --> "0..*" n10 : Orders
+  n10 "0..*" --> "1" n9 : Customer
+  n10 "1" --> "0..*" n11 : Items
+  n10 *-- "1" n12 : Status
+  n11 "0..*" --> "1" n10 : Order
+  n14 ..> n10
+  n15 o-- "1" n2 : _db
+  n15 ..> n3 : create
+  n15 ..> n10 : writes
+  n15 o-- "1" n13 : _clock
+  n14 <|.. n15
+  n13 <|.. n16

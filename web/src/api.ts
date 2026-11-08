@@ -13,6 +13,11 @@ import type { DebugVariable } from "./gen/DebugVariable";
 import type { Language } from "./gen/Language";
 import type { RecentProject } from "./gen/RecentProject";
 import type { OutputLine } from "./gen/OutputLine";
+import type { UmlAvailability } from "./gen/UmlAvailability";
+import type { UmlDiagram } from "./gen/UmlDiagram";
+import type { UmlKind } from "./gen/UmlKind";
+import type { UmlOptions } from "./gen/UmlOptions";
+import type { UmlScope } from "./gen/UmlScope";
 import type { ProjectKnowledge } from "./gen/ProjectKnowledge";
 import type { ProjectSummary } from "./gen/ProjectSummary";
 import type { RunSnapshot } from "./gen/RunSnapshot";
@@ -119,6 +124,10 @@ export const api = {
   runStart: () => request("/api/run", { method: "POST" }),
   runStop: () => request("/api/run/stop", { method: "POST" }),
   traceCalls: () => json<CallsPage>("/api/trace/calls"),
+  traceTree: (root: number, limit = 5000) => json<CallsPage>(`/api/trace/tree?root=${root}&limit=${limit}`),
+  uml: (kind: UmlKind, scope: UmlScope, opts: Partial<UmlOptions>) =>
+    json<UmlDiagram>(`/api/uml?kind=${kind}&scope=${encodeURIComponent(JSON.stringify(scope))}&opts=${encodeURIComponent(JSON.stringify(opts))}`),
+  umlAvailability: (scope: UmlScope) => json<UmlAvailability>(`/api/uml/availability?scope=${encodeURIComponent(JSON.stringify(scope))}`),
   traceSteps: (symbol: string) => json<StepsPage>(`/api/trace/steps?symbol=${encodeURIComponent(symbol)}`),
   saveLayout: (key: string, positions: Positions) =>
     request(`/api/layout?key=${encodeURIComponent(key)}`, {

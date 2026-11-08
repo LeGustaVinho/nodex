@@ -1,0 +1,15 @@
+flowchart LR
+  n0["«service»<br/>shop-api<br/>Rust · 10 types · 3 routes"]
+  n1["«component»<br/>shared-kit<br/>Rust · 1 function"]
+  n0 -->|"references"| n1
+  n2{{"External API example.com"}}:::infra
+  n0 -->|"HTTP"| n2
+  n3[("Cache")]:::infra
+  n0 -->|"caches"| n3
+  n4[/"Configuration"/]:::infra
+  n0 -->|"environment"| n4
+  n5[("Database (diesel): customers, invoices")]:::infra
+  n0 -->|"writes & reads"| n5
+  classDef infra fill:#13202b,stroke:#58a6ff,color:#cfe3f7
+  classDef comp fill:#1d232c,stroke:#f5b041,color:#eef1f4
+  class n0,n1 comp

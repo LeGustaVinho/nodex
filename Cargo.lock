@@ -978,6 +978,7 @@ dependencies = [
  "nodex-lang-rust",
  "nodex-lang-typescript",
  "nodex-trace",
+ "nodex-uml",
  "notify",
  "open",
  "rust-embed",
@@ -1000,6 +1001,23 @@ name = "nodex-trace"
 version = "0.1.0"
 dependencies = [
  "nodex-ir",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "nodex-uml"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "nodex-core",
+ "nodex-ir",
+ "nodex-lang-api",
+ "nodex-lang-csharp",
+ "nodex-lang-rust",
+ "nodex-lang-typescript",
+ "nodex-trace",
  "serde",
  "serde_json",
  "ts-rs",

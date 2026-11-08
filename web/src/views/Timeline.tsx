@@ -30,6 +30,13 @@ export function TimelineView() {
   const events = useTrace((s) => s.events);
   const { index } = useStructure();
   const { openFlow, select } = useUi();
+  /** The recorded sequence under one call: the scope is its function, the root the call. */
+  const sequenceOf = (id: number) => {
+    const span = page?.spans.find((s) => s.id === id);
+    const ui = useUi.getState();
+    ui.showUml(span ? { kind: "Symbol", id: span.flow } : { kind: "Project" }, "Sequence");
+    ui.setUmlOpts({ runtime: true, focus: `span:${id}` });
+  };
   const calls = useQuery({
     queryKey: ["trace-calls", status],
     queryFn: () => api.traceCalls(),
@@ -40,6 +47,7 @@ export function TimelineView() {
   const [width, setWidth] = useState(800);
   const [view, setView] = useState<{ t0: number; t1: number } | null>(null);
   const drag = useRef<{ x: number; t0: number; t1: number } | null>(null);
+  const [picked, setPicked] = useState<number | null>(null);
 
   useEffect(() => {
     const el = box.current;
@@ -68,6 +76,19 @@ export function TimelineView() {
         return lane;
       });
   }, [page]);
+  /** The picked call and its callers, up to the outermost one (or the call an async continuation resumes). */
+  const chain = useMemo(() => {
+    const out = new Set<number>();
+    if (picked === null || !page) return out;
+    const byId = new Map(page.spans.map((s) => [s.id, s]));
+    let at: number | null | undefined = picked;
+    while (at !== null && at !== undefined && !out.has(at)) {
+      out.add(at);
+      const s = byId.get(at);
+      at = s ? (s.parent ?? s.resumes) : null;
+    }
+    return out;
+  }, [picked, page]);
   const totalHeight = lanes.length ? lanes[lanes.length - 1].y + lanes[lanes.length - 1].height + 10 : 100;
 
   const label = (flow: string) => {
@@ -101,6 +122,11 @@ export function TimelineView() {
           {page.total.toLocaleString()} calls · {fmt(page.end - page.start)} · wheel to zoom, drag to pan, double-click a call to replay it
         </span>
         {view && <button onClick={() => setView(null)}>Reset zoom</button>}
+        {picked !== null && (
+          <button onClick={() => sequenceOf(picked)} title="A UML sequence diagram of the picked call and every call made under it, as recorded">
+            Sequence of this call
+          </button>
+        )}
         <button onClick={() => void calls.refetch()} title="Reload the recording">
           ↻
         </button>
@@ -153,12 +179,15 @@ export function TimelineView() {
             return (
               <g
                 key={i}
-                className={`tl-span ${s.threw ? "threw" : ""} ${s.resumed ? "resumed" : ""} ${s.open ? "open" : ""}`}
-                onClick={() => select({ kind: "symbol", id: s.flow }, index?.byId.get(s.flow)?.origins[0] ?? null)}
+                className={`tl-span ${s.threw ? "threw" : ""} ${s.resumed ? "resumed" : ""} ${s.open ? "open" : ""} ${s.id === picked ? "picked" : chain.has(s.id) ? "chain" : ""}`}
+                onClick={() => {
+                  setPicked(s.id);
+                  select({ kind: "symbol", id: s.flow }, index?.byId.get(s.flow)?.origins[0] ?? null);
+                }}
                 onDoubleClick={() => void openAt(s)}
               >
                 <title>
-                  {`${owner ? owner + "." : ""}${name}${s.resumed ? " (resumed)" : ""}${s.threw ? " — ended by an exception" : ""}${s.open ? " — still running" : ""}\n${fmt(s.end - s.start)} · starts at ${fmt(s.start - range.t0)} · thread ${s.thread}`}
+                  {`${owner ? owner + "." : ""}${name}${s.resumed ? " (resumed)" : ""}${s.threw ? " — ended by an exception" : ""}${s.open ? " — still running" : ""}\n${fmt(s.end - s.start)} · starts at ${fmt(s.start - range.t0)} · thread ${s.thread}${s.args.length ? "\n(" + s.args.join(", ") + ")" : ""}${s.ret !== null ? "\n→ " + s.ret : ""}${s.exception !== null ? "\n⚠ " + s.exception : ""}`}
                 </title>
                 <rect x={x} y={y} width={w} height={ROW - 3} rx={3} style={{ fill: `hsl(${h} 45% 32%)`, stroke: `hsl(${h} 55% 55%)` }} />
                 {w > 44 && (

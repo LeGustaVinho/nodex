@@ -3,4 +3,4 @@
 /**
  * Why a function runs without being called by project code.
  */
-export type EntryKind = "Main" | "Route" | "ServerStart" | "Export" | "EventHandler" | "Framework" | "Test";
+export type EntryKind = "Main" | "Route" | "ServerStart" | "Export" | "EventHandler" | "Framework" | "Test" | "Command" | "Job" | "Message" | "Ui";

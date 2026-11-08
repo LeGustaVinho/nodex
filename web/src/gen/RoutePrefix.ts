@@ -11,6 +11,13 @@ export type RoutePrefix = {
  */
 kind: string, 
 /**
- * Mounted router or plugin as written (`ordersRouter`, `./routes/orders`), empty for `global`.
+ * What a `mount` mounts, empty for `global`: a router variable of the same file
+ * (`ordersRouter`), `module:<project path without extension>` (an imported router),
+ * `fn:<name>` (a function that builds a router) or `handler:<name>` (one route handler).
  */
-target: string, prefix: string, framework: string, span: Span, };
+target: string, prefix: string, framework: string, span: Span, 
+/**
+ * The router the mount is declared on (`router.use('/orders', orders)`), so a router mounted
+ * under another one takes both prefixes.
+ */
+router?: string, };

@@ -17,6 +17,7 @@ nodex-lang-typescript = { path = "crates/nodex-lang-typescript" }
 nodex-lang-rust = { path = "crates/nodex-lang-rust" }
 nodex-dap = { path = "crates/nodex-dap" }
 nodex-trace = { path = "crates/nodex-trace" }
+nodex-uml = { path = "crates/nodex-uml" }
 
 anyhow = "1"
 thiserror = "2"

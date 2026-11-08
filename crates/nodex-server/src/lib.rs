@@ -13,6 +13,7 @@ pub mod projects;
 pub mod runner;
 pub mod security;
 pub mod semantic_worker;
+pub mod uml;
 pub mod unity;
 pub mod watch;
 
@@ -78,6 +79,8 @@ pub struct AppState {
     pub semantic_tx: Mutex<Vec<mpsc::Sender<Vec<PathBuf>>>>,
     pub run: runner::RunManager,
     pub debug: debugger::DebugManager,
+    /// Recent UML diagrams.
+    pub uml: uml::UmlCache,
 }
 
 impl AppState {
@@ -98,6 +101,7 @@ impl AppState {
             semantic_tx: Mutex::new(Vec::new()),
             run: runner::RunManager::default(),
             debug: debugger::DebugManager::default(),
+            uml: uml::UmlCache::default(),
         })
     }
 
@@ -123,6 +127,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/recent", get(api::recent))
         .route("/api/structure", get(api::structure))
         .route("/api/knowledge", get(api::knowledge))
+        .route("/api/uml", get(uml::diagram))
+        .route("/api/uml/availability", get(uml::availability))
         .route("/api/flow", get(api::flow))
         .route("/api/source", get(api::source))
         .route("/api/catalog", get(api::catalog))
@@ -131,6 +137,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/run/stop", post(api::run_stop))
         .route("/api/trace/steps", get(api::trace_steps))
         .route("/api/trace/calls", get(api::trace_calls))
+        .route("/api/trace/tree", get(api::trace_tree))
         .route("/api/debug", get(api::debug_snapshot))
         .route("/api/debug/start", post(api::debug_start))
         .route("/api/debug/command", post(api::debug_command))

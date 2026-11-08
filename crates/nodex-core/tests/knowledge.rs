@@ -417,3 +417,176 @@ fn a_library_of_controllers_takes_the_only_global_prefix() {
     let k = project.knowledge();
     assert_eq!(routes_of(&k, "libs/orders/src/orders.controller.OrdersController.list"), vec![("GET", "/api/orders")]);
 }
+
+fn info<'a>(k: &'a nodex_ir::knowledge::ProjectKnowledge, symbol: &str) -> &'a nodex_ir::knowledge::SymbolInfo {
+    k.symbols.iter().find(|i| i.symbol == symbol).unwrap_or_else(|| panic!("no info for {symbol}"))
+}
+
+fn paths(k: &nodex_ir::knowledge::ProjectKnowledge) -> Vec<String> {
+    k.routes.iter().map(|r| format!("{} {}", r.method, r.path)).collect()
+}
+
+#[test]
+fn aspnet_authorization_combines_class_action_and_endpoint_rules() {
+    let mut project = open("knowledge/auth");
+    project.structure();
+    let k = project.knowledge();
+    let reports = info(&k, "Auth.Controllers.AdminController.Reports()").auth.clone().expect("class [Authorize]");
+    assert_eq!(reports.roles, vec!["Admin", "Ops"]);
+    let purge = info(&k, "Auth.Controllers.AdminController.Purge(bool)").auth.clone().expect("action policy");
+    assert_eq!((purge.roles.len(), purge.policies.clone()), (2, vec!["CanPurge".to_owned()]));
+    let health = info(&k, "Auth.Controllers.AdminController.Health()");
+    assert!(health.auth.as_ref().is_some_and(|a| a.anonymous && a.roles.is_empty()), "[AllowAnonymous] wins");
+    assert!(!health.capabilities.iter().any(|c| c == "AUTH_REQUIRED"));
+    // Minimal APIs: the group's policy, plus a role required on one endpoint.
+    let status = info(&k, "Handlers.Status()").auth.clone().expect("group policy");
+    assert_eq!(status.policies, vec!["Operators"]);
+    let restart = info(&k, "Handlers.Restart()").auth.clone().expect("endpoint role");
+    assert_eq!((restart.roles.clone(), restart.policies.clone()), (vec!["Admin".to_owned()], vec!["Operators".to_owned()]));
+    // An inline endpoint has no Blueprint: the program is not marked anonymous.
+    assert!(info(&k, "Program.<Main>$(string[])").auth.is_none());
+}
+
+#[test]
+fn nest_and_express_authorization() {
+    let mut project = open("knowledge/auth");
+    project.structure();
+    let k = project.knowledge();
+    let list = info(&k, "nest/src/users.controller.UsersController.list").auth.clone().expect("class guards");
+    assert_eq!(list.policies, vec!["JwtAuthGuard", "RolesGuard"]);
+    let remove = info(&k, "nest/src/users.controller.UsersController.remove").auth.clone().expect("roles");
+    assert_eq!(remove.roles, vec!["admin"]);
+    let public = info(&k, "nest/src/users.controller.UsersController.info");
+    assert!(public.auth.as_ref().is_some_and(|a| a.anonymous));
+    assert!(!public.capabilities.iter().any(|c| c == "AUTH_REQUIRED"), "@Public() is open");
+    // `router.use(requireAuth)` protects the router's routes; a role middleware names its role.
+    let get = info(&k, "express/src/routes/orders.(module).GET /:id").auth.clone().expect("router middleware");
+    assert_eq!(get.policies, vec!["requireAuth"]);
+    let purge = info(&k, "express/src/app.(module).DELETE /cache").auth.clone().expect("route middleware");
+    assert_eq!(purge.roles, vec!["admin"]);
+}
+
+#[test]
+fn express_mounts_prefix_imported_and_local_routers() {
+    let mut project = open("knowledge/auth");
+    project.structure();
+    let k = project.knowledge();
+    let all = paths(&k);
+    for want in ["GET /api/orders", "GET /api/orders/:id", "DELETE /admin/cache"] {
+        assert!(all.iter().any(|p| p == want), "{want} in {all:?}");
+    }
+    assert!(!all.iter().any(|p| p == "GET /:id"), "the mount prefix replaces the bare path: {all:?}");
+}
+
+#[test]
+fn constructor_injection_links_consumers_to_services() {
+    let mut project = open("knowledge/auth");
+    let graph = project.structure();
+    let dep = |from: &str, to: &str| edge(&graph, from, to, StructEdgeKind::DependsOn);
+    let controller = dep("Auth.Controllers.AdminController", "Auth.Services.IReportService").expect("controller depends on its service");
+    assert!(controller.confidence.is_none(), "built and provided by the container: exact");
+    assert!(controller.evidence.as_deref().is_some_and(|e| e.contains("constructor")));
+    assert!(dep("Auth.Services.ReportService", "Auth.Services.IClock").is_some_and(|e| e.confidence.is_none()));
+    // Not registered, so maybe not built by the container (primary constructor).
+    assert_eq!(dep("Auth.Services.Formatter", "Auth.Services.IClock").and_then(|e| e.confidence), Some(Confidence::Inferred));
+    // Nest providers inject their constructor parameter types.
+    assert!(dep("nest/src/users.controller.UsersController", "nest/src/users.controller.UsersService").is_some());
+    assert!(dep("nest/src/users.controller.UsersService", "nest/src/users.controller.AuditLog").is_some());
+}
+
+#[test]
+fn commands_jobs_and_message_consumers_are_entry_points() {
+    let mut project = open("knowledge/cli-jobs");
+    project.structure();
+    let k = project.knowledge();
+    let entry = |s: &str| info(&k, s).entry.clone().unwrap_or_else(|| panic!("{s} is an entry"));
+    let check = |s: &str, kind: EntryKind, label: &str| {
+        let e = entry(s);
+        assert_eq!((e.kind, e.label.as_str()), (kind, label), "{s}");
+    };
+    // C#: System.CommandLine, BackgroundService, Hangfire, MassTransit.
+    check("Jobs.Program.ImportFile()", EntryKind::Command, "command import");
+    check("Jobs.Program.Main(string[]).SetHandler callback", EntryKind::Command, "command report");
+    check("Jobs.CleanupWorker.ExecuteAsync(CancellationToken)", EntryKind::Job, "background service");
+    check("Jobs.IStockReport.Send()", EntryKind::Job, "recurring job nightly-stock");
+    check("Jobs.OrderPlacedConsumer.Consume(ConsumeContext<OrderPlaced>)", EntryKind::Message, "consumes OrderPlaced");
+    // TypeScript: commander, setInterval, node-cron, KafkaJS, amqplib.
+    check("node/src/cli.addItem", EntryKind::Command, "command add");
+    check("node/src/cli.(module).action callback", EntryKind::Command, "command list");
+    check("node/src/cli.heartbeat", EntryKind::Job, "every 5000 ms");
+    check("node/src/cli.(module).schedule callback", EntryKind::Job, "cron 0 3 * * *");
+    check("node/src/cli.handleOrder", EntryKind::Message, "Kafka consumer (eachMessage)");
+    check("node/src/cli.listen.consume callback", EntryKind::Message, "queue invoices");
+    // Rust: clap subcommands, kebab-cased.
+    check("rust::Commands::MigrateDb", EntryKind::Command, "command migrate-db");
+    check("rust::Commands::Serve", EntryKind::Command, "command serve");
+    // `main` stays the program entry.
+    assert_eq!(entry("rust::main").kind, EntryKind::Main);
+}
+
+#[test]
+fn rust_nested_routers_take_their_mount_prefix() {
+    let mut project = open("knowledge/cli-jobs");
+    project.structure();
+    let k = project.knowledge();
+    let all = paths(&k);
+    for want in ["GET /api/health", "GET /api/orders", "GET /api/orders/:id", "GET /v1/users", "GET /version", "GET /shop/items"] {
+        assert!(all.iter().any(|p| p == want), "{want} in {all:?}");
+    }
+}
+
+#[test]
+fn ui_handlers_and_pages_are_ui_entries() {
+    let mut project = open("knowledge/uml-states");
+    project.structure();
+    let k = project.knowledge();
+    let pages: Vec<(&str, &str)> = k.routes.iter().filter(|r| r.method == "PAGE").map(|r| (r.path.as_str(), r.handler.as_str())).collect();
+    assert!(pages.contains(&("/orders", "web/src/App.OrdersPage")), "{pages:?}");
+    assert!(pages.contains(&("/settings", "web/src/App.SettingsPage")));
+    assert!(pages.contains(&("/invoices", "web/src/pages/invoices.InvoicesPage")), "Next.js pages/ file");
+    let page = info(&k, "web/src/App.OrdersPage").entry.clone().expect("page entry");
+    assert_eq!((page.kind, page.label.as_str()), (EntryKind::Ui, "page /orders"));
+    let click = info(&k, "web/src/App.OrdersPage.saveOrder").entry.clone().expect("click entry");
+    assert_eq!((click.kind, click.label.as_str()), (EntryKind::Ui, "click \"Save order\""));
+}
+
+#[test]
+fn declared_state_machines_are_read_from_their_libraries() {
+    let mut project = open("knowledge/uml-states");
+    project.structure();
+    let k = project.knowledge();
+    let machine = |framework: &str| k.state_machines.iter().find(|m| m.framework == framework).unwrap_or_else(|| panic!("{framework} machine"));
+    let has = |m: &nodex_ir::knowledge::StateMachineFact, from: &str, to: &str, trigger: &str| {
+        m.transitions.iter().any(|t| t.from == from && t.to == to && t.trigger.as_deref() == Some(trigger))
+    };
+
+    let x = machine("xstate");
+    assert_eq!((x.name.as_str(), x.initial.as_deref()), ("fetch", Some("idle")));
+    assert!(x.states.contains(&"success.stale".to_owned()), "nested states: {:?}", x.states);
+    assert!(has(x, "idle", "loading", "FETCH"));
+    assert!(has(x, "loading", "success", "done") && has(x, "loading", "failure", "error"), "invoke results");
+    assert!(has(x, "success.fresh", "success.stale", "after 60000"), "delayed transition between siblings");
+    assert!(has(x, "success.stale", "loading", "REFRESH"), "#id target");
+    assert!(x.transitions.iter().any(|t| t.from == "failure" && t.guard.as_deref() == Some("canRetry")));
+
+    let door = machine("stateless");
+    assert_eq!((door.owner.as_str(), door.initial.as_deref()), ("States.Door", Some("Closed")));
+    assert!(door.states.contains(&"Closed.Locked".to_owned()), "SubstateOf nests: {:?}", door.states);
+    assert!(has(door, "Closed", "Closed.Locked", "Lock"));
+    assert!(door.transitions.iter().any(|t| t.trigger.as_deref() == Some("Lock") && t.guard.as_deref().is_some_and(|g| g.contains("HasKey"))));
+    assert!(has(door, "Closed.Locked", "Broken", "Kick"));
+
+    let anim = machine("unity-animator");
+    assert_eq!(anim.owner, "PlayerAnimation");
+    assert!(anim.triggers.contains(&"Jump".to_owned()) && anim.triggers.contains(&"Grounded".to_owned()));
+    assert!(has(anim, "*", "Death", "Die") && has(anim, "*", "Idle", "Respawn"));
+}
+
+/// `_state.Next(this)` is the State pattern's own method, not `Random.Next()`.
+#[test]
+fn a_state_objects_next_is_not_a_random_number() {
+    let mut project = open("knowledge/uml-states");
+    let tick = project.flow("States.TrafficLight.Tick()").expect("Tick has a body");
+    let next = tick.nodes.iter().filter_map(|n| n.expr.as_ref()).find(|e| e.label == "Next").expect("the call");
+    assert_eq!(next.op, None);
+}

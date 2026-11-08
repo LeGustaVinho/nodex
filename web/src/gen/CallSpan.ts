@@ -19,4 +19,36 @@ threw: boolean,
 /**
  * Still running when the recording was read.
  */
-open: boolean, };
+open: boolean, 
+/**
+ * Identifier of this execution, unique and stable within a run (assigned when it starts).
+ */
+id: number, 
+/**
+ * The execution that was running on the same thread when this one started (its caller),
+ * `None` for an outermost call. Refers to [`CallSpan::id`] even when that span is not in
+ * the same page.
+ */
+parent: number | null, 
+/**
+ * Flow node of the caller that was executing when this call started (the call statement),
+ * when the caller's position is known.
+ */
+call_site: string | null, 
+/**
+ * For a resumed async method or iterator (`resumed`), the most recent fresh call of the same
+ * function: the invocation this continuation belongs to.
+ */
+resumes: number | null, 
+/**
+ * Argument values as `name = value`, shortened.
+ */
+args: Array<string>, 
+/**
+ * Returned value, shortened.
+ */
+ret: string | null, 
+/**
+ * Exception message when an exception was thrown while this call ran, shortened.
+ */
+exception: string | null, };

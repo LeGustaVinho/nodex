@@ -13,6 +13,7 @@ pub mod link;
 pub mod operations;
 pub mod project;
 pub mod semantic;
+pub mod units;
 
 pub use catalog::Catalog;
 pub use project::{FileSummary, Project, ProjectSummary};

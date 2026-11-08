@@ -1,0 +1,18 @@
+stateDiagram-v2
+  state "Draft" as n0
+  state "Submitted" as n1
+  state "Paid" as n2
+  state "Shipped" as n3
+  state "Cancelled" as n4
+  state "Archived" as n5
+  [*] --> n0
+  n0 --> n4 : Cancel
+  n2 --> n4 : Cancel
+  n1 --> n4 : Cancel
+  n1 --> n2 : Pay [amount >= Total]
+  n2 --> n3 : Ship
+  n0 --> n1 : Submit
+  n4 --> [*]
+  note right of n5 : never set
+  classDef ctx fill:#1b1f26,stroke:#4b5563,color:#9aa4b2,stroke-dasharray:4 3
+  class n5 ctx

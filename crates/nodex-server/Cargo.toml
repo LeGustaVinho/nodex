@@ -17,6 +17,7 @@ nodex-lang-csharp.workspace = true
 nodex-lang-typescript.workspace = true
 nodex-lang-rust.workspace = true
 nodex-trace.workspace = true
+nodex-uml.workspace = true
 ts-rs.workspace = true
 anyhow.workspace = true
 serde.workspace = true

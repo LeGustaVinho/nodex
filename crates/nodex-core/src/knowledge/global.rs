@@ -71,6 +71,61 @@ pub fn di_edges(ctx: &Ctx, files: &[&FileIr]) -> Vec<StructEdge> {
     out
 }
 
+/// Constructor injection: a type whose constructor takes a service depends on it
+/// (`OrderService(IOrderRepository repo)`, Nest `constructor(private orders: OrdersService)`).
+/// Exact when the service is registered for injection; inferred when only the consumer is
+/// known to be built by the container (a controller, a Nest provider).
+pub fn injection_edges(ctx: &Ctx, files: &[&FileIr], infos: &BTreeMap<SymbolId, SymbolInfo>) -> Vec<StructEdge> {
+    let mut registered: HashSet<SymbolId> = HashSet::new();
+    for d in files.iter().flat_map(|f| f.knowledge.di.iter()).filter(|d| d.lifetime != "inject") {
+        for name in std::iter::once(&d.service).chain(d.implementation.iter()) {
+            if let Some(id) = ctx.resolve(name, &d.owner) {
+                registered.insert(id);
+            }
+        }
+    }
+    let owning_type = |id: &str| -> Option<SymbolId> {
+        let mut cur = *ctx.symbols.get(id)?;
+        loop {
+            if cur.kind.is_type() {
+                return Some(cur.id.clone());
+            }
+            cur = ctx.symbols.get(cur.parent.as_deref()?)?;
+        }
+    };
+    // A type with a route handler is a controller: the framework constructs it.
+    let routed: HashSet<SymbolId> = infos
+        .values()
+        .filter(|i| i.entry.as_ref().is_some_and(|e| e.kind == EntryKind::Route))
+        .filter_map(|i| owning_type(&i.symbol))
+        .collect();
+    let mut out: BTreeMap<(SymbolId, SymbolId), StructEdge> = BTreeMap::new();
+    for file in files {
+        for d in file.knowledge.di.iter().filter(|d| d.lifetime == "inject" && d.token.is_none()) {
+            let Some(consumer) = owning_type(&d.owner) else { continue };
+            let Some(service) = ctx.resolve(&d.service, &d.owner) else { continue };
+            if service == consumer || ctx.symbols.get(service.as_str()).is_none_or(|s| s.external || !s.kind.is_type()) {
+                continue;
+            }
+            // Exact when the container both builds the consumer and provides the service.
+            let built = registered.contains(&consumer) || routed.contains(&consumer) || d.framework == "nestjs";
+            let provided = registered.contains(&service);
+            let confidence = match (built, provided) {
+                (true, true) => Confidence::Exact,
+                (false, false) => continue,
+                _ => Confidence::Inferred,
+            };
+            out.entry((consumer.clone(), service.clone())).or_insert_with(|| {
+                StructEdge::new(consumer.clone(), service.clone(), StructEdgeKind::DependsOn)
+                    .with_confidence(confidence)
+                    .with_evidence(format!("{} is injected into {} through its constructor", ctx.name(&service), ctx.name(&consumer)))
+                    .with_site(d.span.clone())
+            });
+        }
+    }
+    out.into_values().collect()
+}
+
 /// A call to a method of an interface whose only DI implementation is known also reaches that
 /// implementation's method. Inferred: the compiler only sees the interface.
 pub fn di_dispatch(ctx: &Ctx, di: &[StructEdge]) -> Vec<StructEdge> {

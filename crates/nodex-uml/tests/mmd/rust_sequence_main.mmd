@@ -1,0 +1,40 @@
+sequenceDiagram
+  actor n0 as Operator
+  participant n1 as main
+  participant n5 as util
+  n0->>+n1: program entry (main)
+  create participant n2 as InMemoryOrderRepository
+  n1->>n2: new InMemoryOrderRepository()
+  create participant n3 as OrderService
+  n1->>n3: new OrderService(repository)
+  n1->>n3: on_shipped(new Box)
+  n1->>n3: repository_mut()
+  create participant n4 as Order
+  n1->>n4: new Order(1, "alice", 120, OrderStatus.Paid)
+  n1->>n3: repository_mut()
+  n1->>n4: new Order(2, "bob", 40, OrderStatus.Pending)
+  n1->>n3: repository_mut()
+  n1->>n4: new Order(3, "alice", 75, OrderStatus.Paid)
+  n1->>n3: total_for_customer("alice")
+  n1->>n3: describe_all()
+  n1->>+n1: ship_all(service)
+  n1->>+n3: ship(1)
+  opt otherwise: if self.repository.find(id) matches Some(order),…
+    n3-->>n1: Err(ShipError::NotFound(id))
+  end
+  opt order.status != OrderStatus::Paid
+    n3-->>n1: Err(ShipError::NotPaid(id))
+  end
+  n3->>n5: sleep_ms(10)
+  n3-->>-n1: Ok(())
+  n1->>+n3: ship(2)
+  opt otherwise: if self.repository.find(id) matches Some(order),…
+    n3-->>n1: Err(ShipError::NotFound(id))
+  end
+  opt order.status != OrderStatus::Paid
+    n3-->>n1: Err(ShipError::NotPaid(id))
+  end
+  n3->>n5: sleep_ms(10)
+  n3-->>-n1: Ok(())
+  deactivate n1
+  deactivate n1

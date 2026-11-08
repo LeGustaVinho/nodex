@@ -1,0 +1,14 @@
+stateDiagram-v2
+  state "Idle" as n0
+  state "Running" as n1
+  state "Jumping" as n2
+  state "Dead" as n3
+  [*] --> n0
+  n0 --> n3 : hit [self.lives == 0]
+  n1 --> n3 : hit [self.lives == 0]
+  n2 --> n3 : hit [self.lives == 0]
+  n0 --> n2 : jump
+  n1 --> n2 : jump
+  n2 --> n0 : land
+  n0 --> n1 : run
+  n3 --> [*]

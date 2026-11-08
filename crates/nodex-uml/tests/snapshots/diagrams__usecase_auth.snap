@@ -1,0 +1,32 @@
+---
+source: crates/nodex-uml/tests/diagrams.rs
+expression: d.mermaid
+---
+flowchart LR
+  n0["👤 Admin"]
+  n3["👤 Authenticated user"]
+  n1["👤 Ops"]
+  n2["👤 Visitor"]
+  subgraph g0 ["Auth"]
+    n4(["Purge<br/>POST /api/Admin/purge"])
+    n5(["View health<br/>GET /api/Admin/health"])
+    n6(["View reports<br/>GET /api/Admin/reports"])
+    n7(["Restart<br/>POST /ops/restart"])
+    n8(["View status<br/>GET /ops/status"])
+    n9(["Record access"])
+  end
+  n0 --- n4
+  n1 --- n4
+  n2 --- n5
+  n0 --- n6
+  n1 --- n6
+  n0 --- n7
+  n3 --- n8
+  n0 -.->|"is a"| n3
+  n1 -.->|"is a"| n3
+  n9 -.->|"«extend»"| n4
+  n6 -.->|"«include»"| n9
+  classDef actor fill:#1d232c,stroke:#f5b041,color:#eef1f4
+  classDef incl fill:#13202b,stroke:#58a6ff,color:#cfe3f7,stroke-dasharray:4 3
+  class n0,n3,n1,n2 actor
+  class n9 incl

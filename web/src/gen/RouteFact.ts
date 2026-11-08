@@ -27,4 +27,10 @@ path: string,
 /**
  * `aspnet`, `aspnet-minimal`, `express`, `fastify`, `nestjs`, `nextjs`, `axum`, `actix`, ...
  */
-framework: string, span: Span, };
+framework: string, span: Span, 
+/**
+ * The router the route is declared on, as written, when mounts may prefix it: the Express
+ * router variable (`router`), the function that builds an axum router (`order_routes`).
+ * A [`RoutePrefix`] of kind `mount` whose `target` names it (or names the handler) applies.
+ */
+router?: string, };

@@ -1,0 +1,12 @@
+flowchart TB
+  subgraph g1["Sample"]
+    direction TB
+    n0["Sample<br/>1 type"]
+    n1["Domain<br/>6 types"]
+    n2["Services<br/>4 types"]
+  end
+  n0 -->|"creates"| n1
+  n0 -->|"creates ×2"| n2
+  n2 -->|"uses ×10"| n1
+  classDef pkg fill:#1d232c,stroke:#8b98a8,color:#eef1f4
+  class n0,n1,n2 pkg

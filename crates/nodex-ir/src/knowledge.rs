@@ -54,6 +54,70 @@ pub struct RouteFact {
     /// `aspnet`, `aspnet-minimal`, `express`, `fastify`, `nestjs`, `nextjs`, `axum`, `actix`, ...
     pub framework: String,
     pub span: Span,
+    /// The router the route is declared on, as written, when mounts may prefix it: the Express
+    /// router variable (`router`), the function that builds an axum router (`order_routes`).
+    /// A [`RoutePrefix`] of kind `mount` whose `target` names it (or names the handler) applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub router: Option<String>,
+}
+
+/// Who may call a function: authorization declared on a route handler or its class
+/// (`[Authorize(Roles = "Admin")]`, `.RequireAuthorization("policy")`, `@Roles('admin')`,
+/// `app.get('/x', requireRole('admin'), h)`).
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash)]
+#[ts(export)]
+pub struct AuthFact {
+    pub owner: SymbolId,
+    /// Roles allowed, as written (`Admin`); empty when any authenticated caller is allowed.
+    pub roles: Vec<String>,
+    /// Named policies or guards (`CanEditOrders`, `JwtAuthGuard`).
+    pub policies: Vec<String>,
+    /// Explicitly open to anonymous callers (`[AllowAnonymous]`, `@Public()`).
+    pub anonymous: bool,
+    pub framework: String,
+    pub span: Span,
+}
+
+/// Authorization of a symbol, merged from every [`AuthFact`] that names it.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[ts(export)]
+pub struct AuthInfo {
+    pub roles: Vec<String>,
+    pub policies: Vec<String>,
+    pub anonymous: bool,
+}
+
+/// One transition of a declared state machine.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash)]
+#[ts(export)]
+pub struct StateTransition {
+    /// Source state; `*` when the machine allows the trigger from any state.
+    pub from: String,
+    pub to: String,
+    /// Event or trigger name (`FETCH`, `Trigger.Switch`).
+    pub trigger: Option<String>,
+    pub guard: Option<String>,
+}
+
+/// A state machine the code declares with a library: XState `createMachine`, C# Stateless
+/// `Configure(...).Permit(...)`, Unity `Animator` parameters and states.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash)]
+#[ts(export)]
+pub struct StateMachineFact {
+    /// The symbol that declares the machine (the function or type around the configuration).
+    pub owner: SymbolId,
+    /// Machine name: XState `id`, the variable the machine is stored in, the animator field.
+    pub name: String,
+    /// `xstate`, `stateless`, `unity-animator`.
+    pub framework: String,
+    /// Every state, nested ones as `Parent.Child`.
+    pub states: Vec<String>,
+    pub initial: Option<String>,
+    pub transitions: Vec<StateTransition>,
+    /// Triggers or parameters set without a known source/target (`animator.SetTrigger("Jump")`).
+    pub triggers: Vec<String>,
+    pub span: Span,
 }
 
 /// A prefix applied to routes declared elsewhere: `app.use('/api', router)`,
@@ -63,11 +127,18 @@ pub struct RouteFact {
 pub struct RoutePrefix {
     /// `global` (every route of the framework), `mount` (the routes of `target`).
     pub kind: String,
-    /// Mounted router or plugin as written (`ordersRouter`, `./routes/orders`), empty for `global`.
+    /// What a `mount` mounts, empty for `global`: a router variable of the same file
+    /// (`ordersRouter`), `module:<project path without extension>` (an imported router),
+    /// `fn:<name>` (a function that builds a router) or `handler:<name>` (one route handler).
     pub target: String,
     pub prefix: String,
     pub framework: String,
     pub span: Span,
+    /// The router the mount is declared on (`router.use('/orders', orders)`), so a router mounted
+    /// under another one takes both prefixes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub router: Option<String>,
 }
 
 /// An outgoing HTTP request (`fetch('/api/orders')`, `http.GetAsync(url)`, `reqwest::get(u)`).
@@ -177,6 +248,14 @@ pub enum EntryKind {
     Framework,
     /// Test case or test fixture hook.
     Test,
+    /// A command-line command (`clap` subcommand, `System.CommandLine`, commander `.command()`).
+    Command,
+    /// Runs on a schedule or in the background (`BackgroundService`, `@Cron`, `setInterval`).
+    Job,
+    /// Consumes messages from a queue or a broker (`IConsumer<T>`, `@MessagePattern`, Kafka).
+    Message,
+    /// Reacts to the user in a user interface (a page route, a button's click handler).
+    Ui,
 }
 
 /// An entry point and the reason the code gives for it.
@@ -237,6 +316,10 @@ pub struct FileKnowledge {
     pub handlers: Vec<GlobalHandlerFact>,
     pub entities: Vec<EntityFact>,
     pub symbols: Vec<SymbolFacts>,
+    #[serde(default)]
+    pub auth: Vec<AuthFact>,
+    #[serde(default)]
+    pub state_machines: Vec<StateMachineFact>,
 }
 
 impl FileKnowledge {
@@ -304,6 +387,9 @@ pub struct SymbolInfo {
     pub capabilities: Vec<String>,
     pub entry: Option<EntryPoint>,
     pub test: bool,
+    /// Who may call it, when the code declares authorization.
+    #[serde(default)]
+    pub auth: Option<AuthInfo>,
 }
 
 /// A data model with the symbol that declares it.
@@ -325,4 +411,7 @@ pub struct ProjectKnowledge {
     pub models: Vec<ModelInfo>,
     /// Symbols with knowledge or a body, sorted by id.
     pub symbols: Vec<SymbolInfo>,
+    /// State machines declared with a library.
+    #[serde(default)]
+    pub state_machines: Vec<StateMachineFact>,
 }

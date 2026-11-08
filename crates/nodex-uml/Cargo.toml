@@ -1,0 +1,21 @@
+[package]
+name = "nodex-uml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "UML diagrams (class, package, component, activity, sequence, ...) of a Nodex project, as Mermaid text"
+
+[dependencies]
+nodex-ir.workspace = true
+nodex-core.workspace = true
+nodex-lang-api.workspace = true
+nodex-trace.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+nodex-lang-csharp.workspace = true
+nodex-lang-typescript.workspace = true
+nodex-lang-rust.workspace = true
+insta.workspace = true

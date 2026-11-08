@@ -1,3 +1,4 @@
+import { searchForWorkspaceRoot } from "vite";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
@@ -14,6 +15,10 @@ export default defineConfig({
     proxy: {
       "/api": { target, changeOrigin: true },
       "/ws": { target, changeOrigin: true, ws: true },
+    },
+    fs: {
+      // The UML tests read the diagrams the Rust tests generate (`crates/nodex-uml/tests/mmd`).
+      allow: [searchForWorkspaceRoot(process.cwd()), "../crates/nodex-uml/tests/mmd"],
     },
   },
   build: {

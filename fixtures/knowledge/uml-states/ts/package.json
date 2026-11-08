@@ -1,0 +1,1 @@
+{ "name": "uml-states-ts", "dependencies": { "xstate": "^5.0.0" } }

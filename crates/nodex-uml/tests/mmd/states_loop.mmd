@@ -1,0 +1,9 @@
+stateDiagram-v2
+  state "Start" as n0
+  state "Number" as n1
+  state "Word" as n2
+  [*] --> n0
+  n0 --> n1 : [char.IsDigit(c)]
+  n0 --> n2 : [not (char.IsDigit(c)) and char.IsLetter(c)]
+  n1 --> n0 : [!char.IsDigit(c)]
+  n2 --> n0 : [!char.IsLetterOrDigit(c)]

@@ -1,0 +1,25 @@
+flowchart LR
+  n1["👤 API client"]
+  n0["👤 Authenticated user"]
+  n2["👤 User"]
+  subgraph g0 ["backend-dotnet"]
+    n3(["Cancel order<br/>POST /api/Orders/{id}/cancel"])
+    n4(["Create order<br/>POST /api/Orders<br/>✎ Order"])
+    n5(["Get orders<br/>GET /api/Orders"])
+  end
+  subgraph g1 ["backend-nest"]
+    n6(["Pay invoice<br/>POST /api/invoices/:id/pay"])
+    n7(["View invoice<br/>GET /api/invoices/:id"])
+  end
+  subgraph g2 ["frontend-react"]
+    n8(["Refresh<br/>click #quot;Refresh#quot; in OrderList"])
+  end
+  n0 --- n3
+  n0 --- n4
+  n0 --- n5
+  n0 --- n6
+  n1 --- n7
+  n2 --- n8
+  n8 -.->|"«include»"| n5
+  classDef actor fill:#1d232c,stroke:#f5b041,color:#eef1f4
+  class n1,n0,n2 actor

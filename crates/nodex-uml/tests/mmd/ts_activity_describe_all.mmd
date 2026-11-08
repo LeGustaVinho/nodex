@@ -1,0 +1,28 @@
+flowchart TD
+  n0((" "))
+  n1{"repeat: start let i = 0; while i #lt; 3; step i++"}
+  n2("order = this.repository.find(i + 1)<br/>declare label")
+  n3{"match order?.status"}
+  n4("set label to #quot;paid#quot;")
+  n5("set label to #quot;waiting#quot;")
+  n6("set label to #quot;missing#quot;")
+  n7("set label to #quot;other#quot;")
+  n8("⇢ produce `#35;${i + 1}: ${label}`")
+  n9(((" ")))
+  n0 -->|"describeAll()"| n1
+  n1 -->|"repeat"| n2
+  n2 --> n3
+  n3 -->|"OrderStatus.Paid"| n4
+  n3 -->|"OrderStatus.Pending"| n5
+  n3 -->|"undefined"| n6
+  n3 -->|"default"| n7
+  n4 --> n8
+  n5 --> n8
+  n6 --> n8
+  n7 --> n8
+  n8 --> n1
+  n1 -->|"done"| n9
+  classDef start fill:#eef1f4,stroke:#eef1f4,color:#0d1117
+  classDef final fill:#0d1117,stroke:#eef1f4,stroke-width:3px,color:#eef1f4
+  class n9 final
+  class n0 start

@@ -34,6 +34,25 @@ function contains(span: Span, line: number, col: number): boolean {
 
 const size = (s: Span) => s.end_byte - s.start_byte;
 
+/** UTF-8 byte offset of a Monaco position (spans count bytes; Monaco counts UTF-16 units). */
+function byteOffset(model: monaco.editor.ITextModel, position: monaco.IPosition): number {
+  const before = model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column });
+  return new TextEncoder().encode(before).length;
+}
+
+/** A UML diagram of the selected code, or of the whole file when nothing is selected. */
+function umlOfSelection(editor: Editor, file: string) {
+  const model = editor.getModel();
+  const sel = editor.getSelection();
+  if (!model || !sel || sel.isEmpty()) {
+    useUi.getState().showUml({ kind: "File", path: file }, "Class");
+    return;
+  }
+  const start_byte = byteOffset(model, sel.getStartPosition());
+  const end_byte = byteOffset(model, sel.getEndPosition());
+  useUi.getState().showUml({ kind: "Range", file, start_byte, end_byte }, "Class");
+}
+
 export function CodePanel() {
   const { codeFocus, flowSymbol, view } = useUi();
   const { index } = useStructure();
@@ -90,6 +109,15 @@ export function CodePanel() {
 
   const onMount: OnMount = (editor) => {
     editorRef.current = editor;
+    editor.addAction({
+      id: "nodex.uml.selection",
+      label: "UML diagram of the selection",
+      contextMenuGroupId: "navigation",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyU],
+      run: (ed) => {
+        if (fileRef.current) umlOfSelection(ed as Editor, fileRef.current);
+      },
+    });
     // A click in the margin toggles a breakpoint on that line.
     editor.onMouseDown((e) => {
       const t = e.target.type;
@@ -139,6 +167,13 @@ export function CodePanel() {
       <div className="code-title" title={file}>
         {file}
         {view === "blueprint" && <span className="muted"> · click code to find its node</span>}
+        <button
+          className="code-uml"
+          title="UML diagram of the selected code, or of this file (Ctrl+Shift+U; also in the editor's right-click menu)"
+          onClick={() => editorRef.current && umlOfSelection(editorRef.current, file)}
+        >
+          UML
+        </button>
       </div>
       <div className="code-editor">
       <Editor

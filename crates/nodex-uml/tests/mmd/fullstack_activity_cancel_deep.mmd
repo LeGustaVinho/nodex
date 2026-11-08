@@ -1,0 +1,31 @@
+flowchart TD
+  n0((" "))
+  subgraph g0 ["try"]
+    n1("⏳ wait for _orderService.CancelOrderAsync(id, #quot;requested by cus…")
+    subgraph g1 ["OrderService.CancelOrderAsync"]
+      n2("⏳ order = wait for _db.Orders.FindAsync(id)")
+      n3{"order == null?"}
+      n4("fail with new OrderNotFoundException($#quot;Order {id} not found#quot;)")
+  n5((("✕")))
+      n6("set order.Status to OrderStatus.Cancelled<br/>Audit(order, reason)<br/>⏳ wait for _db.SaveChangesAsync()")
+    end
+    n7("return NoContent()")
+  n8(((" ")))
+  end
+  n9("return NotFound(ex.Message)")
+  n0 -->|"POST /api/Orders/{id}/cancel"| n1
+  n1 -->|"call CancelOrderAsync"| n2
+  n2 --> n3
+  n3 -->|"yes"| n4
+  n4 -->|"OrderNotFoundException"| n5
+  n3 -->|"no"| n6
+  n6 --> n7
+  n7 --> n8
+  g0 -.->|"catch OrderNotFoundException"| n9
+  n9 --> n8
+  classDef start fill:#eef1f4,stroke:#eef1f4,color:#0d1117
+  classDef final fill:#0d1117,stroke:#eef1f4,stroke-width:3px,color:#eef1f4
+  classDef err fill:#2b1416,stroke:#e5534b,color:#f6c9c6
+  class n4,n5 err
+  class n8 final
+  class n0 start

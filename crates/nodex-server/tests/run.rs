@@ -67,6 +67,14 @@ async fn runs_the_sample_and_records_its_execution() {
     assert!(calls.spans.iter().any(|s| s.flow == total && s.depth > 0 && !s.open));
     assert!(calls.spans.iter().any(|s| s.flow == ship));
     assert!(calls.end > calls.start);
+    // Every nested call knows its caller and the statement that called it.
+    let nested = calls.spans.iter().find(|s| s.flow == total && s.depth > 0).expect("nested Total");
+    let caller = calls.spans.iter().find(|s| Some(s.id) == nested.parent).expect("caller span");
+    assert_eq!(caller.depth + 1, nested.depth);
+    assert!(nested.call_site.is_some());
+    assert!(!nested.args.is_empty() && nested.ret.is_some(), "{nested:?}");
+    let tree = state.run.recorder().unwrap().lock().unwrap().span_tree(caller.id, 1000);
+    assert!(tree.spans.iter().any(|s| s.id == nested.id));
 }
 
 /// Same scenario for the TypeScript sample: needs Node.js and

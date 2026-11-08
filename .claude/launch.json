@@ -2,6 +2,25 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "m10-knowledge",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/knowledge",
+        "--no-browser",
+        "--port",
+        "7420",
+        "--dev-origin",
+        "http://localhost:5173"
+      ],
+      "port": 7420,
+      "url": "http://127.0.0.1:7420"
+    },
+    {
       "name": "nodex-sample",
       "runtimeExecutable": "cargo",
       "runtimeArgs": [
@@ -108,14 +127,34 @@
     {
       "name": "m9-csharp",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/csharp/Sample", "--no-browser", "--port", "7491"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/csharp/Sample",
+        "--no-browser",
+        "--port",
+        "7491"
+      ],
       "port": 7491,
       "url": "http://127.0.0.1:7491"
     },
     {
       "name": "m9-fullstack",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/knowledge/fullstack", "--no-browser", "--port", "7492"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/knowledge/fullstack",
+        "--no-browser",
+        "--port",
+        "7492"
+      ],
       "port": 7492,
       "url": "http://127.0.0.1:7492"
     },
