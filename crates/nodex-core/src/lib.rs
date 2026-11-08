@@ -17,4 +17,4 @@ pub mod semantic;
 pub mod units;
 
 pub use catalog::Catalog;
-pub use project::{FileSummary, Project, ProjectSummary};
+pub use project::{FileSummary, OpenProgress, Project, ProjectSummary};

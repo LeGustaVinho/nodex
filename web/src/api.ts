@@ -96,13 +96,31 @@ const bigJson = async <T,>(path: string): Promise<T> => {
   return value;
 };
 
+/**
+ * The server leaves symbol fields at their default out of `/api/structure` (a large project
+ * has hundreds of thousands of symbols); put them back so the rest of the UI sees whole symbols.
+ */
+export function normalizeStructure(graph: StructureGraph): StructureGraph {
+  for (const s of graph.symbols) {
+    s.parent ??= null;
+    s.origins ??= [];
+    s.flavors ??= [];
+    s.signature ??= null;
+    s.type_text ??= null;
+    s.has_flow ??= false;
+    s.external ??= false;
+    s.doc ??= null;
+  }
+  return graph;
+}
+
 export type Positions = Record<string, { x: number; y: number }>;
 
 export type UnityPackageAction = "link" | "embed" | "update" | "remove";
 
 export const api = {
   project: () => json<ProjectSummary>("/api/project"),
-  structure: () => bigJson<StructureGraph>("/api/structure"),
+  structure: async () => normalizeStructure(await bigJson<StructureGraph>("/api/structure")),
   knowledge: () => bigJson<ProjectKnowledge>("/api/knowledge"),
   catalog: () => json<Catalog>("/api/catalog"),
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
@@ -177,6 +195,9 @@ export const api = {
     }),
 };
 
+/** How far opening a project got: files found (`scanning`, total 0) or read out of `total`. */
+export type OpenProgress = { phase: "scanning" | "reading"; done: number; total: number };
+
 export type ServerEvent =
   | { type: "graph-changed"; data: { files: string[] } }
   /** `graph` is false when only the analysis status changed (the graphs are the same). */
@@ -185,6 +206,7 @@ export type ServerEvent =
   | { type: "run-output"; data: { lines: OutputLine[] } }
   | { type: "trace-frame"; data: TraceFrame }
   | { type: "project-loading"; data: { path: string } }
+  | { type: "project-progress"; data: OpenProgress }
   | { type: "project-changed" }
   | { type: "project-failed"; data: { error: string } }
   | { type: "adapter-progress"; data: AdapterProgress }

@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use axum::body::Bytes;
-use nodex_ir::StructureGraph;
+use nodex_ir::{StructEdgeKind, StructureGraph};
 use nodex_ir::knowledge::ProjectKnowledge;
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -53,22 +53,36 @@ pub async fn graphs(state: &Arc<AppState>) -> Result<(Arc<StructureGraph>, Arc<P
     }
 }
 
-/// `/api/structure` as JSON bytes.
+/// `/api/structure` as JSON bytes: the graph without its `Contains` edges, which repeat each
+/// symbol's `parent` (about half of all edges) and which the UI never draws.
 pub async fn structure_json(state: &Arc<AppState>) -> Result<Bytes, String> {
     let (graph, _) = graphs(state).await?;
-    cached_json(&state.json.structure, graph, "api.structure.json").await
+    cached_json(&state.json.structure, graph, "api.structure.json", structure_wire).await
+}
+
+/// The JSON `/api/structure` sends for `graph`.
+pub fn structure_wire(graph: &StructureGraph) -> serde_json::Result<Vec<u8>> {
+    let edges = graph.edges.iter().filter(|e| e.kind != StructEdgeKind::Contains).collect();
+    serde_json::to_vec(&WireGraph { symbols: &graph.symbols, edges })
+}
+
+#[derive(Serialize)]
+struct WireGraph<'a> {
+    symbols: &'a [nodex_ir::Symbol],
+    edges: Vec<&'a nodex_ir::StructEdge>,
 }
 
 /// `/api/knowledge` as JSON bytes.
 pub async fn knowledge_json(state: &Arc<AppState>) -> Result<Bytes, String> {
     let (_, knowledge) = graphs(state).await?;
-    cached_json(&state.json.knowledge, knowledge, "api.knowledge.json").await
+    cached_json(&state.json.knowledge, knowledge, "api.knowledge.json", |k: &ProjectKnowledge| serde_json::to_vec(k)).await
 }
 
-async fn cached_json<T: Serialize + Send + Sync + 'static>(
+async fn cached_json<T: Send + Sync + 'static>(
     slot: &Mutex<Option<(Arc<T>, Bytes)>>,
     value: Arc<T>,
     phase: &'static str,
+    serialize: fn(&T) -> serde_json::Result<Vec<u8>>,
 ) -> Result<Bytes, String> {
     let mut slot = slot.lock().await;
     if let Some((cached, bytes)) = slot.as_ref()
@@ -79,7 +93,7 @@ async fn cached_json<T: Serialize + Send + Sync + 'static>(
     let for_thread = value.clone();
     let bytes = tokio::task::spawn_blocking(move || {
         let timer = nodex_core::perf::phase(phase);
-        let bytes = serde_json::to_vec(&*for_thread).map(Bytes::from);
+        let bytes = serialize(&for_thread).map(Bytes::from);
         if let Ok(b) = &bytes {
             timer.finish(format_args!("({:.1} MB)", b.len() as f64 / 1_048_576.0));
         }

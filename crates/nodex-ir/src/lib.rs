@@ -106,6 +106,10 @@ impl SymbolKind {
 }
 
 /// A declared symbol: namespace, type or member.
+///
+/// Fields at their default (`null`, `false`, empty) are left out of the JSON: a large project
+/// has hundreds of thousands of symbols. Readers fill them back in (`serde(default)` here,
+/// `normalizeStructure` in the web UI, which is why the TypeScript type keeps them required).
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Symbol {
@@ -115,23 +119,42 @@ pub struct Symbol {
     pub name: String,
     /// Fully qualified name (`Sample.Services.OrderService`).
     pub qualified_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = false)]
     pub parent: Option<SymbolId>,
     pub language: Language,
     /// Every place the symbol is declared (partial classes and `impl` blocks have several).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional = false)]
     pub origins: Vec<Span>,
     /// Language-specific traits shown as badges (`static`, `async`, `extension`, `attr:SerializeField`, ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional = false)]
     pub flavors: Vec<String>,
     /// Declaration header as written in the source (`public decimal Total(string customer)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = false)]
     pub signature: Option<String>,
     /// Declared type of a field/property/event or return type of a method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = false)]
     pub type_text: Option<String>,
     /// True when a [`FlowGraph`] exists for this symbol.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional = false)]
     pub has_flow: bool,
     /// True for symbols that live outside the project (referenced but not declared here).
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional = false)]
     pub external: bool,
     /// Documentation written by the author (C# `///` summary, JSDoc, Rust `///`), as plain text.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = false)]
     pub doc: Option<String>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Relation between two symbols.

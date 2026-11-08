@@ -55,6 +55,9 @@ pub enum ServerEvent {
     TraceFrame(Box<nodex_trace::TraceFrame>),
     /// Another project is being loaded (from the Open dialog).
     ProjectLoading { path: String },
+    /// How far loading got: `phase` is `scanning` (`done` files found, `total` 0) or `reading`
+    /// (`done` of `total` files read).
+    ProjectProgress { phase: String, done: usize, total: usize },
     /// The project changed: everything shown must be fetched again.
     ProjectChanged,
     /// Loading another project failed; the current one stays.

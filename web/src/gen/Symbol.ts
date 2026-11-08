@@ -5,6 +5,10 @@ import type { SymbolKind } from "./SymbolKind";
 
 /**
  * A declared symbol: namespace, type or member.
+ *
+ * Fields at their default (`null`, `false`, empty) are left out of the JSON: a large project
+ * has hundreds of thousands of symbols. Readers fill them back in (`serde(default)` here,
+ * `normalizeStructure` in the web UI, which is why the TypeScript type keeps them required).
  */
 export type Symbol = { id: string, kind: SymbolKind, 
 /**

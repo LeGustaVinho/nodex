@@ -86,7 +86,7 @@ fn main() {
         let (summary, summary_t) = time(|| serde_json::to_vec(&project.summary()).unwrap());
         let (graph, structure_t) = time(|| project.structure());
         let (knowledge, knowledge_t) = time(|| project.knowledge());
-        let (graph_json, graph_json_t) = time(|| serde_json::to_vec(&*graph).unwrap());
+        let (graph_json, graph_json_t) = time(|| nodex_server::builds::structure_wire(&graph).unwrap());
         let (knowledge_json, knowledge_json_t) = time(|| serde_json::to_vec(&*knowledge).unwrap());
         let files = project.files().count();
         let flows = project.flows().count();
@@ -135,7 +135,7 @@ fn main() {
         }
     }
     let (graph, rebuild_t) = time(|| project.structure());
-    let (graph_json, graph_json_t) = time(|| serde_json::to_vec(&*graph).unwrap());
+    let (graph_json, graph_json_t) = time(|| nodex_server::builds::structure_wire(&graph).unwrap());
     println!("rebuild with facts     {}   {} symbols, {} edges", ms(rebuild_t), graph.symbols.len(), graph.edges.len());
     println!("structure json         {}   {}  hash {:016x}", ms(graph_json_t), mb(graph_json.len()), hash(&graph_json));
 }

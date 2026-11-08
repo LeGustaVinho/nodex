@@ -224,7 +224,13 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
     let _ = state.debug.command(crate::debugger::DebugCommand::Stop);
     let frontends = state.frontends.clone();
     let timer = nodex_core::perf::phase("open.total");
-    let loaded = tokio::task::spawn_blocking(move || Project::open(&dir, frontends))
+    let events = state.events.clone();
+    let loaded = tokio::task::spawn_blocking(move || {
+        let progress = |p: nodex_core::OpenProgress| {
+            let _ = events.send(ServerEvent::ProjectProgress { phase: p.phase.to_owned(), done: p.done, total: p.total });
+        };
+        Project::open_with_progress(&dir, frontends, &progress)
+    })
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("cannot open the project: {e}"));

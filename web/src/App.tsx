@@ -80,6 +80,7 @@ function useLiveUpdates() {
             perf.openStarted();
             useUi.getState().setProjectLoading(event.data.path);
           }
+          else if (event.type === "project-progress") useUi.getState().setProjectProgress(event.data);
           else if (event.type === "project-failed") useUi.getState().setProjectLoading(null);
           else if (event.type === "debug-status") useDebug.getState().setStatus(event.data);
           else if (event.type === "debug-continued") useDebug.getState().setStopped(null);
@@ -105,7 +106,9 @@ function useLiveUpdates() {
             void queryClient.invalidateQueries({ queryKey: ["unity"] });
             void loadDebug();
             useUi.getState().resetForProject();
-            queryClient.clear();
+            // Drop the old project's data and refetch what is on screen. (`clear()` would leave
+            // components that stay mounted, like the sidebar, attached to the removed queries.)
+            void queryClient.resetQueries();
             return;
           }
           if (event.type === "graph-changed" || event.type === "semantic-changed") {

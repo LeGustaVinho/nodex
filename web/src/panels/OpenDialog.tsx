@@ -6,6 +6,7 @@ import { errorText } from "../toast";
 import type { FolderEntry } from "../gen/FolderEntry";
 import { breadcrumbs, folderName, kindLabel } from "../paths";
 import { useUi } from "../store";
+import { OpenProgressLine } from "./OpenProgress";
 
 function Kinds({ kinds }: { kinds: string[] }) {
   return (
@@ -153,7 +154,10 @@ export function OpenDialog({ onClose }: { onClose: () => void }) {
         {error && <div className="open-error">{error}</div>}
         <div className="modal-foot">
           {loading ? (
-            <span className="muted">Loading {folderName(loading)} …</span>
+            <span className="muted">
+              Loading {folderName(loading)} …
+              <OpenProgressLine />
+            </span>
           ) : (
             <span className="muted">{listing.data?.path ? listing.data.path : "Choose a folder"}</span>
           )}

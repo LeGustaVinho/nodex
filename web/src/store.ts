@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { OpenProgress } from "./api";
 import type { Span } from "./gen/Span";
 import type { UmlKind } from "./gen/UmlKind";
 import type { UmlOptions } from "./gen/UmlOptions";
@@ -36,6 +37,9 @@ interface UiState {
   detailKey: string | null;
   /** Folder being opened from the Open dialog. */
   projectLoading: string | null;
+  /** Progress of the folder being opened, while `projectLoading` is set. */
+  projectProgress: OpenProgress | null;
+  setProjectProgress: (progress: OpenProgress | null) => void;
   setProjectLoading: (path: string | null) => void;
   /** Another project was opened: forget everything about the old one. */
   resetForProject: () => void;
@@ -134,7 +138,9 @@ export const useUi = create<UiState>((set) => ({
   detail: "statements",
   detailKey: null,
   projectLoading: null,
-  setProjectLoading: (projectLoading) => set({ projectLoading }),
+  setProjectLoading: (projectLoading) => set({ projectLoading, projectProgress: null }),
+  projectProgress: null,
+  setProjectProgress: (projectProgress) => set({ projectProgress }),
   resetForProject: () => {
     // Overview first: it shows the project at a glance and stays cheap on large projects.
     writeHash("overview", null);
@@ -148,6 +154,7 @@ export const useUi = create<UiState>((set) => ({
       expanded: {},
       detailKey: null,
       projectLoading: null,
+      projectProgress: null,
       umlScope: { kind: "Project" },
     });
   },

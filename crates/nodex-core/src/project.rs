@@ -74,6 +74,15 @@ struct SemanticEntry {
     by_file: Arc<HashMap<String, (Vec<usize>, Vec<usize>)>>,
 }
 
+/// How far opening a project got, for a progress bar: `phase` is `scanning` (files found so
+/// far, `total` unknown: 0) or `reading` (files lowered out of `total`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenProgress {
+    pub phase: &'static str,
+    pub done: usize,
+    pub total: usize,
+}
+
 /// What building the structure graph and the knowledge needs: a snapshot taken under the
 /// project lock in a moment, so the build itself ([`BuildInput::build`]) runs without it.
 pub struct BuildInput {
@@ -182,6 +191,15 @@ impl BuildInput {
 impl Project {
     /// Scans `root` and lowers every supported file in parallel.
     pub fn open(root: &Path, frontends: Vec<Arc<dyn LanguageFrontend>>) -> anyhow::Result<Self> {
+        Self::open_with_progress(root, frontends, &|_| {})
+    }
+
+    /// [`Project::open`], reporting progress about fifty times along the way.
+    pub fn open_with_progress(
+        root: &Path,
+        frontends: Vec<Arc<dyn LanguageFrontend>>,
+        progress: &(dyn Fn(OpenProgress) + Sync),
+    ) -> anyhow::Result<Self> {
         let root = dunce_canonical(root).with_context(|| format!("cannot open {}", root.display()))?;
         if !root.is_dir() {
             bail!("{} is not a directory", root.display());
@@ -207,7 +225,7 @@ impl Project {
                 timer.finish(format_args!("({} descriptors)", found.len()));
                 found
             },
-            || project.lower_all(),
+            || project.lower_all(progress),
         );
         project.descriptors = descriptors;
         project.files.extend(lowered.into_iter().map(|(rel, entry)| (rel, Arc::new(entry))));
@@ -215,20 +233,40 @@ impl Project {
     }
 
     /// Walks the root and lowers every supported file in parallel.
-    fn lower_all(&self) -> Vec<(String, FileEntry)> {
+    fn lower_all(&self, progress: &(dyn Fn(OpenProgress) + Sync)) -> Vec<(String, FileEntry)> {
         let timer = crate::perf::phase("open.walk");
-        let paths: Vec<PathBuf> = walkdir::WalkDir::new(&self.root)
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for entry in walkdir::WalkDir::new(&self.root)
             .into_iter()
             .filter_entry(|e| !(e.file_type().is_dir() && e.depth() > 0 && is_ignored_dir(e.file_name().to_str().unwrap_or(""))))
             .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_file())
-            .map(|e| e.into_path())
-            .filter(|p| self.frontend_for(p).is_some())
-            .collect();
+        {
+            if entry.file_type().is_file() && self.frontend_for(entry.path()).is_some() {
+                paths.push(entry.into_path());
+                if paths.len() % 1000 == 0 {
+                    progress(OpenProgress { phase: "scanning", done: paths.len(), total: 0 });
+                }
+            }
+        }
         timer.finish(format_args!("({} files)", paths.len()));
 
         let timer = crate::perf::phase("open.lower");
-        let lowered: Vec<(String, FileEntry)> = paths.par_iter().filter_map(|p| self.lower_path(p)).collect();
+        let total = paths.len();
+        progress(OpenProgress { phase: "reading", done: 0, total });
+        // About fifty updates whatever the size, from whichever thread reaches each step.
+        let step = total.div_ceil(50).max(1);
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        let lowered: Vec<(String, FileEntry)> = paths
+            .par_iter()
+            .filter_map(|p| {
+                let lowered = self.lower_path(p);
+                let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n % step == 0 || n == total {
+                    progress(OpenProgress { phase: "reading", done: n, total });
+                }
+                lowered
+            })
+            .collect();
         timer.finish(format_args!("({} files lowered)", lowered.len()));
         lowered
     }

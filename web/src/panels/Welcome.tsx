@@ -7,6 +7,7 @@ import { useUi } from "../store";
 import { errorText } from "../toast";
 import { ToolRow, useEnvironment } from "./EnvironmentDialog";
 import { OpenDialog } from "./OpenDialog";
+import { OpenProgressLine } from "./OpenProgress";
 
 /** Two Blueprint nodes joined by a wire: the app icon. */
 export function Logo({ size = 56 }: { size?: number }) {
@@ -81,7 +82,10 @@ export function Welcome() {
 
         <section className="welcome-actions">
           {loading ? (
-            <div className="welcome-loading">Opening {folderName(loading)} …</div>
+            <div className="welcome-loading">
+              Opening {folderName(loading)} …
+              <OpenProgressLine />
+            </div>
           ) : (
             <>
               <button className="primary big" onClick={() => void openFolder()}>

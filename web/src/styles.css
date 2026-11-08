@@ -465,6 +465,9 @@ kbd { font-family: var(--mono); font-size: 10px; border: 1px solid var(--line); 
 .welcome-actions .open-error { flex-basis: 100%; padding: 0; }
 button.primary.big { margin: 0; padding: 8px 18px; font-size: 14px; font-weight: 600; }
 .welcome-loading { color: var(--accent-ui); padding: 8px 0; }
+.open-progress { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; min-width: 240px; }
+.open-progress-bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.open-progress-bar > div { height: 100%; background: var(--accent-ui); transition: width 0.15s; }
 .welcome-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 28px; }
 .welcome-columns section { min-width: 0; }
 .welcome-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; text-align: left; background: transparent; border-color: transparent; padding: 6px 8px; border-radius: 6px; }
