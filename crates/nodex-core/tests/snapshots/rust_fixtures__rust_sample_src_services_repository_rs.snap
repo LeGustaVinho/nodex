@@ -1,0 +1,22 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::services::repository::InMemoryOrderRepository::new
+Entry — when new() is called
+Return — return InMemoryOrderRepository { orders: Vec::new() }
+== crate::services::repository::InMemoryOrderRepository::all
+Entry — when all() is called
+Return — return self.orders.clone()
+== crate::services::repository::InMemoryOrderRepository::find
+Entry — when find(id) is called
+Return — return self.orders → iter() → find(|o| o.id == id) → cloned()
+== crate::services::repository::InMemoryOrderRepository::add
+Entry — when add(order) is called
+Call — self.orders.push(order)
+== crate::services::repository::InMemoryOrderRepository::replace
+Entry — when replace(order) is called
+Branch — if self.orders → iter_mut() → find(|o| o.id == order.id) matches Some(slot)
+  true:
+    Assign — set *slot to order
+  false:

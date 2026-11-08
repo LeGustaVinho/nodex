@@ -1,0 +1,85 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::services::order_service::ShipError::fmt
+EventEntry — when a ShipError is formatted as text ({} in println!, format!, to_string)
+Match — match self
+  case:
+    Return — return write!(f, "Order {id} not found")
+  case:
+    Return — return write!(f, "Only paid orders can ship")
+== crate::services::order_service::OrderService::new
+Entry — when new(repository) is called
+Return — return OrderService { repository, listeners: Vec::new() }
+== crate::services::order_service::OrderService::repository_mut
+Entry — when repository_mut() is called
+Return — return &mut self.repository
+== crate::services::order_service::OrderService::on_shipped
+Entry — when on_shipped(listener) is called
+Call — self.listeners.push(listener)
+== crate::services::order_service::OrderService::total_for_customer
+Entry — when total_for_customer(customer) is called
+Var — total = 0
+Loop.ForEach — for each order in self.repository.all()
+  body:
+    Branch — if order.customer != customer
+      true:
+        Continue — skip to the next iteration
+      false:
+    Branch — if order.status == OrderStatus::Cancelled
+      true:
+        Break — leave the loop
+      false:
+    Assign — add order.amount to total
+Return — return total
+== crate::services::order_service::OrderService::total_for_customer_pipeline
+Entry — when total_for_customer_pipeline(customer) is called
+Return — return self.repository → all() → iter() → filter(|o| o.customer == customer) → map(|o| o.amount…
+== crate::services::order_service::OrderService::describe_all
+Entry — when describe_all() is called
+Var — labels = Vec::new()
+Loop.ForEach — for each i in 0..3
+  body:
+    Var — order = self.repository.find(i + 1)
+    Var — label = match order.map(|o| o.status) (4 cases)
+    Call — labels.push(format!("#{}: {label}", i + 1))
+Return — return labels
+== crate::services::order_service::OrderService::ship
+Entry — when ship(id) is called
+Destructure — if self.repository.find(id) matches Some(order), unpack it
+  else:
+    Return — return Err(ShipError::NotFound(id))
+Branch — if order.status != OrderStatus::Paid
+  true:
+    Return — return Err(ShipError::NotPaid(id))
+  false:
+Call — sleep_ms(10)
+Var — shipped = order.with_status(OrderStatus::Shipped)
+Call — self.repository.replace(shipped.clone())
+Loop.ForEach — for each listener in &self.listeners
+  body:
+    Call — listener(&shipped)
+Return — return Ok(())
+== crate::services::order_service::OrderService::describe
+Entry — when describe(event) is called
+Match — match event
+  case:
+    Return — return format!("order {id} created")
+  case:
+    Return — return format!("order {id} shipped at {at}")
+  case:
+    Return — return format!("order {id} cancelled: {reason}")
+== crate::services::order_service::OrderService::count_pending
+Entry — when count_pending() is called
+Var — count = 0
+Var — all = self.repository.all()
+Var — index = 0
+Loop.While — while index < all.len()
+  body:
+    Branch — if all[index].status == OrderStatus::Pending
+      true:
+        Assign — increase count by 1
+      false:
+    Assign — increase index by 1
+Return — return count

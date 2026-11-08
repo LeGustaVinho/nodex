@@ -39,6 +39,8 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
         }
     }
 
+    let renamed = merge_impl_blocks(&mut symbols);
+
     let mut edges: BTreeSet<(String, String, StructEdgeKind)> = BTreeSet::new();
     let mut external: BTreeMap<String, Symbol> = BTreeMap::new();
 
@@ -89,6 +91,8 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
     for file in files {
         let imports = imports_by_file.get(file.file.as_str()).cloned().unwrap_or_default();
         for r in &file.type_refs {
+            let renamed_from = renamed.get(&r.from);
+            let r = &nodex_ir::TypeRef { from: renamed_from.cloned().unwrap_or_else(|| r.from.clone()), name: r.name.clone(), relation: r.relation };
             let from_ns = namespace_of(&symbols, &r.from);
             match index.resolve(&r.name, from_ns.as_deref(), &imports) {
                 Some(target) if target != r.from => {
@@ -104,10 +108,14 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
                 None if r.relation == TypeRelation::Base => {
                     // Unresolved base type: show it as an external type so inheritance stays visible.
                     let short = r.name.rsplit('.').next().unwrap_or(&r.name).to_owned();
-                    let looks_like_interface = short.len() > 1
-                        && short.starts_with('I')
-                        && short.chars().nth(1).is_some_and(char::is_uppercase);
-                    let kind = if looks_like_interface { SymbolKind::Interface } else { SymbolKind::Class };
+                    // Rust only has traits as bases (`impl Display for Order`).
+                    let looks_like_interface = file.language == Language::Rust
+                        || short.len() > 1 && short.starts_with('I') && short.chars().nth(1).is_some_and(char::is_uppercase);
+                    let kind = match (looks_like_interface, file.language) {
+                        (true, Language::Rust) => SymbolKind::Trait,
+                        (true, _) => SymbolKind::Interface,
+                        _ => SymbolKind::Class,
+                    };
                     let id = format!("ext:{}", r.name);
                     external.entry(id.clone()).or_insert_with(|| external_symbol(&id, kind, &r.name, file.language));
                     let edge = if looks_like_interface { StructEdgeKind::Implements } else { StructEdgeKind::Inherits };
@@ -139,6 +147,49 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
         symbols: all,
         edges: edges.into_iter().map(|(from, to, kind)| StructEdge { from, to, kind }).collect(),
     }
+}
+
+/// Rust `impl` blocks written in another file than their type produce a placeholder type
+/// (flavor `impl-only`). When exactly one real type of the same crate has that name, the
+/// placeholder's members move to it. Returns placeholder id → real id.
+fn merge_impl_blocks(symbols: &mut BTreeMap<String, Symbol>) -> HashMap<String, String> {
+    let mut renamed = HashMap::new();
+    let placeholders: Vec<(String, String)> = symbols
+        .values()
+        .filter(|s| s.language == Language::Rust && s.flavors.iter().any(|f| f == "impl-only"))
+        .map(|s| (s.id.clone(), s.name.clone()))
+        .collect();
+    for (id, name) in placeholders {
+        let krate = id.split("::").next().unwrap_or("");
+        let candidates: Vec<&Symbol> = symbols
+            .values()
+            .filter(|s| {
+                s.language == Language::Rust
+                    && s.kind.is_type()
+                    && s.name == name
+                    && s.id != id
+                    && !s.flavors.iter().any(|f| f == "impl-only")
+                    && s.id.split("::").next() == Some(krate)
+            })
+            .collect();
+        let [real] = candidates.as_slice() else { continue };
+        let real_id = real.id.clone();
+        let Some(placeholder) = symbols.remove(&id) else { continue };
+        if let Some(target) = symbols.get_mut(&real_id) {
+            for f in placeholder.flavors.iter().filter(|f| f.starts_with("impl:") || f.as_str() == "unsafe") {
+                if !target.flavors.contains(f) {
+                    target.flavors.push(f.clone());
+                }
+            }
+        }
+        for s in symbols.values_mut() {
+            if s.parent.as_deref() == Some(id.as_str()) {
+                s.parent = Some(real_id.clone());
+            }
+        }
+        renamed.insert(id, real_id);
+    }
+    renamed
 }
 
 fn external_symbol(id: &str, kind: SymbolKind, name: &str, language: Language) -> Symbol {
@@ -188,13 +239,24 @@ impl ModuleIndex {
         Self { paths }
     }
 
-    /// `id` itself, or its `/index` module.
+    /// `id` itself, its `/index` module (TypeScript), or the module that holds the imported
+    /// item (Rust: `ns:app::orders::Order` → `ns:app::orders`).
     fn resolve(&self, symbols: &BTreeMap<String, Symbol>, id: &str) -> Option<String> {
         if symbols.contains_key(id) {
             return Some(id.to_owned());
         }
         let index = format!("{id}/index");
-        symbols.contains_key(&index).then_some(index)
+        if symbols.contains_key(&index) {
+            return Some(index);
+        }
+        let mut cur = id;
+        while let Some((head, _)) = cur.rsplit_once("::") {
+            if symbols.get(head).is_some_and(|s| s.kind == SymbolKind::Module) {
+                return Some(head.to_owned());
+            }
+            cur = head;
+        }
+        None
     }
 
     /// A non-relative specifier that is not a declared package: `@/x/y`, `~/x/y`, `#x/y`, or a
@@ -257,14 +319,20 @@ impl TypeIndex {
     fn new(symbols: &BTreeMap<String, Symbol>) -> Self {
         let mut by_name: HashMap<String, Vec<(String, String)>> = HashMap::new();
         for s in symbols.values().filter(|s| s.kind.is_type()) {
-            let simple = s.id.rsplit('.').next().unwrap_or(&s.id);
+            // Rust paths (`app::orders::Order`) compare like dotted names.
+            let dotted = s.id.replace("::", ".");
+            let simple = dotted.rsplit('.').next().unwrap_or(&dotted);
             let simple = simple.split('`').next().unwrap_or(simple).to_owned();
-            by_name.entry(simple).or_default().push((s.id.clone(), s.qualified_name.clone()));
+            by_name.entry(simple).or_default().push((s.id.clone(), s.qualified_name.replace("::", ".")));
         }
         Self { by_name }
     }
 
     fn resolve(&self, name: &str, from_ns: Option<&str>, imports: &[&str]) -> Option<String> {
+        let name = &name.replace("::", ".");
+        let from_ns = from_ns.map(|n| n.replace("::", "."));
+        let from_ns = from_ns.as_deref();
+        let imports: Vec<String> = imports.iter().map(|i| i.replace("::", ".")).collect();
         let simple = name.rsplit('.').next().unwrap_or(name);
         let candidates = self.by_name.get(simple)?;
         if candidates.len() == 1 {
@@ -290,7 +358,7 @@ impl TypeIndex {
                 scope = s.rsplit_once('.').map(|(head, _)| head);
             }
         }
-        for imp in imports {
+        for imp in &imports {
             if let Some((id, _)) = candidates.iter().find(|(_, q)| in_ns(imp, q)) {
                 return Some(id.clone());
             }

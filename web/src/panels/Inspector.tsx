@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { conceptColor, conceptInfo, flavorInfo, operationColor, operationInfo, typeColor, useCatalog } from "../catalog";
+import type { Access } from "../gen/Access";
 import type { Concept } from "../gen/Concept";
 import type { Expr } from "../gen/Expr";
 import type { Language } from "../gen/Language";
@@ -88,6 +89,22 @@ function OperationSection({ op: key, language }: { op: string | null; language: 
       </div>
     </>
   );
+}
+
+/** How a statement takes a value (Rust ownership), in plain words. */
+function usesVerb(access: Access | null | undefined): string {
+  switch (access) {
+    case "Move":
+      return "takes (moves)";
+    case "Copy":
+      return "copies";
+    case "Borrow":
+      return "borrows";
+    case "BorrowMut":
+      return "borrows to change";
+    default:
+      return "uses";
+  }
 }
 
 function exprAt(root: Expr | null, path: string): Expr | null {
@@ -187,7 +204,8 @@ export function Inspector() {
               .filter((p) => p.kind === "Data")
               .map((p) => (
                 <div key={p.id} className="value-row">
-                  <span className="dot" style={{ background: typeColor(p.ty) }} /> uses <code>{p.label}</code>
+                  <span className="dot" style={{ background: typeColor(p.ty) }} /> {usesVerb(flow.data!.edges.find((e) => e.to === node.id && e.to_pin === p.id)?.access)}{" "}
+                  <code>{p.label}</code>
                   {p.ty && <span className="muted"> : {p.ty}</span>}
                 </div>
               ))}

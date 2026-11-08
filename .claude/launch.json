@@ -30,6 +30,20 @@
       "url": "http://127.0.0.1:7450"
     },
     {
+      "name": "nodex-rust",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/rust/Sample", "--no-browser", "--port", "7460"],
+      "port": 7460,
+      "url": "http://127.0.0.1:7460"
+    },
+    {
+      "name": "nodex-rust-syntax",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/rust/Syntax", "--no-browser", "--port", "7470"],
+      "port": 7470,
+      "url": "http://127.0.0.1:7470"
+    },
+    {
       "name": "web-dev",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "web", "dev"],

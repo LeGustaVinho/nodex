@@ -1,0 +1,10 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::impls::Point::fmt
+EventEntry — when a Point is formatted as text ({} in println!, format!, to_string)
+Return — return write!(f, "({}, {})", self.x, self.y)
+== crate::impls::Point::length
+Entry — when length() is called
+Return — return (self.x * self.x + self.y * self.y).sqrt()

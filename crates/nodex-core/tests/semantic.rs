@@ -166,3 +166,38 @@ fn typescript_sidecar_resolves_the_sample() {
     assert!(!stage.flavors.iter().any(|f| f == "custom-stage"), "{:?}", stage.flavors);
     assert!(stage.target.as_deref().is_some_and(|t| t.starts_with("Array.filter")), "{:?}", stage.target);
 }
+
+/// `rustup component add rust-analyzer`, then `cargo test -- --ignored`.
+#[test]
+#[ignore = "needs rust-analyzer"]
+fn rust_analyzer_resolves_the_sample() {
+    use nodex_lang_rust::RustFrontend;
+    let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(RustFrontend)];
+    let mut project = Project::open(&fixtures().join("rust/Sample"), frontends).expect("fixture opens");
+    let mut provider = RustFrontend.semantic(project.root()).expect("Rust has a provider").expect("rust-analyzer starts");
+    let facts = provider.analyze().expect("analysis succeeds");
+    assert!(facts.source.contains("rust-analyzer"), "{}", facts.source);
+    project.apply_semantic(nodex_ir::Language::Rust, facts);
+
+    let graph = project.structure();
+    let has = |from: &str, to: &str, kind: StructEdgeKind| graph.edges.iter().any(|e| e.from == from && e.to == to && e.kind == kind);
+    // Calls resolve across modules, through `use` and generic receivers.
+    assert!(has("crate::main", "crate::services::order_service::OrderService::total_for_customer", StructEdgeKind::Calls));
+    assert!(has("crate::main", "crate::ship_all", StructEdgeKind::Calls));
+    assert!(has("crate::services::order_service::OrderService::ship", "crate::util::sleep_ms", StructEdgeKind::Calls));
+    assert!(has("crate::services::order_service::OrderService::ship", "crate::domain::order::Order::with_status", StructEdgeKind::Calls));
+    assert!(has("crate::main", "crate::domain::order::Order", StructEdgeKind::Instantiates));
+
+    // Types reach the pins; std methods are external targets that operations recognize.
+    let total = project.flow("crate::services::order_service::OrderService::total_for_customer").unwrap();
+    let order = total.nodes.iter().find(|n| n.concept == Concept::LoopForEach).unwrap();
+    assert_eq!(order.outputs.iter().find(|p| p.id == "var:order").and_then(|p| p.ty.as_deref()), Some("Order"));
+    let main = project.flow("crate::main").unwrap();
+    let call = main.nodes.iter().find(|n| n.label.contains("total_for_customer")).unwrap();
+    assert!(call.calls.iter().any(|c| c.symbol.as_deref() == Some("crate::services::order_service::OrderService::total_for_customer")));
+    let repo = project.flow("crate::services::repository::InMemoryOrderRepository::add").unwrap();
+    let push = repo.nodes.iter().find(|n| n.label.contains("push")).unwrap();
+    let push_expr = find_expr(push.expr.as_ref().unwrap(), &|e| e.label == "push").unwrap();
+    assert!(push_expr.target.as_deref().is_some_and(|t| t.starts_with("alloc::vec::Vec::push")), "{:?}", push_expr.target);
+    assert_eq!(push_expr.op.as_deref(), Some("list.add"));
+}

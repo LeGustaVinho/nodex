@@ -1,0 +1,15 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::util::sleep_ms
+Entry — when sleep_ms(ms) is called
+Wait — wait ms milliseconds
+== crate::util::count_slowly
+Entry — when count_slowly(n) is called
+Var — count = 0
+Loop.While — while count < n
+  body:
+    Call — sleep_ms(1)
+    Assign — increase count by 1
+Return — return count

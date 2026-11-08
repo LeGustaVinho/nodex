@@ -1,0 +1,312 @@
+//! Small helpers over tree-sitter-rust trees.
+
+use tree_sitter::Node;
+
+pub use nodex_lang_api::syntax::{Src, children, first_error};
+
+/// Rust comments (`//`, `/* */`, doc comments) are extras that may appear anywhere.
+pub fn is_comment(kind: &str) -> bool {
+    matches!(kind, "line_comment" | "block_comment")
+}
+
+/// Named children without comments.
+pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).filter(|c| !is_comment(c.kind())).collect()
+}
+
+pub fn children_of_kind<'t>(node: Node<'t>, kind: &str) -> Vec<Node<'t>> {
+    named_children(node).into_iter().filter(|c| c.kind() == kind).collect()
+}
+
+pub fn first_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>> {
+    named_children(node).into_iter().find(|c| c.kind() == kind)
+}
+
+/// Item declarations: they never run as statements.
+pub fn is_item(kind: &str) -> bool {
+    matches!(
+        kind,
+        "function_item"
+            | "function_signature_item"
+            | "struct_item"
+            | "enum_item"
+            | "union_item"
+            | "trait_item"
+            | "impl_item"
+            | "mod_item"
+            | "use_declaration"
+            | "extern_crate_declaration"
+            | "type_item"
+            | "const_item"
+            | "static_item"
+            | "macro_definition"
+            | "foreign_mod_item"
+            | "attribute_item"
+            | "inner_attribute_item"
+            | "empty_statement"
+    )
+}
+
+/// Removes redundant parentheses.
+pub fn unparen(mut node: Node) -> Node {
+    while node.kind() == "parenthesized_expression" {
+        match named_children(node).into_iter().next() {
+            Some(inner) => node = inner,
+            None => break,
+        }
+    }
+    node
+}
+
+/// True when the statement ends with `;` (an expression statement whose value is discarded).
+pub fn has_semicolon(src: Src, node: Node) -> bool {
+    src.text(node).trim_end().ends_with(';')
+}
+
+/// Attributes written before `node` (`#[derive(Debug)]`, `#[test]`), as `(path, args)`.
+pub fn attributes<'t>(src: Src, node: Node<'t>) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut prev = node.prev_named_sibling();
+    while let Some(p) = prev {
+        match p.kind() {
+            "attribute_item" => {
+                if let Some(attr) = first_child_of_kind(p, "attribute") {
+                    let path = named_children(attr).into_iter().next().map(|n| src.norm(n)).unwrap_or_default();
+                    let args = attr.child_by_field_name("arguments").map(|a| src.norm(a)).unwrap_or_default();
+                    out.push((path, args));
+                }
+            }
+            k if is_comment(k) => {}
+            _ => break,
+        }
+        prev = p.prev_named_sibling();
+    }
+    out.reverse();
+    out
+}
+
+/// Attributes as flavors: `#[derive(Debug, Clone)]` → `derive:Debug`, `derive:Clone`;
+/// `#[test]` → `test`; `#[cfg(test)]` → `#cfg(test)`; others `attr:name`.
+pub fn attribute_flavors(src: Src, node: Node) -> Vec<String> {
+    let mut out = Vec::new();
+    for (path, args) in attributes(src, node) {
+        // `#[unsafe(no_mangle)]` (Rust 2024): an attribute the author vouches for.
+        let (path, args) = match path.as_str() {
+            "unsafe" => {
+                out.push("unsafe-attribute".into());
+                let inner = args.trim_matches(['(', ')']).trim();
+                let name = inner.split(['(', '=']).next().unwrap_or(inner).trim().to_owned();
+                (name, inner.get(inner.find('(').unwrap_or(inner.len())..).unwrap_or("").to_owned())
+            }
+            _ => (path, args),
+        };
+        match path.as_str() {
+            "derive" => {
+                for d in args.trim_matches(['(', ')']).split(',') {
+                    let d = d.trim().rsplit("::").next().unwrap_or("").trim();
+                    if !d.is_empty() {
+                        out.push(format!("derive:{d}"));
+                    }
+                }
+            }
+            "test" | "tokio::test" => out.push("test".into()),
+            "cfg" => out.push(format!("#cfg{args}")),
+            "inline" | "must_use" | "deprecated" | "non_exhaustive" => out.push(path.clone()),
+            "async_trait" | "async_trait::async_trait" => out.push("async-trait".into()),
+            "tokio::main" => out.push("async-main".into()),
+            "doc" | "allow" | "warn" | "deny" | "expect" | "rustfmt::skip" => {}
+            _ => out.push(format!("attr:{path}")),
+        }
+    }
+    out
+}
+
+/// The `///` (or `/** */`) documentation written before `node`, as plain text.
+pub fn doc_comment(src: Src, node: Node) -> Option<String> {
+    let mut lines = Vec::new();
+    let mut prev = node.prev_sibling();
+    while let Some(p) = prev {
+        match p.kind() {
+            "line_comment" => {
+                let t = src.text(p);
+                match t.strip_prefix("///") {
+                    Some(rest) if !rest.starts_with('/') => lines.push(rest.trim().to_owned()),
+                    _ => break,
+                }
+            }
+            "block_comment" => {
+                let t = src.text(p);
+                match t.strip_prefix("/**") {
+                    Some(rest) if !rest.starts_with('*') => {
+                        let body = rest.trim_end_matches("*/");
+                        for l in body.lines().rev() {
+                            lines.push(l.trim().trim_start_matches('*').trim().to_owned());
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            "attribute_item" => {}
+            _ => break,
+        }
+        prev = p.prev_sibling();
+    }
+    lines.reverse();
+    let text = lines.join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
+}
+
+/// `pub`, `pub(crate)`, ... of an item.
+pub fn visibility(src: Src, node: Node) -> Option<String> {
+    first_child_of_kind(node, "visibility_modifier").map(|v| src.norm(v))
+}
+
+/// Keywords of a function: `async`, `const`, `unsafe`, `extern "C"`.
+pub fn function_modifiers(src: Src, func: Node) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(m) = first_child_of_kind(func, "function_modifiers") {
+        for c in children(m) {
+            let t = src.text(c);
+            match c.kind() {
+                "extern_modifier" => out.push("extern".to_owned()),
+                _ if matches!(t, "async" | "const" | "unsafe" | "default") => out.push(t.to_owned()),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Strips generic arguments and paths: `Vec<Order>` → `Vec`, `crate::a::B` → `B`, `&mut T` → `T`.
+pub fn bare_type_name(text: &str) -> String {
+    let t = text.trim().trim_start_matches('&').trim_start_matches("mut ").trim_start_matches("dyn ").trim_start_matches("impl ");
+    let t = t.split('<').next().unwrap_or(t);
+    t.rsplit("::").next().unwrap_or(t).trim().to_owned()
+}
+
+/// Type names used by a type expression (`Option<Vec<Order>>` → `Option`, `Vec`, `Order`),
+/// without primitives.
+pub fn type_names(src: Src, ty: Node, out: &mut Vec<String>) {
+    match ty.kind() {
+        "type_identifier" => {
+            let name = src.text(ty).to_owned();
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        "scoped_type_identifier" => {
+            if let Some(n) = ty.child_by_field_name("name") {
+                let name = src.text(n).to_owned();
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+        }
+        "primitive_type" | "lifetime" => {}
+        _ => {
+            for c in named_children(ty) {
+                type_names(src, c, out);
+            }
+        }
+    }
+}
+
+/// `(name, type)` of each parameter; `self` receivers are skipped (see [`receiver`]).
+pub fn parameters(src: Src, func: Node) -> Vec<(String, Option<String>)> {
+    let Some(list) = func.child_by_field_name("parameters") else { return Vec::new() };
+    let mut out = Vec::new();
+    for p in named_children(list) {
+        match p.kind() {
+            "parameter" => {
+                let name = p.child_by_field_name("pattern").map(|n| pattern_text(src, n)).unwrap_or_default();
+                let ty = p.child_by_field_name("type").map(|t| src.norm(t));
+                out.push((name, ty));
+            }
+            "variadic_parameter" => out.push(("...".into(), None)),
+            // Closure parameters: bare patterns or `x: T`.
+            "identifier" => out.push((src.text(p).to_owned(), None)),
+            k if k.ends_with("pattern") => out.push((pattern_text(src, p), None)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The `self` receiver of a method: `&self`, `&mut self`, `self`, `mut self`.
+pub fn receiver(src: Src, func: Node) -> Option<String> {
+    let list = func.child_by_field_name("parameters")?;
+    let s = first_child_of_kind(list, "self_parameter")?;
+    let text = src.norm(s);
+    Some(if text.contains("&mut") || text.contains("& mut") {
+        "&mut self".into()
+    } else if text.starts_with('&') {
+        "&self".into()
+    } else {
+        "self".into()
+    })
+}
+
+/// A pattern as written, without `mut`/`ref` noise for plain bindings.
+fn pattern_text(src: Src, p: Node) -> String {
+    match p.kind() {
+        "mut_pattern" | "ref_pattern" => named_children(p).into_iter().last().map(|n| pattern_text(src, n)).unwrap_or_default(),
+        _ => src.norm(p),
+    }
+}
+
+/// Every name a pattern binds: `(a, Point { x, y: yy }, ref mut z)` → `a`, `x`, `yy`, `z`.
+pub fn pattern_names(src: Src, p: Node, out: &mut Vec<String>) {
+    match p.kind() {
+        "identifier" => {
+            let name = src.text(p).to_owned();
+            // `None`, `Ok` in a pattern are variants, not bindings.
+            if name != "_" && !name.chars().next().is_some_and(char::is_uppercase) && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        "shorthand_field_identifier" => {
+            let name = src.text(p).to_owned();
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        "field_pattern" => match p.child_by_field_name("pattern") {
+            Some(inner) => pattern_names(src, inner, out),
+            None => {
+                if let Some(n) = p.child_by_field_name("name") {
+                    let name = src.text(n).to_owned();
+                    if !out.contains(&name) {
+                        out.push(name);
+                    }
+                }
+            }
+        },
+        "captured_pattern" => {
+            if let Some(first) = named_children(p).into_iter().next() {
+                pattern_names(src, first, out);
+            }
+            for c in named_children(p).into_iter().skip(1) {
+                pattern_names(src, c, out);
+            }
+        }
+        "scoped_identifier" | "type_identifier" | "scoped_type_identifier" | "_literal_pattern" | "integer_literal"
+        | "string_literal" | "char_literal" | "boolean_literal" | "float_literal" | "negative_literal" | "range_pattern" => {}
+        "tuple_struct_pattern" | "struct_pattern" => {
+            for c in named_children(p).into_iter().skip(1) {
+                pattern_names(src, c, out);
+            }
+        }
+        _ => {
+            for c in named_children(p) {
+                pattern_names(src, c, out);
+            }
+        }
+    }
+}
+
+/// Last segment of a path expression: `std::mem::take` → `take`, `Vec::<T>::new` → `new`.
+pub fn last_segment(text: &str) -> &str {
+    let t = text.rsplit("::").next().unwrap_or(text);
+    t.split('<').next().unwrap_or(t).trim()
+}

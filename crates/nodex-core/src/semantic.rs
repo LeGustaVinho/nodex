@@ -262,7 +262,8 @@ pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -
         let pin_id = format!("var:{}", local.name);
         for node in flow.nodes.iter_mut().filter(|n| within(n.span.start_byte, n.span.end_byte, &local.site)) {
             if let Some(pin) = node.outputs.iter_mut().find(|p| p.id == pin_id && p.kind == PinKind::Data) {
-                if pin.ty.is_none() {
+                // `{integer}`: a literal's type the frontend could not tell (Rust).
+                if pin.ty.is_none() || pin.ty.as_deref().is_some_and(|t| t.starts_with('{')) {
                     pin.ty = Some(local.ty.clone());
                 }
                 typed.push((node.id.clone(), pin_id.clone(), pin.ty.clone().unwrap_or_default()));
@@ -278,7 +279,7 @@ pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -
             .collect();
         for (to, to_pin) in targets {
             if let Some(pin) = flow.nodes.iter_mut().find(|n| n.id == to).and_then(|n| n.inputs.iter_mut().find(|p| p.id == to_pin))
-                && pin.ty.is_none() {
+                && (pin.ty.is_none() || pin.ty.as_deref().is_some_and(|t| t.starts_with('{'))) {
                     pin.ty = Some(ty.clone());
                 }
         }

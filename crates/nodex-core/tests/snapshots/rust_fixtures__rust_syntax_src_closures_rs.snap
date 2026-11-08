@@ -1,0 +1,39 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::closures::closures::sort_by callback
+Entry — when sort_by calls this function with (a, b)
+Var — key_a = a.abs()
+Var — key_b = b.abs()
+Return — return key_a.cmp(&key_b)
+== crate::closures::closures::for_each callback
+Entry — when for_each calls this function with (n)
+Var — doubled = n * 2
+Call — print "{doubled}"
+== crate::closures::closures
+Entry — when closures(numbers) is called
+Var — offset = 10
+Var — add = |x: i32| x + offset
+Var — counter = 0
+Var — bump = || counter += 1
+Call — bump()
+Var — owned = numbers.clone()
+Var — take = move || owned.len()
+Var — even_squares = numbers → iter() → filter(|n| *n % 2 == 0) → map(|n| n * n) → sum()
+Var — names = numbers → iter() → map(|n| n.to_string()) → collect()
+Var — first_big = numbers → iter() → position(|n| *n > 100)
+Var — any = numbers → iter() → any(|n| *n < 0)
+Call — numbers → iter() → for_each(|n| { let doubled = n * 2; println!("{…
+Var — sorted = numbers.clone()
+Call — sorted.sort_by(|a, b| { let key_a = a.abs(); let key_b = b.abs(); key_a.cmp(&key_b) })
+Return — return apply(add, 1) + even_squares + take() as i32 + counter
+== crate::closures::apply
+Entry — when apply(f, x) is called
+Return — return f(x)
+== crate::closures::returns_closure
+Entry — when returns_closure(k) is called
+Return — return move |x| x * k
+== crate::closures::boxed
+Entry — when boxed() is called
+Return — return Box::new(|| String::from("boxed"))

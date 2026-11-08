@@ -1,0 +1,253 @@
+# Rust flavors. Derives (derive:Name), attributes (attr:path), trait implementations
+# (impl:Trait, from-trait:Trait), visibility (pub, pub(crate)) and cfg conditions (#cfg(...)) are
+# emitted with their names; the web shows them with generic explanations.
+
+# --- Projects and modules ------------------------------------------------------------------
+
+[rust]
+label = "Rust"
+explain = "A Rust project (Cargo)."
+
+[bin]
+label = "program"
+explain = "The project builds an executable program (src/main.rs or [[bin]])."
+
+[lib]
+label = "library"
+explain = "The project builds a library other crates can use (src/lib.rs)."
+
+[workspace]
+label = "workspace"
+explain = "Several crates built together (a Cargo workspace)."
+
+[crate-root]
+label = "crate root"
+explain = "The top module of a crate (main.rs or lib.rs): every other module hangs below it."
+
+[inline-module]
+label = "inline module"
+explain = "A module written inside another file (mod name { ... }) instead of a file of its own."
+
+[pub]
+label = "pub"
+explain = "Public: code outside this module can use it."
+
+# --- Types ---------------------------------------------------------------------------------
+
+[tuple-struct]
+label = "tuple struct"
+explain = "A struct whose fields have positions instead of names: value.0, value.1."
+
+[unit-struct]
+label = "unit struct"
+explain = "A struct with no fields: it carries meaning only by its type."
+
+[c-union]
+label = "union"
+explain = "All fields share the same memory; reading one is unsafe because Rust cannot know which one was written."
+
+[impl-only]
+label = "impl block"
+explain = "Methods added to a type declared elsewhere (another module, or a type from another crate)."
+
+[associated-type]
+label = "associated type"
+explain = "A type a trait leaves open; each implementation says what it is (type Item = u32)."
+
+[macro]
+label = "macro"
+explain = "Code that writes code at compile time. name!(...) expands into ordinary Rust before it is compiled."
+
+# --- Functions -----------------------------------------------------------------------------
+
+["&self"]
+label = "&self"
+explain = "A method that reads the value it is called on, without changing or taking it."
+
+["&mut self"]
+label = "&mut self"
+explain = "A method that may change the value it is called on; nobody else can use that value meanwhile."
+
+[self]
+label = "self"
+explain = "A method that takes the value it is called on: afterwards the caller can no longer use it."
+
+[static]
+label = "associated function"
+explain = "A function of the type that is not called on a value (Type::name(...)), such as a constructor."
+
+[default]
+label = "default body"
+explain = "A trait method with a body: implementations get it for free unless they write their own."
+
+[required]
+label = "required"
+explain = "A trait method without a body: every implementation must write it."
+
+[const]
+label = "const"
+explain = "Computed while compiling (const fn may also run then); its value never changes."
+
+[mut]
+label = "mut"
+explain = "The variable can be changed later. Rust variables are fixed unless marked mut."
+
+[unsafe]
+label = "unsafe"
+explain = "The compiler cannot check this is safe (raw pointers, foreign code); the author promises it is."
+
+[extern]
+label = "extern"
+explain = "A function from (or for) code written in another language, such as C."
+
+[generic]
+label = "generic"
+explain = "Works for many types: the type is a parameter (fn f<T>(x: T)), chosen where it is used."
+
+[test]
+label = "test"
+explain = "A test: cargo test runs it; it is not part of the program."
+
+[callback]
+label = "callback"
+explain = "A function written inline and handed to another function, which calls it later (or for each item)."
+
+[move]
+label = "move"
+explain = "The closure takes ownership of the variables it uses, instead of borrowing them (needed to send it to another thread)."
+
+[async-trait]
+label = "async trait"
+explain = "Uses the async_trait macro so trait methods can be async."
+
+[async-main]
+label = "async main"
+explain = "The program's entry point runs inside an async runtime (tokio::main)."
+
+[inline]
+label = "inline"
+explain = "Asks the compiler to copy the function's body where it is called, for speed."
+
+[must_use]
+label = "must use"
+explain = "The compiler warns if the result is ignored."
+
+[deprecated]
+label = "deprecated"
+explain = "Should no longer be used; kept for old code."
+
+[non_exhaustive]
+label = "non exhaustive"
+explain = "More variants or fields may be added later, so code outside the crate must handle unknown ones."
+
+# --- Statements ----------------------------------------------------------------------------
+
+[let-else]
+label = "let … else"
+explain = "Unpacks a value if it has the expected shape; otherwise runs the else block, which must leave (return, break, panic)."
+
+[if-let]
+label = "if let"
+explain = "Runs the branch only when the value has the given shape (Some(x), Ok(v)), and gives names to its parts."
+
+[while-let]
+label = "while let"
+explain = "Repeats while the value has the given shape, for example while a queue still returns Some(item)."
+
+[try]
+label = "?"
+explain = "The ? operator: if the value is an error (Err) or empty (None), the function returns it right away; otherwise it continues with the inner value."
+
+[panic]
+label = "panic"
+explain = "Stops the program (or this thread) with a message, unwinding the stack. Meant for bugs, not for expected errors."
+
+[assert]
+label = "assert"
+explain = "Panics if the condition is false."
+
+[iterator]
+label = "iterator"
+explain = "A chain of iterator steps: items flow through each step lazily, one at a time, until a step like sum() or collect() pulls them."
+
+[channel]
+label = "channel"
+explain = "Sends a value to whoever holds the receiving end, often on another thread."
+
+[drop]
+label = "drop"
+explain = "Frees the value now instead of at the end of its scope (closing files, releasing locks)."
+
+[exits]
+label = "exits"
+explain = "Ends the whole program immediately; values are not cleaned up."
+
+[blocking]
+label = "blocking"
+explain = "The thread stops here until it finishes; nothing else runs on it meanwhile."
+
+# --- Expressions ---------------------------------------------------------------------------
+
+[borrow]
+label = "&"
+explain = "A shared borrow: read access to the value; the owner keeps it."
+
+[borrow-mut]
+label = "&mut"
+explain = "A mutable borrow: exclusive access to change the value; nobody else may use it meanwhile."
+
+[deref]
+label = "*"
+explain = "Follows a reference (or smart pointer) to the value it points to."
+
+[clone]
+label = "clone"
+explain = "Makes a full copy of the value, so the original can still be used."
+
+[may-panic]
+label = "may panic"
+explain = "unwrap()/expect() take the value out of Some/Ok, and stop the program (panic) if it is None/Err."
+
+[variant]
+label = "variant"
+explain = "Creates a value of one case of an enum (Some(x), Ok(v), Shape::Circle(r))."
+
+[function-value]
+label = "function value"
+explain = "Calls a function stored in a variable or field."
+
+[captured]
+label = "captured"
+explain = "A variable named inside the format text ({name})."
+
+[block]
+label = "block value"
+explain = "A block's last expression (without ;) is its value."
+
+[loop-value]
+label = "loop value"
+explain = "A loop used as a value: break value ends it with that value."
+
+[move-semantics]
+label = "moved"
+explain = "The value moves here: the previous owner can no longer use it."
+
+[implicit-drop]
+label = "dropped here"
+explain = "Rust frees this value here on its own, because its scope ends: for types with a Drop implementation that runs their drop method; for a lock guard it releases the lock."
+
+[block-value]
+label = "value of a block"
+explain = "The variable takes the value the control flow below ends with (the last expression of a block or branch, or the value a loop leaves with)."
+
+[lock]
+label = "locks"
+explain = "Waits until no other thread holds the lock, then holds it until the guard goes out of scope."
+
+[runtime-borrow]
+label = "borrow at run time"
+explain = "RefCell checks the borrowing rules while the program runs: a second mutable borrow at the same time stops it with a panic."
+
+[unsafe-attribute]
+label = "unsafe attribute"
+explain = "An attribute the compiler cannot check (no_mangle, export_name, link_section): the author vouches it is used correctly."

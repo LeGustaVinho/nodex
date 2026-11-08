@@ -8,6 +8,7 @@ use nodex_core::catalog::Catalog;
 use nodex_ir::{Concept, Expr, FileIr};
 use nodex_lang_api::LanguageFrontend;
 use nodex_lang_csharp::CSharpFrontend;
+use nodex_lang_rust::RustFrontend;
 use nodex_lang_typescript::TypeScriptFrontend;
 
 fn fixtures() -> PathBuf {
@@ -15,7 +16,7 @@ fn fixtures() -> PathBuf {
 }
 
 fn open(rel: &str) -> Project {
-    let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(CSharpFrontend), Arc::new(TypeScriptFrontend)];
+    let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(CSharpFrontend), Arc::new(TypeScriptFrontend), Arc::new(RustFrontend)];
     Project::open(&fixtures().join(rel), frontends).expect("fixture opens")
 }
 
@@ -32,7 +33,7 @@ fn walk<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
 fn every_emitted_operation_is_in_the_catalog() {
     let catalog = Catalog::embedded();
     let mut seen = std::collections::BTreeSet::new();
-    for rel in ["csharp/Sample", "csharp/Syntax", "unity", "ts/Sample", "ts/Syntax", "ts/Frameworks", "rosetta/operations"] {
+    for rel in ["csharp/Sample", "csharp/Syntax", "unity", "ts/Sample", "ts/Syntax", "ts/Frameworks", "rosetta/operations", "rust/Sample", "rust/Syntax"] {
         let mut project = open(rel);
         let symbols: Vec<String> = project.files().flat_map(|(_, ir)| ir.flows.iter().map(|f| f.symbol.clone())).collect();
         for symbol in symbols {
@@ -93,6 +94,18 @@ fn block_lambdas_get_their_own_blueprint() {
     assert_eq!(call.concept, Concept::Call);
     let flow = cs.flows.iter().find(|f| &f.symbol == callback).unwrap();
     assert_eq!(flow.nodes[0].label, "when ForEach calls this function with (x)");
+
+    let rs = nodex_lang_rust::lower_source(
+        "src/callbacks.rs",
+        "pub fn run(items: Vec<i32>) {
+           items.iter().for_each(|x| { println!(\"{x}\"); });
+           items.iter().for_each(|x| println!(\"{x}\"));
+         }
+",
+    );
+    let names = flow_names(&rs);
+    assert!(names.contains(&"crate::callbacks::run::for_each callback".to_owned()), "{names:?}");
+    assert_eq!(names.iter().filter(|n| n.ends_with(" callback")).count(), 1, "{names:?}");
 
     let ts = nodex_lang_typescript::lower_source(
         "callbacks.ts",

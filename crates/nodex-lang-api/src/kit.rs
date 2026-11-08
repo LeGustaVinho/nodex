@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use nodex_ir::{
-    CallTarget, Concept, Expr, FlowEdge, FlowEdgeKind, FlowGraph, FlowNode, Language, NodeId, Pin, PinKind,
+    Access, CallTarget, Concept, Expr, FlowEdge, FlowEdgeKind, FlowGraph, FlowNode, Language, NodeId, Pin, PinKind,
     Purity, Span, SymbolId, stable_id,
 };
 
@@ -272,8 +272,52 @@ impl FlowBuilder {
             .map(|(_, node, pin)| (node.clone(), pin.clone()))
     }
 
+    /// The type of the pin that currently defines local `name`, when known.
+    pub fn type_of(&self, name: &str) -> Option<String> {
+        let (node, pin) = self.lookup(name)?;
+        self.nodes.iter().find(|n| n.id == node)?.outputs.iter().find(|p| p.id == pin)?.ty.clone()
+    }
+
+    /// True when the value defined at `node`/`pin` was moved away (a data wire that moves it).
+    pub fn moved_from(&self, node: &str, pin: &str) -> bool {
+        self.edges.iter().any(|e| e.from == node && e.from_pin == pin && e.access == Some(Access::Move))
+    }
+
+    /// Changes the label of a pin (Rust shadowing: `value₂`).
+    pub fn set_pin_label(&mut self, node: &NodeId, pin: &str, label: &str) {
+        let n = self.node_mut(node);
+        if let Some(p) = n.outputs.iter_mut().chain(n.inputs.iter_mut()).find(|p| p.id == pin) {
+            p.label = label.to_owned();
+        }
+    }
+
     /// Connects the definition of local `name` (if any) to a data input on `node`.
     pub fn read(&mut self, node: &NodeId, name: &str) {
+        self.read_with(node, name, None);
+    }
+
+    /// Like [`read`](Self::read), saying how the value is handed over (Rust ownership). A
+    /// stronger access wins when the same local is read twice by one node
+    /// (`BorrowMut` > `Move` > `Borrow` > `Copy`).
+    pub fn read_with(&mut self, node: &NodeId, name: &str, access: Option<Access>) {
+        let rank = |a: Option<Access>| match a {
+            Some(Access::BorrowMut) => 4,
+            Some(Access::Move) => 3,
+            Some(Access::Borrow) => 2,
+            Some(Access::Copy) => 1,
+            None => 0,
+        };
+        let pin = format!("use:{name}");
+        if let Some(e) = self.edges.iter_mut().find(|e| &e.to == node && e.to_pin == pin && e.kind == FlowEdgeKind::Data) {
+            if rank(access) > rank(e.access) {
+                e.access = access;
+            }
+            return;
+        }
+        self.read_inner(node, name, access);
+    }
+
+    fn read_inner(&mut self, node: &NodeId, name: &str, access: Option<Access>) {
         let Some((def_node, def_pin)) = self.lookup(name) else {
             return;
         };
@@ -281,12 +325,9 @@ impl FlowBuilder {
             return;
         }
         let pin = format!("use:{name}");
-        let ty = self
-            .nodes
-            .iter()
-            .find(|n| n.id == def_node)
-            .and_then(|n| n.outputs.iter().find(|p| p.id == def_pin))
-            .and_then(|p| p.ty.clone());
+        let def = self.nodes.iter().find(|n| n.id == def_node).and_then(|n| n.outputs.iter().find(|p| p.id == def_pin));
+        let ty = def.and_then(|p| p.ty.clone());
+        let label = def.map(|p| p.label.clone()).unwrap_or_else(|| name.to_owned());
         let n = self.node_mut(node);
         if n.inputs.iter().any(|p| p.id == pin) {
             return;
@@ -294,7 +335,7 @@ impl FlowBuilder {
         n.inputs.push(Pin {
             id: pin.clone(),
             kind: PinKind::Data,
-            label: name.into(),
+            label,
             ty,
         });
         self.edges.push(FlowEdge {
@@ -303,6 +344,7 @@ impl FlowBuilder {
             to: node.clone(),
             to_pin: pin,
             kind: FlowEdgeKind::Data,
+            access,
         });
     }
 
@@ -314,6 +356,7 @@ impl FlowBuilder {
             to: to.clone(),
             to_pin: "in".into(),
             kind: FlowEdgeKind::Exec,
+            access: None,
         });
     }
 
@@ -339,6 +382,11 @@ impl FlowBuilder {
         {
             n.flavors.push(flavor.to_owned());
         }
+    }
+
+    /// Position of node `id` (for [`add_flavor_at`](Self::add_flavor_at)).
+    pub fn index_of(&self, id: &str) -> Option<usize> {
+        self.nodes.iter().position(|n| n.id == id)
     }
 
     pub fn concept_of(&self, id: &str) -> Option<Concept> {

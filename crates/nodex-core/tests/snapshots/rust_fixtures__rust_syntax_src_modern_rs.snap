@@ -1,0 +1,94 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::modern::modern
+Entry — when modern(values, r#type) is called
+Var — r#match = r#type.len()
+Var — raw = &raw const r#match
+Var — c_text = c"hello"
+Var — bytes = b"bytes"
+Var — raw_bytes = br"raw\bytes"
+Var — zero = const { 1 + 1 }
+Var — kind = match values.len() (2 cases)
+Var — label = the value the block below gives
+Branch — if values.is_empty()
+  true:
+    Break — leave 'block with "empty" (label takes it)
+  false:
+Assign — label = "full"
+Var — first = values.first().copied().unwrap_or_default()
+Var — doubled = values → iter() → map(|v| v * 2) → collect()
+Var — typed = Vec::<u32>::with_capacity(4)
+Var — max = 1u32.max(2)
+Var — nested = Some(Some(3)).flatten()
+Var — joined = [r#match, zero, kind.len(), label.len()… → iter() → sum()
+Scope — run this block without the compiler's safety checks
+  body:
+    Return — return *raw + joined + nested.unwrap_or(0) + c_text.count_bytes() + bytes.len() + raw_bytes.len…
+== crate::modern::async_closures
+Entry — when async_closures(items) is called
+Var — add = async |x: u32| x + 1
+Var — total = 0
+Loop.ForEach — for each item in items
+  body:
+    Assign — add add(item).await to total
+Return — return total
+== crate::modern::captures
+Entry — when captures(text) is called
+Return — return text → chars() → filter(|c| c.is_alphabetic())
+== crate::modern::apply
+Entry — when apply(f, text) is called
+Return — return f(text)
+== crate::modern::show
+Entry — when show(value) is called
+Return — return format!("{value:?}")
+== crate::modern::never
+Entry — when never() is called
+Loop.Infinite — repeat forever
+  body:
+    Call — std::thread::park()
+== crate::modern::search
+Entry — when search(grid, target) is called
+Var — found = the value the loop below gives
+Loop.Infinite — repeat forever
+  body:
+    Loop.ForEach — for each (r, row) in grid → iter() → enumerate()
+      body:
+        Loop.ForEach — for each (c, cell) in row → iter() → enumerate()
+          body:
+            Branch — if *cell == target
+              true:
+                Break — leave 'outer with Some((r, c)) (found takes it)
+              false:
+    Break — leave the loop with None (found takes it)
+Var — it = grid.iter()
+Loop.While — while it.next() matches Some(row)
+  body:
+    Branch — if row.is_empty()
+      true:
+        Continue — skip to the next iteration
+      false:
+Return — return found
+== crate::modern::lookup
+Entry — when lookup(map, key) is called
+Var — list = map.get(key)?
+  error:
+Var — first = list.first()?
+  error:
+Return — return Some(*first + 1)
+== crate::modern::parse_all
+Entry — when parse_all(texts) is called
+Var — out = Vec::new()
+Loop.ForEach — for each t in texts
+  body:
+    Call — out.push(t.parse::<i64>()?)
+      error:
+Branch — if out.is_empty()
+  true:
+    Return — return Err("nothing parsed".into())
+  false:
+Return — return Ok(out)
+== crate::modern::exported
+Entry — when exported(x) is called
+Return — return x + 1

@@ -14,6 +14,7 @@ nodex-lang-api = { path = "crates/nodex-lang-api" }
 nodex-core = { path = "crates/nodex-core" }
 nodex-lang-csharp = { path = "crates/nodex-lang-csharp" }
 nodex-lang-typescript = { path = "crates/nodex-lang-typescript" }
+nodex-lang-rust = { path = "crates/nodex-lang-rust" }
 nodex-trace = { path = "crates/nodex-trace" }
 
 anyhow = "1"
@@ -25,6 +26,8 @@ blake3 = "1"
 tree-sitter = "0.25"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-typescript = "0.23"
+tree-sitter-rust = "0.24"
+scip = "0.10"
 ts-rs = { version = "12", features = ["serde-compat", "no-serde-warnings"] }
 rayon = "1"
 walkdir = "2"

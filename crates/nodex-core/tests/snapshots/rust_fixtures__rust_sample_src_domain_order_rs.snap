@@ -1,0 +1,22 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::domain::order::Priced::is_large
+Entry — when is_large() is called
+Return — return self.amount() >= 100
+== crate::domain::order::Order::new
+Entry — when new(id, customer, amount, status) is called
+Return — return Order { id, customer: customer.to_owned(), amount, status }
+== crate::domain::order::Order::with_status
+Entry — when with_status(status) is called
+Return — return Order { status, ..self.clone() }
+== crate::domain::order::Order::customer~2
+Entry — when customer() is called
+Return — return &self.customer
+== crate::domain::order::Order::amount~2
+Entry — when amount() is called
+Return — return self.amount
+== crate::domain::order::Order::fmt
+EventEntry — when a Order is formatted as text ({} in println!, format!, to_string)
+Return — return write!(f, "#{} {} {}", self.id, self.customer, self.amount)

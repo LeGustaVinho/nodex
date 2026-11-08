@@ -168,10 +168,16 @@ function TreeRow(props: { symbol: Symbol; depth: number; caret?: string; onCaret
       <button className="row-main" onClick={onClick} title={[symbol.signature ?? symbol.qualified_name, symbol.doc].filter(Boolean).join("\n\n")}>
         <span className={`sym-icon sym-${symbol.kind.toLowerCase()}`}>{ICON[symbol.kind] ?? "·"}</span>
         <span className="sym-name">
-          {symbol.kind === "Namespace" ? symbol.qualified_name : symbol.kind === "Module" ? (symbol.origins[0]?.file ?? symbol.name) : symbol.name}
+          {symbol.kind === "Namespace" ? symbol.qualified_name : symbol.kind === "Module" ? moduleLabel(symbol) : symbol.name}
         </span>
         {symbol.has_flow && <span className="sym-flow">▶</span>}
       </button>
     </div>
   );
+}
+
+/** A file module shows its file; a module written inside a file (Rust `mod x { }`) its path. */
+function moduleLabel(symbol: { name: string; qualified_name: string; flavors: string[]; origins: { file: string }[] }): string {
+  if (symbol.flavors.includes("inline-module")) return symbol.qualified_name;
+  return symbol.origins[0]?.file ?? symbol.name;
 }

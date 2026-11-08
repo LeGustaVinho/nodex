@@ -21,7 +21,8 @@ struct Cli {
 enum Command {
     /// Open a project folder in the Nodex web UI.
     Open {
-        /// Project folder (a .NET solution/project folder or a Unity project).
+        /// Project folder: a .NET solution or project, a Unity project, a TypeScript/JavaScript
+        /// project or a Cargo package/workspace.
         path: PathBuf,
         /// Port to listen on (127.0.0.1 only). The next free port is used if it is taken.
         #[arg(long, default_value_t = 7420)]
@@ -37,7 +38,11 @@ enum Command {
 
 /// Every language frontend compiled into this binary.
 fn frontends() -> Vec<Arc<dyn LanguageFrontend>> {
-    vec![Arc::new(nodex_lang_csharp::CSharpFrontend), Arc::new(nodex_lang_typescript::TypeScriptFrontend)]
+    vec![
+        Arc::new(nodex_lang_csharp::CSharpFrontend),
+        Arc::new(nodex_lang_typescript::TypeScriptFrontend),
+        Arc::new(nodex_lang_rust::RustFrontend),
+    ]
 }
 
 #[tokio::main]

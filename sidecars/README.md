@@ -10,5 +10,6 @@ Helpers that run outside the Rust process.
 | `unity/com.nodex.trace/` | M5 | UPM package: `ILPostProcessor` host for the weaver and Play Mode connection |
 | `node/nodex-ts/` | M6 ✅ | TypeScript compiler API: semantics over the same line-delimited JSON protocol as `Nodex.Roslyn`, and `nodex-ts instrument` (instrumented JavaScript copy + `nodex-trace-map.json`). Install: `pnpm --dir sidecars/node/nodex-ts install` (also builds `dist/`) |
 | `node/nodex-trace/` | M6 ✅ | `runtime.cjs`: dependency-free Node.js trace runtime, preloaded with `node --require`; same binary protocol as `Nodex.Trace`, plus a tail file for abrupt exits |
+| `rust/nodex-trace-rt/` | M7 ✅ | Rust trace runtime (std only): probes the Rust instrumenter inserts into a copy of the crate; same binary protocol, flushes at exit through `atexit`, records panics. Tests: `cargo test --manifest-path sidecars/rust/nodex-trace-rt/Cargo.toml` |
 
-See the vault notes "Runtime Visualization Strategy", "ADR-005 IL weaving for CSharp and Unity" and "ADR-012 One Node sidecar for TypeScript semantics and traces".
+See the vault notes "Runtime Visualization Strategy", "ADR-005 IL weaving for CSharp and Unity" and "ADR-012 One Node sidecar for TypeScript semantics and traces" and "ADR-014 Rust semantics from rust-analyzer SCIP and traces by source instrumentation".

@@ -1,0 +1,17 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::macros::macros
+Entry — when macros(items) is called
+Var — n = square!(3)
+Macro — log_twice!("hi")
+Var — list = vec![1, 2, n]
+Var — text = format!("{} items", items.len())
+Call — print "{text}"
+Call — print to the error output "warning: {}", list.len()
+Call — check that n > 0
+Var — matches = matches!(n, 1..=9)
+Var — line = line!()
+Call — dbg!(matches)
+Return — return list

@@ -1,0 +1,133 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::statements::statements
+Entry — when statements(items, map) is called
+Var — total = 0
+Var — limit = 100
+Loop.ForEach — for each (i, item) in items → iter() → enumerate()
+  body:
+    Branch — if i == 0
+      true:
+        Continue — skip to the next iteration
+      false:
+        Branch — if *item > limit
+          true:
+            Break — leave the loop
+          false:
+            Assign — add item to total
+Loop.ForEach — for each n in 0..10
+  body:
+    Assign — subtract n from total
+Var — countdown = 3
+Loop.While — while countdown > 0
+  body:
+    Assign — decrease countdown by 1
+Var — stack = vec![1, 2, 3]
+Loop.While — while stack.pop() matches Some(top)
+  body:
+    Assign — add top to total
+Var — found = the value the loop below gives
+Loop.Infinite — repeat forever
+  body:
+    Loop.ForEach — for each x in items
+      body:
+        Branch — if *x == 7
+          true:
+            Call — break 'outer *x
+          false:
+    Break — leave the loop with 0 (found takes it)
+Loop.ForEach — for each row in 0..3
+  body:
+    Loop.ForEach — for each col in 0..3
+      body:
+        Branch — if col > row
+          true:
+            Continue — continue with the next iteration of 'rows
+          false:
+Match — match total
+  case:
+    Assign — set total to 1
+  case:
+    Assign — multiply total by 2
+  case:
+    Return — return -1
+  case:
+Branch — if map.get("key") matches Some(v)
+  true:
+    Assign — add *v to total
+  false:
+Destructure — if items.first() matches Some(first), unpack it
+  else:
+    Return — return total
+Var — scoped = first + 1
+Assign — add scoped to total
+Scope — run this block without the compiler's safety checks
+  body:
+    Assign — add raw_read(&found as *const i32) to total
+Return — return total
+== crate::statements::raw_read
+Entry — when raw_read(p) is called
+Scope — run this block without the compiler's safety checks
+  body:
+    Return — return *p
+== crate::statements::chains
+Entry — when chains(a, b) is called
+Branch — if a matches Some(x) and b matches Some(y) and x < y
+  true:
+    Return — return x + y
+  false:
+Return — return 0
+== crate::statements::errors
+Entry — when errors(text) is called
+Var — n = text.trim().parse()?
+  error:
+Branch — if n < 0
+  true:
+    Throw — stop the program (panic): "negative: {n}"
+  false:
+Branch — if n == 0
+  true:
+    Throw — stop: not written yet
+  false:
+Var — doubled = text.parse::<i32>()? * 2
+  error:
+Call — check that doubled >= 0, "doubled must be positive"
+Call — check that doubled % 2 equals 0
+Return — return Ok(n + doubled)
+== crate::statements::classify
+Entry — when classify(n) is called
+Match — match n
+  case:
+    Return — return "negative"
+  case:
+    Return — return "zero"
+  case:
+    Return — return "positive"
+== crate::statements::sign
+Entry — when sign(n) is called
+Branch — if n < 0
+  true:
+    Return — return -1
+  false:
+    Branch — if n == 0
+      true:
+        Return — return 0
+      false:
+        Return — return 1
+== crate::statements::spawns
+Entry — when spawns() is called
+Spawn — handle = run || 40 + 2 on another thread
+Wait — wait 1 milliseconds
+Var — value = handle.join().unwrap()
+Destructure — unpack (tx, rx) from std::sync::mpsc::channel()
+Emit — send value through tx
+Call — drop tx (free it now)
+Return — return rx.recv().unwrap_or(0)
+== crate::statements::exits
+Entry — when exits(code) is called
+Branch — if code != 0
+  true:
+    Return — end the program with exit code code
+  false:

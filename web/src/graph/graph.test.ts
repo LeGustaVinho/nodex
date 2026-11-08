@@ -4,6 +4,7 @@ import type { FlowGraph } from "../gen/FlowGraph";
 import type { OperationInfo } from "../gen/OperationInfo";
 import type { StructureGraph } from "../gen/StructureGraph";
 import type { Symbol } from "../gen/Symbol";
+import { pointerBadge } from "./pointers";
 import { callGraph } from "./callGraph";
 import { type BlueprintData, type ExprData, flowToGraph } from "./flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "./structureGraph";
@@ -41,9 +42,9 @@ const flow: FlowGraph = {
     },
   ],
   edges: [
-    { from: "a", from_pin: "out", to: "b", to_pin: "in", kind: "Exec" },
-    { from: "b", from_pin: "out", to: "c", to_pin: "in", kind: "Exec" },
-    { from: "b", from_pin: "var:x", to: "c", to_pin: "use:x", kind: "Data" },
+    { from: "a", from_pin: "out", to: "b", to_pin: "in", kind: "Exec", access: null },
+    { from: "b", from_pin: "out", to: "c", to_pin: "in", kind: "Exec", access: null },
+    { from: "b", from_pin: "var:x", to: "c", to_pin: "use:x", kind: "Data", access: null },
   ],
 };
 
@@ -107,12 +108,12 @@ const opsFlow: FlowGraph = {
     },
   ],
   edges: [
-    { from: "a", from_pin: "out", to: "b", to_pin: "in", kind: "Exec" },
-    { from: "b", from_pin: "out", to: "c", to_pin: "in", kind: "Exec" },
-    { from: "c", from_pin: "out", to: "d", to_pin: "in", kind: "Exec" },
-    { from: "a", from_pin: "var:a", to: "b", to_pin: "use:a", kind: "Data" },
-    { from: "b", from_pin: "var:x", to: "c", to_pin: "use:x", kind: "Data" },
-    { from: "a", from_pin: "var:a", to: "d", to_pin: "use:a", kind: "Data" },
+    { from: "a", from_pin: "out", to: "b", to_pin: "in", kind: "Exec", access: null },
+    { from: "b", from_pin: "out", to: "c", to_pin: "in", kind: "Exec", access: null },
+    { from: "c", from_pin: "out", to: "d", to_pin: "in", kind: "Exec", access: null },
+    { from: "a", from_pin: "var:a", to: "b", to_pin: "use:a", kind: "Data", access: null },
+    { from: "b", from_pin: "var:x", to: "c", to_pin: "use:x", kind: "Data", access: null },
+    { from: "a", from_pin: "var:a", to: "d", to_pin: "use:a", kind: "Data", access: null },
   ],
 };
 
@@ -166,6 +167,16 @@ describe("flowToGraph detail levels", () => {
     const g = flowToGraph(opsFlow, { b: false }, true, { level: "operations", operations });
     expect(g.nodes.some((n) => n.id.startsWith("b/e/"))).toBe(false);
     expect(g.edges.some((x) => x.target === "b" && x.targetHandle === "use:a")).toBe(true);
+  });
+});
+
+describe("flowToGraph ownership", () => {
+  it("passes how a value travels (Rust) to the data wire", () => {
+    const owned: FlowGraph = { ...flow, edges: flow.edges.map((e) => (e.kind === "Data" ? { ...e, access: "Borrow" } : e)) };
+    const data = flowToGraph(owned, {}, true).edges.find((e) => e.kind === "data");
+    expect((data?.data as { access: string }).access).toBe("Borrow");
+    const plain = flowToGraph(flow, {}, true).edges.find((e) => e.kind === "data");
+    expect((plain?.data as { access: string | null }).access).toBeNull();
   });
 });
 
@@ -265,5 +276,14 @@ describe("callGraph", () => {
 
   it("limits the depth", () => {
     expect(callGraph(index, "App.S.Ship()", 1).nodes).toHaveLength(3);
+  });
+});
+
+describe("pointerBadge", () => {
+  it("names Rust smart pointers and guards", () => {
+    expect(pointerBadge("Rc<RefCell<Vec<u32>>>")?.label).toBe("Rc");
+    expect(pointerBadge("MutexGuard<…>")?.label).toBe("lock");
+    expect(pointerBadge("&mut String")?.label).toBe("&mut");
+    expect(pointerBadge("String")).toBeUndefined();
   });
 });

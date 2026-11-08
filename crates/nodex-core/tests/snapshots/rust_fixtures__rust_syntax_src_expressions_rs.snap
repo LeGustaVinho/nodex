@@ -1,0 +1,68 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::expressions::expressions
+Entry — when expressions(a, b, name, flags) is called
+Var — sum = a + b * 2 - (a % 3) / 1
+Var — power = 2_i64.pow(3)
+Var — bits = (flags & 0b1010) | (flags ^ 1) << 2 >> 1
+Var — not_bits = !flags
+Var — logic = a > b && !(a == b) || a <= 0 && b >= 0
+Var — negative = -a
+Var — float = 1.5_f64 * 2.0
+Var — ch = 'x'
+Var — raw = r"raw\text"
+Var — byte = b'a'
+Var — as_float = a as f64 / 3.0
+Var — range = 0..=10
+Var — tuple = (a, name, 3.0)
+Destructure — unpack (left, right) from (tuple.0, tuple.2)
+Var — array = [1, 2, 3]
+Var — zeros = [0u8; 4]
+Var — indexed = array[1]
+Var — slice = &array[1..]
+Var — point = Point { x: 1.0, y: 2.0 }
+Var — moved = Point { y: 5.0, ..point }
+Var — pair = Pair(1, 2)
+Var — max = a.max(b)
+Var — abs = negative.abs()
+Var — upper = name.to_uppercase()
+Var — trimmed = name.trim()
+Var — len = name.len()
+Var — parsed = "12".parse().unwrap_or_default()
+Var — text = a.to_string()
+Var — joined = format!("{name}: {sum} {}", point.x)
+Var — shared = Rc::new(RefCell::new(vec![1]))
+Call — shared.borrow_mut().push(2)
+Var — cloned = Rc::clone(&shared)
+Var — owned = String::new()
+Call — owned.push_str(name)
+Assign — add "!" to owned
+Var — mutable = &mut owned
+Call — mutable.push('?')
+Var — reference = &owned
+Var — deref = *reference == "x"
+Var — optional = Some(a).map(|v| v + 1).unwrap_or(0)
+Var — missing = optional == 0 || name.is_empty()
+Var — block = the value the block below gives
+Var — inner = a * 2
+Assign — block = inner + 1
+Var — choice = if a > b then … else …
+Var — matched = match a (2 cases)
+Var — looped = the value the loop below gives
+Loop.Infinite — repeat forever
+  body:
+    Break — leave the loop with 5 (looped takes it)
+Var — neg = -1
+Var — unit = ()
+Return — return joined
+== crate::expressions::Point::distance
+Entry — when distance(other) is called
+Return — return ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+== crate::expressions::Point::translate
+Entry — when translate(dx) is called
+SetMember — add dx to self.x
+== crate::expressions::Point::into_tuple
+Entry — when into_tuple() is called
+Return — return (self.x, self.y)

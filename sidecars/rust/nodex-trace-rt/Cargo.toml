@@ -1,0 +1,12 @@
+[package]
+name = "nodex-trace-rt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Nodex trace runtime for Rust programs (std only)"
+publish = false
+
+[dependencies]
+
+# Not part of the Nodex workspace: instrumented programs depend on it by path.
+[workspace]

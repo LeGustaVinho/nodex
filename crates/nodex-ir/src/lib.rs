@@ -485,6 +485,24 @@ pub struct FlowEdge {
     pub to: NodeId,
     pub to_pin: String,
     pub kind: FlowEdgeKind,
+    /// How a data wire hands its value over, for languages with ownership (Rust). `None` when
+    /// the language does not say (C#, TypeScript).
+    #[serde(default)]
+    pub access: Option<Access>,
+}
+
+/// How a value travels along a data wire.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[ts(export)]
+pub enum Access {
+    /// The value moves: the source can no longer use it.
+    Move,
+    /// A copy is made (numbers, booleans, `Copy` types); the source keeps its value.
+    Copy,
+    /// Read-only borrow (`&x`): the owner keeps the value.
+    Borrow,
+    /// Exclusive borrow for changing it (`&mut x`).
+    BorrowMut,
 }
 
 /// The Blueprint graph of one function, method, constructor or accessor body.

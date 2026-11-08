@@ -1,0 +1,22 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::patterns::patterns
+Entry — when patterns(shape, values, Point { x, y }) is called
+Var — area = match shape (4 cases)
+Destructure — if values matches [first, .., last], unpack it
+  else:
+    Return — return area
+Destructure — if *first matches total @ 1..=9, unpack it
+  else:
+    Return — return 0.0
+Match — match values
+  case:
+  case:
+    Call — print "{one}"
+  case:
+    Call — print "{head} {}", tail.len()
+Destructure — unpack (ref a, mut b) from (x, y)
+Assign — add *a to b
+Return — return area + b + *last as f64 + total as f64

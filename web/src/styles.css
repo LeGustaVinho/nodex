@@ -261,3 +261,4 @@ button.run.stop { background: #5a2323; border-color: #8a3434; }
 .op-langs td { padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .op-langs td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
 .op-langs tr.current td:first-child { color: var(--accent-ui); }
+.pin-ptr { font-size: 9.5px; padding: 0 4px; border-radius: 3px; border: 1px solid #5d6b7d; color: #c9d3df; background: #1b2028; white-space: nowrap; }

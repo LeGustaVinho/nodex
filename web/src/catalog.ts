@@ -44,6 +44,22 @@ export function flavorInfo(catalog: Catalog | undefined, flavor: string, languag
     return { label: flavor, explain: "Only compiled when this build condition holds (for example DEBUG or UNITY_EDITOR); other builds do not contain this code." };
   if (flavor.startsWith("extends:"))
     return { label: `extends ${flavor.slice(8)}`, explain: "A member added to an existing type from outside it; it is called as if it belonged to that type." };
+  if (flavor.startsWith("derive:"))
+    return { label: `#[derive(${flavor.slice(7)})]`, explain: `The compiler writes the ${flavor.slice(7)} trait for this type automatically.` };
+  if (flavor.startsWith("impl:"))
+    return { label: `impl ${flavor.slice(5)}`, explain: `This type implements the ${flavor.slice(5)} trait.` };
+  if (flavor.startsWith("from-trait:"))
+    return { label: `from ${flavor.slice(11)}`, explain: `This method is the type's implementation of the ${flavor.slice(11)} trait.` };
+  if (flavor.startsWith("#cfg("))
+    return { label: flavor.slice(1), explain: "Only compiled when this condition holds (a feature, the target system, or tests)." };
+  if (flavor.startsWith("pub("))
+    return { label: flavor, explain: "Visible only inside the given scope (pub(crate): this crate; pub(super): the parent module)." };
+  if (flavor.startsWith("edition-"))
+    return { label: `edition ${flavor.slice(8)}`, explain: "The Rust edition: which version of the language rules the crate uses." };
+  if (flavor.startsWith("turbofish:"))
+    return { label: `::<${flavor.slice(10)}>`, explain: "The type is written explicitly at the call (the turbofish), for example parse::<i32>()." };
+  if (flavor.startsWith("ctor:"))
+    return { label: flavor.slice(5), explain: "Creates the value through an associated function (a constructor by convention)." };
   if (flavor.startsWith("label:"))
     return { label: `label ${flavor.slice(6)}`, explain: "A named statement: `break`/`continue` (and `goto` in C#) can target it by name." };
   if (flavor.startsWith("discriminated:"))

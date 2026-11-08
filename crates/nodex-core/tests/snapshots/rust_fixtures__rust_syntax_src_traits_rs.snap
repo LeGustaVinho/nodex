@@ -1,0 +1,49 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::traits::Container::first
+Entry — when first() is called
+Return — return self.get(0)
+== crate::traits::Stack::get
+Entry — when get(index) is called
+Return — return self.items.get(index)
+== crate::traits::Stack::map_all
+Entry — when map_all(f) is called
+Return — return self.items → iter() → map(f) → collect()
+== crate::traits::Stack::new
+Entry — when new() is called
+Return — return Stack { items: Vec::new() }
+== crate::traits::Stack::push
+Entry — when push(item) is called
+Call — self.items.push(item)
+Return — return self
+== crate::traits::Stack::fmt
+EventEntry — when a Stack is formatted as text ({} in println!, format!, to_string)
+Loop.ForEach — for each item in &self.items
+  body:
+    Call — write!(f, "{item} ")?
+      error:
+Return — return Ok(())
+== crate::traits::Money::add
+EventEntry — when + is used on a Money
+Return — return Money(self.0 + other.0)
+== crate::traits::Money::from
+EventEntry — when a value is converted into a Money (From / .into())
+Return — return Money(v)
+== crate::traits::Buffer::size
+Entry — when size() is called
+Return — return N
+== crate::traits::describe
+Entry — when describe(items) is called
+Return — return format!("{:?}", items.first())
+== crate::traits::largest
+Entry — when largest(items) is called
+Var — best = items[0]
+Loop.ForEach — for each &item in items
+  body:
+    Branch — if item > best
+      true:
+        Assign — set best to item
+      false:
+Return — return best

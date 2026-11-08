@@ -12,6 +12,7 @@ const FLAVORS: &[(&str, &str)] = &[
     ("common", include_str!("../../../catalog/flavors/common.toml")),
     ("csharp", include_str!("../../../catalog/flavors/csharp.toml")),
     ("typescript", include_str!("../../../catalog/flavors/typescript.toml")),
+    ("rust", include_str!("../../../catalog/flavors/rust.toml")),
 ];
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]

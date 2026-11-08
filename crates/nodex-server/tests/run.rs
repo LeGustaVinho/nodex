@@ -124,3 +124,54 @@ async fn runs_the_typescript_sample_and_records_its_execution() {
     let listener = "src/main.main.on 'shipped'";
     assert_eq!(snapshot.calls.get(listener), Some(&1), "{:?}", snapshot.calls.keys().collect::<Vec<_>>());
 }
+
+/// Same scenario for the Rust sample: needs cargo, then
+/// `cargo test -p nodex-server --test run -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs cargo (builds an instrumented copy of the Rust sample)"]
+async fn runs_the_rust_sample_and_records_its_execution() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust/Sample");
+    let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(nodex_lang_rust::RustFrontend)];
+    let project = Project::open(&root, frontends).unwrap();
+    let state = AppState::new(project, "t".into(), 7460, Vec::new());
+    let mut events = state.events.subscribe();
+
+    runner::start(&state).expect("run starts");
+    let mut output = Vec::new();
+    let mut final_state = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+    while final_state.is_none() {
+        let event = tokio::time::timeout_at(deadline, events.recv()).await.expect("run finishes in time").expect("event");
+        match event {
+            ServerEvent::RunOutput { lines } => output.extend(lines.into_iter().map(|l| l.text)),
+            ServerEvent::RunStatus(s) if matches!(s.state, RunState::Exited | RunState::Failed) => final_state = Some(s),
+            _ => {}
+        }
+    }
+    let status = final_state.unwrap();
+    assert_eq!(status.state, RunState::Exited, "{status:?}\n{}", output.join("\n"));
+    assert_eq!(status.exit_code, Some(0));
+    assert!(output.iter().any(|l| l == "Total: 195"), "{}", output.join("\n"));
+
+    let snapshot = state.run.snapshot().trace.expect("trace recorded");
+    let total = "crate::services::order_service::OrderService::total_for_customer";
+    assert_eq!(snapshot.calls.get(total), Some(&1), "{:?}", snapshot.calls);
+    let counts = &snapshot.counts[total];
+    assert!(counts.values().any(|&c| c == 3), "the loop body ran for each order: {counts:?}");
+    assert_eq!(snapshot.vars[total].get("total").map(String::as_str), Some("195"), "{:?}", snapshot.vars[total]);
+
+    let ship = "crate::services::order_service::OrderService::ship";
+    assert_eq!(snapshot.calls.get(ship), Some(&2));
+    assert!(snapshot.vars[ship].get("shipped").is_some_and(|v| v.contains("Order {")), "{:?}", snapshot.vars[ship]);
+
+    // The listener closure has its own Blueprint and runs once (order 1 ships); the worker
+    // closure runs on another thread.
+    let listener = "crate::main::on_shipped callback";
+    assert_eq!(snapshot.calls.get(listener), Some(&1), "{:?}", snapshot.calls.keys().collect::<Vec<_>>());
+    let worker = "crate::main::spawn callback";
+    assert_eq!(snapshot.calls.get(worker), Some(&1));
+    let calls = state.run.recorder().unwrap().lock().unwrap().calls(10_000);
+    assert!(calls.spans.iter().any(|s| s.flow == total && s.depth > 0 && !s.open));
+    let threads: std::collections::BTreeSet<i32> = calls.spans.iter().map(|s| s.thread).collect();
+    assert!(threads.len() >= 2, "the worker ran on its own thread: {threads:?}");
+}

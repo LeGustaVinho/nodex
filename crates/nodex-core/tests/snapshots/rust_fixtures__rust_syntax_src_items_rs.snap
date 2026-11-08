@@ -1,0 +1,18 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::items::double
+Entry — when double(x) is called
+Return — return x * 2
+== crate::items::outer::helper
+Entry — when local function helper(y) is called
+Return — return y + 1
+== crate::items::outer
+Entry — when outer(x) is called
+Lambda — define function helper(y)
+Var — local = Local { value: helper(x) }
+Return — return local.value
+== crate::items::tests::doubles
+Entry — when the test doubles runs
+Call — check that double(2) equals 4

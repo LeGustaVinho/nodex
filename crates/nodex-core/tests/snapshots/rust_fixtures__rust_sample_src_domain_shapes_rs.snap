@@ -1,0 +1,19 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::domain::shapes::Shape::name
+Entry — when name() is called
+Return — return "shape".to_owned()
+== crate::domain::shapes::Circle::area
+Entry — when area() is called
+Return — return std::f64::consts::PI * self.radius * self.radius
+== crate::domain::shapes::Circle::name
+Entry — when name() is called
+Return — return "circle".to_owned()
+== crate::domain::shapes::Square::area
+Entry — when area() is called
+Return — return self.0 * self.0
+== crate::domain::shapes::total_area
+Entry — when total_area(shapes) is called
+Return — return shapes → iter() → map(|s| s.area()) → sum()

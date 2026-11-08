@@ -1,6 +1,7 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
 import { SHAPE_ICON, conceptColor, conceptInfo, flavorLabel, operationInfo, typeColor, useCatalog } from "../catalog";
+import { pointerBadge } from "../graph/pointers";
 import type { Pin } from "../gen/Pin";
 import type { BlueprintData } from "../graph/flowGraph";
 import { useUi } from "../store";
@@ -9,6 +10,7 @@ import { useTrace } from "../trace";
 function PinView({ pin, side, value }: { pin: Pin; side: "in" | "out"; value?: string }) {
   const exec = pin.kind === "Exec";
   const color = exec ? "#e8e8e8" : typeColor(pin.ty);
+  const pointer = exec ? undefined : pointerBadge(pin.ty);
   return (
     <div className={`pin pin-${side} ${exec ? "pin-exec" : "pin-data"}`} title={pin.ty ? `${pin.label}: ${pin.ty}` : pin.label}>
       <Handle
@@ -20,6 +22,11 @@ function PinView({ pin, side, value }: { pin: Pin; side: "in" | "out"; value?: s
         isConnectable={false}
       />
       <span className="pin-label">{pin.label}</span>
+      {pointer && (
+        <span className="pin-ptr" title={pointer.explain}>
+          {pointer.label}
+        </span>
+      )}
       {!exec && value !== undefined ? (
         <span className="pin-value" title={value}>
           {value}

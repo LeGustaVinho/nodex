@@ -1,0 +1,39 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::ownership::Guard::drop
+EventEntry — Rust calls this when a Guard value goes out of scope or is dropped
+Call — print "closing {}", self.name
+== crate::ownership::ownership
+Entry — when ownership(text) is called
+Var — owned = text
+Var — borrowed = &owned
+Var — len = borrowed.len()
+Var — buffer = String::new()
+Var — writer = &mut buffer
+Call — writer.push_str(&owned)
+Var — moved = buffer
+Var — copied = len
+Var — again = copied
+Var — cloned = moved.clone()
+Var — boxed = Box::new(5)
+Var — shared = Rc::new(RefCell::new(Vec::<u32>::new()))
+Var — other = Rc::clone(&shared)
+Call — other.borrow_mut().push(*boxed)
+Var — counter = Arc::new(Mutex::new(0))
+Var — lock = counter.lock().unwrap()
+Assign — increase *lock by 1
+Call — unlock: lock goes out of scope at the end of its block
+Var — value = 1
+Var — value₂ = value + 1
+Var — value₃ = value * 10
+Var — guard = Guard { name: cloned }
+Call — drop guard (free it now)
+Return — return again + value + shared.borrow().len()
+== crate::ownership::scoped
+Entry — when scoped() is called
+Var — _outer = Guard { name: "outer".into() }
+Var — _inner = Guard { name: "inner".into() }
+Call — drop _inner at the end of its block (runs Guard's drop)
+Call — drop _outer at the end of its block (runs Guard's drop)

@@ -1,0 +1,7 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::nested::deeper::answer
+Entry — when answer() is called
+Return — return 42

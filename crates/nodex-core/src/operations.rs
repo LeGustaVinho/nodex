@@ -225,7 +225,7 @@ fn library_target(target: &str, language: Language) -> bool {
             let bare = container.split('<').next().unwrap_or(container);
             TS_LIBRARY.contains(&bare) || bare.starts_with("NodeJS") || bare.is_empty()
         }
-        Language::Rust => true,
+        Language::Rust => ["std::", "core::", "alloc::"].iter().any(|p| head.starts_with(p)),
     }
 }
 

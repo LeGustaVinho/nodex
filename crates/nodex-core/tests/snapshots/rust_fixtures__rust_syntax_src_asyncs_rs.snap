@@ -1,0 +1,46 @@
+---
+source: crates/nodex-core/tests/rust_fixtures.rs
+expression: outline_file(ir)
+---
+== crate::asyncs::block_on
+Entry — when block_on(future) is called
+Var — future = Box::pin(future)
+Var — waker = noop_waker()
+Var — cx = Context::from_waker(&waker)
+Loop.Infinite — repeat forever
+  body:
+    Branch — if future.as_mut().poll(&mut cx) matches Poll::Ready(v)
+      true:
+        Return — return v
+      false:
+== crate::asyncs::noop_waker::clone
+Entry — when local function clone(_) is called
+Return — return RawWaker::new(std::ptr::null(), &VTABLE)
+== crate::asyncs::noop_waker::noop
+Entry — when local function noop(_) is called
+== crate::asyncs::noop_waker
+Entry — when noop_waker() is called
+Lambda — define function clone(_)
+Lambda — define function noop(_)
+Scope — run this block without the compiler's safety checks
+  body:
+    Return — return Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE))
+== crate::asyncs::fetch
+Entry — when fetch(id) is called
+Return — return id * 10
+== crate::asyncs::total
+Entry — when total(ids) is called
+Var — sum = 0
+Loop.ForEach — for each id in ids
+  body:
+    Assign — add fetch(id).await to sum
+Await — wait for Ready(0)
+Var — extra = async { 1 }.await
+Return — return sum + extra
+== crate::asyncs::run
+Entry — when run() is called
+Var — future = async move { let a = fetch(1).await; a …
+Return — return block_on(future) + block_on(total(vec![1, 2]))
+== crate::asyncs::Ready::poll
+EventEntry — when the async runtime checks whether the Ready is ready
+Return — return Poll::Ready(self.0)

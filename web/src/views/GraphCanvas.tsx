@@ -3,6 +3,7 @@ import {
   BackgroundVariant,
   Controls,
   type Edge,
+  type EdgeTypes,
   MarkerType,
   MiniMap,
   type Node,
@@ -20,6 +21,7 @@ import { typeColor } from "../catalog";
 import { BlueprintNode } from "../components/BlueprintNode";
 import { CallNode } from "../components/CallNode";
 import { ExprNode } from "../components/ExprNode";
+import { OwnershipEdge } from "../components/OwnershipEdge";
 import { NamespaceNode, TypeCard } from "../components/StructureNodes";
 import { layoutGraph } from "../graph/layout";
 import type { GEdge, GGraph } from "../graph/model";
@@ -32,14 +34,20 @@ const nodeTypes: NodeTypes = {
   callNode: CallNode,
 };
 
+const edgeTypes: EdgeTypes = { ownership: OwnershipEdge };
+
 /** Visual style of each edge kind. */
 export function edgeStyle(e: GEdge): Partial<Edge> {
   const ty = (e.data as { ty?: string | null } | undefined)?.ty;
   switch (e.kind) {
     case "exec":
       return { style: { stroke: "#e8e8e8", strokeWidth: 2.4 }, className: "edge-exec" };
-    case "data":
+    case "data": {
+      // Rust: how the value travels (move, copy, borrow) shapes the wire.
+      const access = (e.data as { access?: string | null } | undefined)?.access;
+      if (access) return { type: "ownership", data: { ty: ty ?? null, access }, className: "edge-data" };
       return { style: { stroke: typeColor(ty), strokeWidth: 1.6, opacity: 0.75 }, className: "edge-data" };
+    }
     case "expr":
       return { style: { stroke: "#8fa3b8", strokeWidth: 1.3 } };
     case "inherits":
@@ -187,6 +195,7 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onNodeClick={(_, n) => onNodeClick?.(n)}
         onNodeDoubleClick={(_, n) => onNodeDoubleClick?.(n)}

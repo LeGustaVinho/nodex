@@ -165,6 +165,7 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
     if (!isExec && !showDataWires) continue;
     if (!isExec && redirected.has(`${e.to} ${e.to_pin}`)) continue;
     const ty = isExec ? null : (flow.nodes.find((n) => n.id === e.from)?.outputs.find((p) => p.id === e.from_pin)?.ty ?? null);
+    const access = isExec ? null : (e.access ?? null);
     edges.push({
       id: `${e.from}:${e.from_pin}->${e.to}:${e.to_pin}`,
       source: e.from,
@@ -173,7 +174,7 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
       targetHandle: e.to_pin,
       kind: isExec ? "exec" : "data",
       layout: isExec,
-      data: { ty },
+      data: { ty, access },
     });
   }
   return { nodes, edges, direction: "RIGHT" };
@@ -189,7 +190,7 @@ interface TreeCtx {
   level: DetailLevel;
   operations: Record<string, OperationInfo>;
   /** Local name → the pin that defines it (`var:x` of an earlier statement or the entry). */
-  locals: Map<string, { from: string; pin: string; ty: string | null }>;
+  locals: Map<string, { from: string; pin: string; ty: string | null; access: string | null }>;
   nodes: GNode[];
   edges: GEdge[];
   redirected: Set<string>;
@@ -198,12 +199,12 @@ interface TreeCtx {
 }
 
 /** Locals a statement reads, from its `use:x` data edges. */
-function localsOf(flow: FlowGraph, nodeId: string): Map<string, { from: string; pin: string; ty: string | null }> {
-  const out = new Map<string, { from: string; pin: string; ty: string | null }>();
+function localsOf(flow: FlowGraph, nodeId: string): Map<string, { from: string; pin: string; ty: string | null; access: string | null }> {
+  const out = new Map<string, { from: string; pin: string; ty: string | null; access: string | null }>();
   for (const e of flow.edges) {
     if (e.kind !== "Data" || e.to !== nodeId || !e.to_pin.startsWith("use:")) continue;
     const ty = flow.nodes.find((n) => n.id === e.from)?.outputs.find((p) => p.id === e.from_pin)?.ty ?? null;
-    out.set(e.to_pin.slice(4), { from: e.from, pin: e.from_pin, ty });
+    out.set(e.to_pin.slice(4), { from: e.from, pin: e.from_pin, ty, access: e.access ?? null });
   }
   return out;
 }
@@ -232,7 +233,8 @@ interface Subtree {
 function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"): { pins: ExprPin[]; subtrees: Subtree[] } {
   const op = expr.op ? ctx.operations[expr.op] : undefined;
   const kids = operands(expr, op);
-  const names = op ? op.inputs : (CONCEPT_PINS[expr.concept] ?? []).map((n) => `${n}:`);
+  // An assignment keeps Target/Value even when it applies an operation (`total += x`).
+  const names = op && expr.concept !== "Assign" ? op.inputs : (CONCEPT_PINS[expr.concept] ?? []).map((n) => `${n}:`);
   const pins: ExprPin[] = [];
   const subtrees: Subtree[] = [];
   kids.forEach((child, i) => {
@@ -280,7 +282,7 @@ function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"):
             targetHandle: pinId,
             kind: "data",
             layout: false,
-            data: { ty: local.ty },
+            data: { ty: local.ty, access: local.access },
           });
         }
         return;
