@@ -83,6 +83,12 @@ export class Hierarchy {
     // A parent that is not part of the tree (external) makes the item a root.
     for (const item of this.items.values()) if (item.parent && !this.items.has(item.parent)) item.parent = null;
     this.link();
+    // Namespaces and modules with nothing declared in them (`(global)` for usings only) are noise.
+    for (const item of [...this.items.values()]) {
+      const scope = !item.symbol || item.kind === "Namespace" || item.kind === "Module";
+      if (scope && item.children.length === 0) this.items.delete(item.id);
+    }
+    this.link();
     this.compact();
   }
 
@@ -289,7 +295,7 @@ export function hierarchyGraph(
     weight: r.count,
     data: r,
   }));
-  return { nodes, edges, direction: "DOWN", truncated };
+  return { nodes, edges, direction: "DOWN", aspectRatio: 1.8, truncated };
 }
 
 /** Relation groups the Hierarchy and Knowledge views can toggle. */

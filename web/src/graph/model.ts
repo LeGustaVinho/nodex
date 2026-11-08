@@ -48,6 +48,8 @@ export interface GGraph {
   nodes: GNode[];
   edges: GEdge[];
   direction: "RIGHT" | "DOWN";
+  /** Width/height ratio ELK aims for when it packs unconnected parts side by side. */
+  aspectRatio?: number;
 }
 
 /** Rough text width-based line count, used to estimate node heights before rendering. */

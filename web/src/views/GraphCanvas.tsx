@@ -128,9 +128,11 @@ interface Props {
   fitFirst?: number;
   /** Remember positions the user drags nodes to (off for views whose shape changes often). */
   savePositions?: boolean;
+  /** Fit the whole graph after every layout, not only the first (views that grow in place). */
+  refit?: boolean;
 }
 
-function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, emptyText, fitFirst, savePositions = true }: Props) {
+function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, emptyText, fitFirst, savePositions = true, refit = false }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [busy, setBusy] = useState(false);
@@ -188,10 +190,11 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
             ...edgeStyle(e),
           })),
         );
-        if (fittedKey.current !== layoutKey) {
+        if (fittedKey.current !== layoutKey || refit) {
           fittedKey.current = layoutKey;
           // Wide Blueprints: start readable at the entry instead of shrinking everything.
-          pendingFit.current = fitFirst ? graph.nodes.slice(0, fitFirst).map((n) => ({ id: n.id })) : [];
+          const focus = refit && selectedId && graph.nodes.some((n) => n.id === selectedId) ? [{ id: selectedId }] : null;
+          pendingFit.current = focus ?? (fitFirst ? graph.nodes.slice(0, fitFirst).map((n) => ({ id: n.id })) : []);
         }
       })
       .catch((err) => console.error("layout failed", err))

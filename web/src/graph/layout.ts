@@ -83,6 +83,7 @@ export async function layoutGraph(g: GGraph): Promise<Positions> {
       "elk.spacing.componentComponent": "60",
       "elk.layered.compaction.postCompaction.strategy": "LEFT",
       ...(nested ? { "elk.hierarchyHandling": "INCLUDE_CHILDREN" } : {}),
+      ...(g.aspectRatio ? { "elk.aspectRatio": String(g.aspectRatio) } : {}),
     },
     children,
     edges,

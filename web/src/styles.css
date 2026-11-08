@@ -37,7 +37,7 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .tabs { display: flex; gap: 4px; }
 .tabs button { background: transparent; border-color: transparent; }
 .tabs button.active { background: var(--panel-2); border-color: var(--line); color: #fff; }
-.context { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.context { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .crumb { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 1px 10px; font-family: var(--mono); font-size: 12px; }
 .chip-x { border: 0; background: transparent; padding: 0 2px; }
@@ -281,7 +281,7 @@ button.run.stop { background: #5a2323; border-color: #8a3434; }
 .hgroup-head .hnode-label { font-weight: 600; }
 .hgroup-caret { padding: 0 4px; line-height: 16px; font-size: 10px; background: transparent; border-color: transparent; }
 .canvas-note { position: absolute; left: 50%; transform: translateX(-50%); top: 10px; z-index: 5; background: #3a2f12; border: 1px solid #6b5420; color: #f5d78a; border-radius: 6px; padding: 3px 10px; font-size: 12px; }
-.legend { position: absolute; left: 12px; bottom: 12px; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: 60%; background: rgba(25, 28, 34, 0.9); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font-size: 11px; color: var(--muted); }
+.legend { position: absolute; left: 60px; bottom: 12px; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: 60%; background: rgba(25, 28, 34, 0.9); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font-size: 11px; color: var(--muted); }
 .legend-item { display: inline-flex; align-items: center; gap: 5px; }
 
 .overview { position: absolute; inset: 0; overflow: auto; padding: 16px 20px 28px; }

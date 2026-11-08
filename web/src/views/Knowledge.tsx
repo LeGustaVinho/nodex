@@ -59,6 +59,7 @@ export function HierarchyView() {
         graph={graph}
         layoutKey="hierarchy"
         savePositions={false}
+        refit
         selectedId={selectedId}
         onNodeClick={(n) => {
           const { item } = n.data as unknown as HierarchyNodeData;
