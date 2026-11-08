@@ -40,6 +40,9 @@ interface UiState {
   /** Another project was opened: forget everything about the old one. */
   resetForProject: () => void;
   connected: boolean;
+  /** The Environment dialog (installed toolchains) is open. */
+  environmentOpen: boolean;
+  setEnvironmentOpen: (open: boolean) => void;
   /** Containers open in the Hierarchy view. */
   treeExpanded: Record<string, boolean>;
   /** Relation groups drawn by the Hierarchy view (`calls`, `types`, `imports`, `knowledge`). */
@@ -145,6 +148,8 @@ export const useUi = create<UiState>((set) => ({
     });
   },
   connected: false,
+  environmentOpen: false,
+  setEnvironmentOpen: (environmentOpen) => set({ environmentOpen }),
   treeExpanded: {},
   relations: ["calls", "types", "knowledge"],
   paletteOpen: false,

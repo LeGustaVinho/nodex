@@ -53,6 +53,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .invoke_handler(tauri::generate_handler![save_export])
         .setup(setup)
         .on_menu_event(menu::handle)
         .on_window_event(on_window_event)
@@ -91,7 +92,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .permission("core:default")
             .permission("dialog:default")
             .permission("opener:default")
-            .permission("clipboard-manager:allow-write-text"),
+            .permission("clipboard-manager:allow-write-text")
+            .permission("allow-save-export"),
     )?;
     let state = server.state.clone();
     let token = server.token.clone();
@@ -223,6 +225,61 @@ fn shutdown(app: &AppHandle) {
     if let Some(server) = server {
         tauri::async_runtime::block_on(server.shutdown());
     }
+}
+
+/// Saves an export (a UML diagram as SVG, PNG, Mermaid…) where the user chooses in a native
+/// Save dialog. The page sends the bytes and a suggested name (`x-file-name`, URI-encoded); it
+/// never chooses the path. Returns the saved path, or `None` when the user cancels.
+#[tauri::command]
+async fn save_export(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Option<String>, String> {
+    let name = request
+        .headers()
+        .get("x-file-name")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "export".to_owned());
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("the export must be sent as raw bytes".into());
+    };
+    let bytes = bytes.clone();
+    let extension = Path::new(&name).extension().and_then(|e| e.to_str()).map(str::to_owned);
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file().set_title("Export").set_file_name(&name);
+    if let Some(ext) = &extension {
+        dialog = dialog.add_filter(ext.to_uppercase(), &[ext.as_str()]);
+    }
+    if let Some(w) = app.get_webview_window(MAIN) {
+        dialog = dialog.set_parent(&w);
+    }
+    dialog.save_file(move |path| {
+        let _ = tx.send(path);
+    });
+    let Some(path) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+    std::fs::write(&path, bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    tracing::info!(path = %path.display(), "exported");
+    Ok(Some(path.display().to_string()))
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(b) = text.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(b);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn percent_encode(text: &str) -> String {

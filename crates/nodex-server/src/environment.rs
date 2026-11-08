@@ -140,9 +140,24 @@ fn rust_analyzer() -> ToolStatus {
     t
 }
 
-/// Unity Hub's default editor folders.
+/// Unity Hub's editor folders: the one chosen in its settings (`secondaryInstallPath.json`, a
+/// JSON string) and the default ones.
 fn unity_editor_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+    let hub_config = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("UnityHub"))
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/UnityHub"))
+    } else {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/UnityHub"))
+    };
+    if let Some(chosen) = hub_config
+        .and_then(|c| std::fs::read_to_string(c.join("secondaryInstallPath.json")).ok())
+        .and_then(|t| serde_json::from_str::<String>(&t).ok())
+        .filter(|p| !p.trim().is_empty())
+    {
+        dirs.push(PathBuf::from(chosen));
+    }
     if cfg!(windows) {
         for var in ["ProgramFiles", "ProgramW6432"] {
             if let Some(p) = std::env::var_os(var) {
@@ -171,13 +186,14 @@ fn unity() -> ToolStatus {
         .filter_map(|d| std::fs::read_dir(d).ok())
         .flatten()
         .filter_map(Result::ok)
-        .filter(|e| e.path().is_dir())
+        // An editor folder holds the Editor (Windows/Linux) or Unity.app (macOS).
+        .filter(|e| e.path().join("Editor").is_dir() || e.path().join("Unity.app").is_dir())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     versions.sort();
     versions.dedup();
     if versions.is_empty() {
-        t.hint = Some("no editor found in Unity Hub's default folder (one installed elsewhere still works)".into());
+        t.hint = Some("no editor found in Unity Hub's install folders (one installed elsewhere still works)".into());
     } else {
         t.found = true;
         t.version = Some(versions.join(", "));

@@ -8,6 +8,8 @@ import { elementIdOf, kindLabel, scopeLabel } from "../uml/uml";
 import { UmlControls } from "../uml/UmlControls";
 import { useUmlDiagram } from "../uml/useUmlDiagram";
 import { ConfidenceToggles } from "../components/ConfidenceToggles";
+import { saveFile } from "../desktop";
+import { errorText, toast } from "../toast";
 import { useStructure } from "./Views";
 
 type Mermaid = typeof import("mermaid").default;
@@ -160,13 +162,10 @@ export function UmlView() {
   };
   const symbolOf = (e: UmlElement) => (e.symbol && !e.symbol.startsWith("dir:") ? index?.byId.get(e.symbol) : undefined);
 
-  const download = (name: string, type: string, content: BlobPart) => {
-    const url = URL.createObjectURL(new Blob([content], { type }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const download = (name: string, type: string, content: Blob | string) => {
+    saveFile(name, type, content)
+      .then((saved) => saved && toast.info(`Saved ${saved}`))
+      .catch((e: unknown) => toast.error(`Could not save ${name}: ${errorText(e)}`));
   };
   const base = `${kind.toLowerCase()}-${scopeLabel(scope).replace(/[^\w.-]+/g, "_")}`;
   const exportPng = () => {
@@ -244,13 +243,13 @@ export function UmlView() {
         <button disabled={!data} onClick={() => data && void navigator.clipboard.writeText("```mermaid\n" + data.mermaid + "```\n")} title="Copy as a Markdown block">
           Markdown
         </button>
-        <button disabled={!data} onClick={() => data && download(`${base}.mmd`, "text/plain", data.mermaid)} title="Download the Mermaid file">
+        <button disabled={!data} onClick={() => data && download(`${base}.mmd`, "text/plain", data.mermaid)} title="Save the Mermaid file">
           .mmd
         </button>
-        <button disabled={!svg} onClick={() => download(`${base}.svg`, "image/svg+xml", svg)} title="Download as SVG">
+        <button disabled={!svg} onClick={() => download(`${base}.svg`, "image/svg+xml", svg)} title="Save as SVG">
           .svg
         </button>
-        <button disabled={!svg} onClick={exportPng} title="Download as PNG">
+        <button disabled={!svg} onClick={exportPng} title="Save as PNG">
           .png
         </button>
       </div>

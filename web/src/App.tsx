@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DETAIL_LEVELS } from "./graph/flowGraph";
-import { useEffect, useState } from "react";
-import { ApiError, api, connectEvents, token } from "./api";
-import { CodePanel } from "./panels/CodePanel";
+import { Suspense, lazy, useEffect, useState } from "react";
+import { ApiError, api, connectEvents, isDesktop, token } from "./api";
 import { ConsolePanel, RunButton } from "./panels/RunPanel";
 import { OpenDialog } from "./panels/OpenDialog";
 import { DebugControls, DebugPanel } from "./panels/DebugPanel";
@@ -13,13 +12,21 @@ import { Inspector } from "./panels/Inspector";
 import { Palette } from "./panels/Palette";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
-import { TimelineView } from "./views/Timeline";
 import { RELATION_GROUPS } from "./graph/hierarchy";
-import { HierarchyView, KnowledgeView, OverviewView } from "./views/Knowledge";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
-import { UmlView } from "./views/UmlView";
 import { ConfidenceToggles } from "./components/ConfidenceToggles";
 import { ContextMenuHost } from "./components/ContextMenu";
+import { ConnectionOverlay, Toasts } from "./components/Toasts";
+import { EnvironmentDialog } from "./panels/EnvironmentDialog";
+import { Welcome } from "./panels/Welcome";
+
+// Loaded on first use: Monaco, Mermaid and the knowledge views are large.
+const CodePanel = lazy(() => import("./panels/CodePanel").then((m) => ({ default: m.CodePanel })));
+const UmlView = lazy(() => import("./views/UmlView").then((m) => ({ default: m.UmlView })));
+const TimelineView = lazy(() => import("./views/Timeline").then((m) => ({ default: m.TimelineView })));
+const OverviewView = lazy(() => import("./views/Knowledge").then((m) => ({ default: m.OverviewView })));
+const HierarchyView = lazy(() => import("./views/Knowledge").then((m) => ({ default: m.HierarchyView })));
+const KnowledgeView = lazy(() => import("./views/Knowledge").then((m) => ({ default: m.KnowledgeView })));
 
 const VIEWS: { id: View; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "What the project is: entry points, routes, hotspots, data models" },
@@ -254,9 +261,13 @@ function SemanticBadge() {
   const label = { loading: "analyzing…", ready: "semantics", unavailable: "syntax only" }[state];
   const title = status.map((s) => `${s.language}: ${s.detail}${s.messages.length ? "\n" + s.messages.join("\n") : ""}`).join("\n\n");
   return (
-    <span className={`semantic semantic-${state}`} title={title}>
+    <button
+      className={`semantic semantic-${state}`}
+      title={`${title}\n\nClick to see which tools are installed.`}
+      onClick={() => useUi.getState().setEnvironmentOpen(true)}
+    >
       {label}
-    </span>
+    </button>
   );
 }
 
@@ -280,36 +291,66 @@ export function App() {
   if (!token || (project.error instanceof ApiError && project.error.status === 401)) {
     return (
       <div className="fatal">
-        <h1>Nodex needs its session link</h1>
-        <p>Open the URL printed by <code>nodex open &lt;folder&gt;</code>. It contains a one-time token that protects your code.</p>
+        <h1>Nodex needs its session</h1>
+        {isDesktop ? (
+          <p>This window lost its connection to Nodex. Restart Nodex.</p>
+        ) : (
+          <p>
+            Open this page from Nodex: the desktop app opens it for you, and <code>nodex open &lt;folder&gt;</code> prints a link with a
+            one-time token that protects your code.
+          </p>
+        )}
       </div>
     );
   }
 
+  const overlays = (
+    <>
+      <EnvironmentDialog />
+      <Toasts />
+      <ConnectionOverlay />
+    </>
+  );
+
+  if (project.data && !project.data.open) {
+    return (
+      <>
+        <Welcome />
+        {overlays}
+      </>
+    );
+  }
+
+  const loading = <div className="empty">Loading…</div>;
   return (
     <div className="app">
       <TopBar />
       <Sidebar />
       <main className="main">
-        {view === "overview" && <OverviewView />}
-        {view === "hierarchy" && <HierarchyView />}
-        {view === "knowledge" && <KnowledgeView />}
-        {view === "uml" && <UmlView />}
-        {view === "architecture" && <ArchitectureView />}
-        {view === "types" && <TypesView />}
-        {view === "calls" && <CallsView />}
-        {view === "timeline" && <TimelineView />}
-        {view === "blueprint" && <BlueprintView />}
+        <Suspense fallback={loading}>
+          {view === "overview" && <OverviewView />}
+          {view === "hierarchy" && <HierarchyView />}
+          {view === "knowledge" && <KnowledgeView />}
+          {view === "uml" && <UmlView />}
+          {view === "architecture" && <ArchitectureView />}
+          {view === "types" && <TypesView />}
+          {view === "calls" && <CallsView />}
+          {view === "timeline" && <TimelineView />}
+          {view === "blueprint" && <BlueprintView />}
+        </Suspense>
         <ConsolePanel />
       </main>
       <section className="right">
         <UnityCard />
         <DebugPanel />
         <Inspector />
-        <CodePanel />
+        <Suspense fallback={null}>
+          <CodePanel />
+        </Suspense>
       </section>
       <Palette />
       <ContextMenuHost />
+      {overlays}
     </div>
   );
 }

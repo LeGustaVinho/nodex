@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { useUi } from "../store";
 import { useTrace } from "../trace";
+import { errorText, toast } from "../toast";
 
 /** Run/Stop control for the top bar. */
 export function RunButton() {
@@ -21,7 +22,7 @@ export function RunButton() {
           title="Build the project with tracing and run it; the graphs light up as it executes"
           onClick={() => {
             setConsoleOpen(true);
-            void api.runStart().catch((e: Error) => alert(e.message));
+            void api.runStart().catch((e: unknown) => toast.error(`Could not run: ${errorText(e)}`));
           }}
         >
           ▶ {label}

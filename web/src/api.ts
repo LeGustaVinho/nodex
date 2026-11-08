@@ -7,6 +7,7 @@ import type { AdapterProgress } from "./gen/AdapterProgress";
 import type { AdapterStatus } from "./gen/AdapterStatus";
 import type { Breakpoint } from "./gen/Breakpoint";
 import type { DebugScope } from "./gen/DebugScope";
+import type { EnvironmentReport } from "./gen/EnvironmentReport";
 import type { DebugStatus } from "./gen/DebugStatus";
 import type { DebugStopped } from "./gen/DebugStopped";
 import type { DebugVariable } from "./gen/DebugVariable";
@@ -96,6 +97,8 @@ export const api = {
   layout: (key: string) => json<Positions>(`/api/layout?key=${encodeURIComponent(key)}`),
   listFolders: (path: string) => json<FolderListing>(`/api/fs/list?path=${encodeURIComponent(path)}`),
   recent: () => json<RecentProject[]>("/api/recent"),
+  environment: () => json<EnvironmentReport>("/api/environment"),
+  closeProject: async () => (await request("/api/project/close", { method: "POST" })).json() as Promise<ProjectSummary>,
   openProject: async (path: string) =>
     (
       await request("/api/project/open", {

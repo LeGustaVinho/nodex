@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { hasNativeDialogs, pickFolder } from "../desktop";
+import { errorText } from "../toast";
 import type { FolderEntry } from "../gen/FolderEntry";
 import { breadcrumbs, folderName, kindLabel } from "../paths";
 import { useUi } from "../store";
@@ -85,6 +87,20 @@ export function OpenDialog({ onClose }: { onClose: () => void }) {
             aria-label="Folder path"
           />
           <button type="submit">Go</button>
+          {hasNativeDialogs() && (
+            <button
+              type="button"
+              disabled={!!loading}
+              title="Choose the folder with the system's folder picker"
+              onClick={() =>
+                void pickFolder()
+                  .then((p) => (p ? open(p) : undefined))
+                  .catch((e: unknown) => setError(errorText(e)))
+              }
+            >
+              Choose…
+            </button>
+          )}
         </form>
         <div className="crumbs">
           <button className="crumb-btn" onClick={() => go("")} title="Drives and home folder">
