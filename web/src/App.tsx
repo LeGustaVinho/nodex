@@ -18,6 +18,7 @@ import { ConfidenceToggles } from "./components/ConfidenceToggles";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { ConnectionOverlay, Toasts } from "./components/Toasts";
 import { EnvironmentDialog } from "./panels/EnvironmentDialog";
+import { SettingsDialog, useSettingsMenu } from "./panels/SettingsDialog";
 import { Welcome } from "./panels/Welcome";
 
 // Loaded on first use: Monaco, Mermaid and the knowledge views are large.
@@ -247,6 +248,9 @@ function TopBar() {
       <span className={`status ${ui.connected ? "on" : "off"}`} title={ui.connected ? "Live: updates on save" : "Disconnected"}>
         ●
       </span>
+      <button className="icon-button" onClick={() => ui.setSettingsOpen(true)} title="Settings (Ctrl+,)" aria-label="Settings">
+        ⚙
+      </button>
     </header>
   );
 }
@@ -285,6 +289,7 @@ function refreshRecordedDiagrams(client: ReturnType<typeof useQueryClient>) {
 
 export function App() {
   useLiveUpdates();
+  useSettingsMenu();
   const view = useUi((s) => s.view);
   const project = useQuery({ queryKey: ["project"], queryFn: api.project, retry: false });
 
@@ -307,6 +312,7 @@ export function App() {
   const overlays = (
     <>
       <EnvironmentDialog />
+      <SettingsDialog />
       <Toasts />
       <ConnectionOverlay />
     </>

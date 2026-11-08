@@ -1,0 +1,80 @@
+name: Release
+
+# Push a tag like v0.2.0 (after `cargo xtask version 0.2.0` and a CHANGELOG section for it).
+# Builds the Windows installer, signs it for the updater and publishes a GitHub release with
+# the installer, its signature and latest.json, which installed copies read to update themselves.
+#
+# Secrets:
+#   TAURI_SIGNING_PRIVATE_KEY           the updater's private key (the file made by
+#                                       `cargo tauri signer generate`); its public key is in
+#                                       crates/nodex-desktop/tauri.conf.json
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (empty if it has none)
+#
+# Code signing (Authenticode) is off: the installer is unsigned and SmartScreen warns. To turn
+# it on with Azure Trusted Signing, install trusted-signing-cli in a step before the build, add
+# the AZURE_* secrets, and set WINDOWS_SIGN_COMMAND on the build step, for example:
+#   WINDOWS_SIGN_COMMAND: trusted-signing-cli -e https://<region>.codesigning.azure.net -a <account> -c <profile> -d Nodex %1
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            sidecars/node/nodex-ts/pnpm-lock.yaml
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Check the tag, the version and the release notes
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if (-not (Select-String -Path Cargo.toml -Pattern "^version = `"$version`"" -Quiet)) {
+            throw "Cargo.toml's version is not $version: run cargo xtask version $version"
+          }
+          cargo xtask notes $version | Out-File -Encoding utf8 release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw "CHANGELOG.md has no section for $version" }
+          "VERSION=$version" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Build the installer
+        run: cargo xtask dist
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $nsis = "target/release/bundle/nsis"
+          gh release create "${{ github.ref_name }}" `
+            --title "Nodex $env:VERSION" `
+            --notes-file release-notes.md `
+            "$nsis/Nodex_$($env:VERSION)_x64-setup.exe" `
+            "$nsis/Nodex_$($env:VERSION)_x64-setup.exe.sig" `
+            "target/release/bundle/latest.json"

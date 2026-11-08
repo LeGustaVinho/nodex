@@ -9,6 +9,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod menu;
+mod updates;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -53,7 +54,8 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .invoke_handler(tauri::generate_handler![save_export])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![save_export, check_for_updates])
         .setup(setup)
         .on_menu_event(menu::handle)
         .on_window_event(on_window_event)
@@ -93,7 +95,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .permission("dialog:default")
             .permission("opener:default")
             .permission("clipboard-manager:allow-write-text")
-            .permission("allow-save-export"),
+            .permission("allow-save-export")
+            .permission("allow-check-for-updates"),
     )?;
     let state = server.state.clone();
     let token = server.token.clone();
@@ -102,6 +105,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     main_window(&handle, &origin, &token)?;
     menu::install(&handle)?;
     follow_project(&handle, state);
+    updates::check_at_startup(&handle);
 
     let cwd = std::env::current_dir().unwrap_or_default();
     if let Some(dir) = folder_arg(&std::env::args().collect::<Vec<_>>(), &cwd) {
@@ -219,12 +223,20 @@ fn on_window_event(window: &Window, event: &WindowEvent) {
 }
 
 /// Stops the server and everything it started before the process exits.
-fn shutdown(app: &AppHandle) {
+pub fn shutdown(app: &AppHandle) {
     let Some(desktop) = app.try_state::<Desktop>() else { return };
     let server = desktop.server.lock().ok().and_then(|mut s| s.take());
     if let Some(server) = server {
-        tauri::async_runtime::block_on(server.shutdown());
+        // On a thread of its own: the updater calls this from inside the async runtime, where
+        // blocking on it would panic.
+        let _ = std::thread::spawn(move || tauri::async_runtime::block_on(server.shutdown())).join();
     }
+}
+
+/// Settings → Check now: the same check as Help → Check for Updates.
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) {
+    updates::check(app, true).await;
 }
 
 /// Saves an export (a UML diagram as SVG, PNG, Mermaid…) where the user chooses in a native

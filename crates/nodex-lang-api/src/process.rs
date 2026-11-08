@@ -38,6 +38,14 @@ pub fn kill_children_on_exit() {
     windows_job::install();
 }
 
+/// Undoes [`kill_children_on_exit`]: processes started from now on outlive Nodex. For handing
+/// over to another program as Nodex exits (the updater's installer, a restart), once Nodex has
+/// stopped what it started.
+pub fn let_children_outlive_exit() {
+    #[cfg(windows)]
+    windows_job::release();
+}
+
 #[cfg(windows)]
 mod windows_job {
     use std::sync::OnceLock;
@@ -50,12 +58,27 @@ mod windows_job {
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
     /// The job handle, kept open for the life of the process (closing it would kill everything).
-    struct Job(#[allow(dead_code)] HANDLE);
+    struct Job(HANDLE);
     // SAFETY: a job handle is a process-wide kernel handle; it is only stored, never used again.
     unsafe impl Send for Job {}
     unsafe impl Sync for Job {}
 
     static JOB: OnceLock<Option<Job>> = OnceLock::new();
+
+    /// Clears the job's kill-on-close limit (children stay in the job but survive Nodex).
+    pub fn release() {
+        let Some(Some(Job(job))) = JOB.get() else { return };
+        // SAFETY: the handle is the live job created in `install`; a zeroed limit clears it.
+        unsafe {
+            let info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            SetInformationJobObject(
+                *job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+        }
+    }
 
     pub fn install() {
         JOB.get_or_init(|| {

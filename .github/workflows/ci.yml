@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            sidecars/node/nodex-ts/pnpm-lock.yaml
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Web UI
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web typecheck
+          pnpm --dir web test
+          pnpm --dir web build
+
+      - name: Rust tests
+        run: cargo test --workspace --locked
+
+      - name: Rust trace runtime tests
+        run: cargo test --manifest-path sidecars/rust/nodex-trace-rt/Cargo.toml
+
+      - name: Stage the desktop app's resources (no installer)
+        run: cargo xtask dist --no-bundle --skip-web

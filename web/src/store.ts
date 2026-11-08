@@ -43,6 +43,9 @@ interface UiState {
   /** The Environment dialog (installed toolchains) is open. */
   environmentOpen: boolean;
   setEnvironmentOpen: (open: boolean) => void;
+  /** The Settings dialog is open. */
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
   /** Containers open in the Hierarchy view. */
   treeExpanded: Record<string, boolean>;
   /** Relation groups drawn by the Hierarchy view (`calls`, `types`, `imports`, `knowledge`). */
@@ -150,6 +153,8 @@ export const useUi = create<UiState>((set) => ({
   connected: false,
   environmentOpen: false,
   setEnvironmentOpen: (environmentOpen) => set({ environmentOpen }),
+  settingsOpen: false,
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   treeExpanded: {},
   relations: ["calls", "types", "knowledge"],
   paletteOpen: false,

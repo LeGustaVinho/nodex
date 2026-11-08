@@ -74,6 +74,9 @@ export function Welcome() {
             <h1>Nodex</h1>
             <p className="muted">Read code in any language as node graphs: C# and Unity, TypeScript and JavaScript, Rust.</p>
           </div>
+          <button className="icon-button welcome-settings" onClick={() => useUi.getState().setSettingsOpen(true)} title="Settings" aria-label="Settings">
+            ⚙
+          </button>
         </header>
 
         <section className="welcome-actions">

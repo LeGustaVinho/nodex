@@ -31,6 +31,8 @@ fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&recent_menu(app, &recent)?)
         .item(&MenuItemBuilder::with_id("close-folder", "&Close Folder").enabled(open).build(app)?)
         .separator()
+        .item(&MenuItemBuilder::with_id("settings", "&Settings…").accelerator("CmdOrCtrl+,").build(app)?)
+        .separator()
         .item(&MenuItemBuilder::with_id("exit", "E&xit").build(app)?)
         .build()?;
 
@@ -51,6 +53,7 @@ fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .text("docs", "&Documentation")
         .text("logs", "Open &Logs Folder")
         .separator()
+        .text("updates", "Check for &Updates…")
         .text("about", "&About Nodex")
         .build()?;
 
@@ -87,6 +90,15 @@ pub fn handle(app: &AppHandle, event: MenuEvent) {
             }
         }
         "exit" => app.exit(0),
+        "settings" => {
+            // The web UI opens its Settings dialog on this event.
+            if let Some(w) = app.get_webview_window(MAIN) {
+                let _ = w.eval("window.dispatchEvent(new Event('nodex:settings'))");
+            }
+        }
+        "updates" => {
+            tauri::async_runtime::spawn(crate::updates::check(app.clone(), true));
+        }
         "reload" => {
             if let Some(w) = app.get_webview_window(MAIN) {
                 let _ = w.eval("location.reload()");

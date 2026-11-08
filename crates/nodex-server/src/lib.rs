@@ -17,6 +17,7 @@ pub mod samples;
 pub mod security;
 pub mod semantic_worker;
 pub mod server;
+pub mod settings;
 pub mod uml;
 pub mod unity;
 pub mod watch;
@@ -161,6 +162,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/project", get(api::project))
         .route("/api/project/open", post(api::project_open))
         .route("/api/project/close", post(api::project_close))
+        .route("/api/settings", get(api::get_settings).put(api::put_settings))
         .route("/api/samples", get(api::samples))
         .route("/api/samples/open", post(api::sample_open))
         .route("/api/fs/list", get(api::fs_list))

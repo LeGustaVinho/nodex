@@ -29,6 +29,12 @@ export async function pickFolder(title = "Open a project folder"): Promise<strin
   return typeof picked === "string" ? picked : null;
 }
 
+/** Looks for a newer Nodex now; the desktop app answers with its own dialogs. */
+export async function checkForUpdates(): Promise<void> {
+  const invoke = tauriInvoke();
+  if (invoke) await invoke("check_for_updates");
+}
+
 /**
  * Saves a file: a native Save dialog in the desktop app, a download in a browser. Returns the
  * saved path in the desktop app (`null` when cancelled), `undefined` in a browser.

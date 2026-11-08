@@ -65,6 +65,15 @@ pub async fn project_open(State(state): State<Arc<AppState>>, Json(req): Json<Op
     Ok(Json(summary).into_response())
 }
 
+pub async fn get_settings() -> ApiResult {
+    Ok(Json(crate::settings::load()).into_response())
+}
+
+pub async fn put_settings(Json(settings): Json<crate::settings::Settings>) -> ApiResult {
+    crate::settings::save(&settings).map_err(internal)?;
+    Ok(Json(settings).into_response())
+}
+
 /// The sample projects shipped with Nodex.
 pub async fn samples() -> ApiResult {
     Ok(Json(crate::samples::list()).into_response())
