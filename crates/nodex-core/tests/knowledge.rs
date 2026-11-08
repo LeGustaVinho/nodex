@@ -254,3 +254,30 @@ fn javascript_tests_and_express_routes() {
     assert_eq!(users.handler, "src/node/server.(module).GET /users/:id", "the callback's own Blueprint handles it");
     assert!(k.http_calls.iter().any(|h| h.url == "/api/heroes" && h.client == "http"), "Angular HttpClient");
 }
+
+#[test]
+fn rust_routes_models_env_and_tests() {
+    let mut project = open("knowledge/rust");
+    let graph = project.structure();
+    let k = project.knowledge();
+    // axum: `.route("/orders", get(list_orders).post(create_order))`.
+    let route = |method: &str, path: &str| k.routes.iter().find(|r| r.method == method && r.path == path).map(|r| (r.handler.as_str(), r.framework.as_str()));
+    assert_eq!(route("GET", "/orders"), Some(("crate::api::list_orders", "axum")));
+    assert_eq!(route("POST", "/orders"), Some(("crate::api::create_order", "axum")));
+    assert_eq!(route("GET", "/orders/:id"), Some(("crate::api::show_order", "axum")));
+
+    // diesel: entities with their table, keys and the write that changes one.
+    let invoice = &k.models.iter().find(|m| m.symbol == "crate::db::Invoice").expect("#[derive(Insertable)]").model;
+    assert_eq!((invoice.framework.as_str(), invoice.table.as_deref()), ("diesel", Some("invoices")));
+    let field = |name: &str| invoice.fields.iter().find(|f| f.name == name).unwrap_or_else(|| panic!("field {name}"));
+    assert!(field("id").primary_key);
+    assert_eq!(field("customer_id").target.as_deref(), Some("Customer"));
+    assert!(edge(&graph, "crate::db::store", "crate::db::Invoice", StructEdgeKind::Mutates).is_some(), "diesel::insert_into(invoices::table)");
+
+    assert!(k.config.iter().any(|c| c.key == "SHOP_API_URL" && c.owner == "crate::services::api_base"));
+    assert!(k.http_calls.iter().any(|h| h.method == "POST" && h.owner == "crate::services::sync_remote"));
+    let info = |id: &str| k.symbols.iter().find(|s| s.symbol == id).unwrap_or_else(|| panic!("info {id}"));
+    assert_eq!(info("crate::main").entry.as_ref().map(|e| e.kind), Some(EntryKind::Main));
+    assert!(info("crate::services::tests::describes_orders").test);
+    assert!(info("crate::tests::checkout_test::checkout_empty_order_fails").test);
+}

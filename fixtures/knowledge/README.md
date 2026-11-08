@@ -7,3 +7,6 @@ exception handling.
 `fullstack/` was copied from CodeGraph (`fixtures/fullstack`, MIT, same author), without the
 Python back end: an ASP.NET Core API (`backend-dotnet`) with its xUnit tests, a NestJS API
 (`backend-nest`) and a React client (`frontend-react`) that calls both.
+
+`rust/` was copied from CodeGraph (`fixtures/edge-cases/rust`): an axum service with diesel
+entities, environment reads, a reqwest call and unit and integration tests.

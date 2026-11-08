@@ -117,21 +117,25 @@ pub fn models(ctx: &Ctx, files: &[&FileIr]) -> (Vec<ModelInfo>, HashMap<String, 
                 continue;
             }
             let ty = m.type_text.clone();
-            let key = m.flavors.iter().any(|f| f == "attr:Key") || m.name == "Id" || m.name.eq_ignore_ascii_case(&format!("{entity_name}Id"));
+            let lower = m.name.to_ascii_lowercase();
+            let entity_lower = entity_name.to_ascii_lowercase();
+            let key = m.flavors.iter().any(|f| f == "attr:Key" || f == "attr:PrimaryGeneratedColumn" || f == "attr:PrimaryColumn")
+                || lower == "id"
+                || lower == format!("{entity_lower}id")
+                || lower == format!("{entity_lower}_id");
+            // `CustomerId`, `customer_id`: a foreign key to `Customer`.
+            let fk_stem = (!key).then(|| m.name.strip_suffix("_id").or_else(|| m.name.strip_suffix("Id"))).flatten().filter(|s| !s.is_empty());
             let element = ty.as_deref().map(element_type).unwrap_or_default();
             let target = if names.contains(&element) && element != entity_name {
                 Some(element.clone())
-            } else if !key && m.name.len() > 2 && m.name.ends_with("Id") {
-                let stem = &m.name[..m.name.len() - 2];
-                names.contains(stem).then(|| stem.to_owned())
             } else {
-                None
+                fk_stem.and_then(|stem| names.iter().find(|n| n.eq_ignore_ascii_case(&stem.replace('_', ""))).cloned())
             };
             fields.push(ModelField {
                 name: m.name.clone(),
                 ty,
                 primary_key: key,
-                foreign_key: !key && m.name.ends_with("Id") && m.name.len() > 2,
+                foreign_key: fk_stem.is_some(),
                 target,
             });
         }
