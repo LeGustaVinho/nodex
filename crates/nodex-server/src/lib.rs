@@ -159,6 +159,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .merge(project)
         .route("/api/project", get(api::project))
         .route("/api/project/open", post(api::project_open))
+        .route("/api/project/close", post(api::project_close))
         .route("/api/fs/list", get(api::fs_list))
         .route("/api/recent", get(api::recent))
         .route("/api/catalog", get(api::catalog))

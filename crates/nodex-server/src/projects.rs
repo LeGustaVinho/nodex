@@ -232,12 +232,25 @@ pub fn install(state: &Arc<AppState>, project: Project) -> Result<(), String> {
         *w = None;
     }
     state.run.reset();
+    let open = project.is_open();
     *state.project.lock().map_err(|_| "project lock poisoned".to_owned())? = project;
+    if !open {
+        return Ok(());
+    }
     let watcher = watch::spawn(state.clone()).map_err(|e| format!("cannot watch the project folder: {e}"))?;
     if let Ok(mut w) = state.watcher.lock() {
         *w = Some(watcher);
     }
     semantic_worker::spawn(state);
+    Ok(())
+}
+
+/// Closes the folder: back to the welcome screen (an empty project).
+pub fn close(state: &Arc<AppState>) -> Result<(), String> {
+    state.run.stop();
+    let _ = state.debug.command(crate::debugger::DebugCommand::Stop);
+    install(state, Project::empty(state.frontends.clone()))?;
+    let _ = state.events.send(ServerEvent::ProjectChanged);
     Ok(())
 }
 

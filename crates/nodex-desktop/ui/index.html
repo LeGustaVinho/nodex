@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nodex</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; height: 100vh; display: grid; place-items: center;
+        background: #121418; color: #e6e8eb; font: 14px "Segoe UI", system-ui, sans-serif;
+      }
+      main { max-width: 560px; padding: 24px; }
+      h1 { font-size: 18px; margin: 0 0 12px; }
+      p { color: #8a93a2; line-height: 1.5; }
+      pre { white-space: pre-wrap; background: #191c22; border: 1px solid #2c323d; border-radius: 6px; padding: 12px; color: #f5b041; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Nodex could not start</h1>
+      <pre id="error">Unknown error.</pre>
+      <p>Restart Nodex. If this keeps happening, the log files (Help → Open Logs Folder) say more.</p>
+    </main>
+    <script>
+      const error = new URLSearchParams(location.search).get("error");
+      if (error) document.getElementById("error").textContent = error;
+    </script>
+  </body>
+</html>

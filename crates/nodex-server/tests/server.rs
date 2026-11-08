@@ -60,6 +60,16 @@ async fn starts_without_a_project_then_opens_one_and_shuts_down() {
     assert_eq!(status, 200);
     assert!(server.state.watcher.lock().unwrap().is_some());
 
+    // Closing goes back to the welcome screen; opening again works.
+    let (status, body) = http(port, &token, "POST", "/api/project/close", None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"open\":false"), "{body}");
+    assert!(server.state.watcher.lock().unwrap().is_none());
+    let (status, _) = http(port, &token, "GET", "/api/structure", None).await;
+    assert_eq!(status, 409);
+    let (status, body) = http(port, &token, "POST", "/api/project/open", Some(&format!("{{\"path\":{path}}}"))).await;
+    assert_eq!(status, 200, "{body}");
+
     let state = server.state.clone();
     server.shutdown().await;
     assert!(state.watcher.lock().unwrap().is_none(), "the watcher stops");

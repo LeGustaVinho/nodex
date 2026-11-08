@@ -24,6 +24,8 @@ pub fn logs_dir() -> PathBuf {
 /// Keep the returned guard alive until exit, or the last lines are lost.
 pub fn init(console: bool) -> Option<WorkerGuard> {
     let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| DEFAULT_FILTER.into());
+    // The appender prunes old files at start-up and complains if the folder is missing.
+    let _ = std::fs::create_dir_all(logs_dir());
     let file = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix("nodex")

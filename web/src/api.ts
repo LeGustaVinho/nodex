@@ -26,8 +26,22 @@ import type { StepsPage } from "./gen/StepsPage";
 import type { StructureGraph } from "./gen/StructureGraph";
 import type { TraceFrame } from "./gen/TraceFrame";
 
-/** Session token: taken from `?token=` once, then kept for the tab's lifetime. */
+declare global {
+  interface Window {
+    /** Set by the desktop app on the Nodex origin before the page runs. */
+    __NODEX_TOKEN__?: string;
+  }
+}
+
+/** True inside the Nodex desktop app. */
+export const isDesktop = typeof window.__NODEX_TOKEN__ === "string";
+
+/**
+ * Session token: injected by the desktop app, or taken from `?token=` once and then kept for the
+ * tab's lifetime.
+ */
 function readToken(): string {
+  if (window.__NODEX_TOKEN__) return window.__NODEX_TOKEN__;
   const url = new URL(window.location.href);
   const fromUrl = url.searchParams.get("token");
   if (fromUrl) {

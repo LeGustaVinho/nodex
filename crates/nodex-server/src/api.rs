@@ -65,6 +65,13 @@ pub async fn project_open(State(state): State<Arc<AppState>>, Json(req): Json<Op
     Ok(Json(summary).into_response())
 }
 
+/// Closes the folder (back to the welcome screen); browsers get `project-changed`.
+pub async fn project_close(State(state): State<Arc<AppState>>) -> ApiResult {
+    crate::projects::close(&state).map_err(internal)?;
+    let summary = state.project.lock().map_err(poisoned)?.summary();
+    Ok(Json(summary).into_response())
+}
+
 #[derive(Deserialize)]
 pub struct ListQuery {
     #[serde(default)]

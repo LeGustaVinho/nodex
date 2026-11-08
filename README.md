@@ -34,6 +34,12 @@ cargo run --release -p nodex-server -- open fixtures/csharp/Sample
 
 The server prints a link with a session token and opens it in your browser.
 
+Or run the desktop app, which hosts the same server and UI in its own window (open a folder with File → Open Folder…, by dropping it on the window, or by passing it as an argument):
+
+```bash
+cargo run --release -p nodex-desktop
+```
+
 ## Views
 
 - **Overview** — what the project is: entry points (program, routes, commands, jobs, message consumers, UI), HTTP routes, hotspots (cyclomatic complexity), data models, declared state machines, and relations by kind.
@@ -58,6 +64,7 @@ The server prints a link with a session token and opens it in your browser.
 | `crates/nodex-uml` | UML diagrams (use case, component, class, sequence, activity, state, package) built from the structure, knowledge and flow graphs and recorded runs, as Mermaid text |
 | `crates/nodex-trace` | Trace protocol decoder, span resolver, recorder (counts, values, replay timeline, call tree with callers and call sites) |
 | `crates/nodex-server` | `nodex` CLI, HTTP/WebSocket API, file watcher, semantic worker, run manager, embedded UI |
+| `crates/nodex-desktop` | Desktop app (Tauri): the server in-process and the UI in a native window, menu, single instance |
 | `web/` | React + React Flow + ELK + Monaco UI |
 | `catalog/` | Concept and flavor definitions (single source for code, UI and docs) |
 | `fixtures/` | C#, Unity and Rosetta (same algorithm in C#/TS/Rust) test inputs |

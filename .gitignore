@@ -8,3 +8,4 @@ obj/
 *.tsbuildinfo
 CLAUDE.md
 /sidecars/node/*/dist
+/crates/nodex-desktop/gen/
