@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { api } from "../api";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
+import type { Confidence } from "../gen/Confidence";
 import { HIERARCHY_CAP, Hierarchy, type HierarchyNodeData, hierarchyGraph, kindsOf } from "../graph/hierarchy";
+import { KNOWLEDGE_CAP, knowledgeGraph } from "../graph/knowledgeGraph";
 import { type StructureIndex, isTypeKind } from "../graph/structureGraph";
 import { useUi } from "../store";
 import { KNOWLEDGE_COLORS } from "./GraphCanvas";
@@ -73,6 +75,44 @@ export function HierarchyView() {
         emptyText="No declarations found."
       />
       {graph?.truncated && <div className="canvas-note">Showing the first {HIERARCHY_CAP} items. Close some boxes to see the rest.</div>}
+      <Legend kinds={kinds} />
+    </>
+  );
+}
+
+/** Relations around one symbol, or every knowledge relation of the project. */
+export function KnowledgeView() {
+  const { index } = useStructure();
+  const { knowledgeFocus, knowledgeDepth, relations, confidences, selection, select, showKnowledge } = useUi();
+  const kinds = useMemo(() => kindsOf(relations), [relations]);
+  const graph = useMemo(
+    () =>
+      index
+        ? knowledgeGraph(index, knowledgeFocus, { kinds, confidences: new Set(confidences as Confidence[]), depth: knowledgeDepth })
+        : undefined,
+    [index, knowledgeFocus, kinds, confidences, knowledgeDepth],
+  );
+  const empty = knowledgeFocus
+    ? "Nothing related with the relations shown. Turn on more relation groups or confidences."
+    : "No knowledge relations yet: routes reached over HTTP, dependency injection, tests, throws and data writes appear here.";
+  return (
+    <>
+      <GraphCanvas
+        key={`knowledge:${knowledgeFocus ?? "*"}`}
+        graph={graph}
+        layoutKey={`knowledge:${knowledgeFocus ?? "*"}`}
+        selectedId={selection?.kind === "symbol" ? selection.id : knowledgeFocus}
+        onNodeClick={(n) => {
+          const { item } = n.data as unknown as HierarchyNodeData;
+          if (item.symbol) select({ kind: "symbol", id: item.symbol.id }, item.symbol.origins[0] ?? null);
+        }}
+        onNodeDoubleClick={(n) => {
+          const { item } = n.data as unknown as HierarchyNodeData;
+          if (item.symbol && !item.symbol.external) showKnowledge(item.symbol.id);
+        }}
+        emptyText={empty}
+      />
+      {graph?.truncated && <div className="canvas-note">Showing the first {KNOWLEDGE_CAP} symbols. Focus on one or lower the depth.</div>}
       <Legend kinds={kinds} />
     </>
   );

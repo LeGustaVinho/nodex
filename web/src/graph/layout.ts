@@ -83,7 +83,6 @@ export async function layoutGraph(g: GGraph): Promise<Positions> {
       "elk.spacing.componentComponent": "60",
       "elk.layered.compaction.postCompaction.strategy": "LEFT",
       ...(nested ? { "elk.hierarchyHandling": "INCLUDE_CHILDREN" } : {}),
-      ...(g.aspectRatio ? { "elk.aspectRatio": String(g.aspectRatio) } : {}),
     },
     children,
     edges,
@@ -101,6 +100,7 @@ export async function layoutGraph(g: GGraph): Promise<Positions> {
     }
   };
   read(result.children ?? []);
+  if (g.aspectRatio) packComponents(g, positions, g.aspectRatio);
   // Attached nodes follow their anchor.
   for (const n of g.nodes) {
     if (!n.attach) continue;
@@ -108,4 +108,68 @@ export async function layoutGraph(g: GGraph): Promise<Positions> {
     if (anchor) positions.set(n.id, { x: anchor.x + n.attach.dx, y: anchor.y + n.attach.dy });
   }
   return positions;
+}
+
+/**
+ * ELK stacks unconnected parts in one column; this re-arranges them in rows so the drawing comes
+ * close to `ratio` (width / height). Parts are groups of top-level nodes linked by edges (an edge
+ * between nodes inside two containers links the containers).
+ */
+export function packComponents(g: GGraph, positions: Positions, ratio: number, gap = 60) {
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  const rootOf = (id: string): string => {
+    let cur = byId.get(id);
+    while (cur?.parent && byId.has(cur.parent)) cur = byId.get(cur.parent);
+    return cur?.id ?? id;
+  };
+  const roots = g.nodes.filter((n) => !n.attach && !(n.parent && byId.has(n.parent))).map((n) => n.id);
+  const group = new Map(roots.map((r) => [r, r]));
+  const find = (x: string): string => {
+    let r = x;
+    while (group.get(r) !== r) r = group.get(r)!;
+    group.set(x, r);
+    return r;
+  };
+  for (const e of g.edges) {
+    const a = rootOf(e.source);
+    const b = rootOf(e.target);
+    if (group.has(a) && group.has(b)) group.set(find(a), find(b));
+  }
+  const parts = new Map<string, string[]>();
+  for (const r of roots) {
+    const key = find(r);
+    parts.set(key, [...(parts.get(key) ?? []), r]);
+  }
+  if (parts.size < 2) return;
+  const boxes = [...parts.values()].map((members) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const id of members) {
+      const p = positions.get(id);
+      const n = byId.get(id)!;
+      if (!p) continue;
+      x0 = Math.min(x0, p.x);
+      y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x + (p.width ?? n.width));
+      y1 = Math.max(y1, p.y + (p.height ?? n.height));
+    }
+    return { members, x0, y0, w: x1 - x0, h: y1 - y0 };
+  });
+  const area = boxes.reduce((sum, b) => sum + (b.w + gap) * (b.h + gap), 0);
+  const rowWidth = Math.max(Math.sqrt(area * ratio), ...boxes.map((b) => b.w));
+  let x = 0, y = 0, rowHeight = 0;
+  for (const b of boxes) {
+    if (x > 0 && x + b.w > rowWidth) {
+      x = 0;
+      y += rowHeight + gap;
+      rowHeight = 0;
+    }
+    const dx = x - b.x0;
+    const dy = y - b.y0;
+    for (const id of b.members) {
+      const p = positions.get(id);
+      if (p) positions.set(id, { ...p, x: p.x + dx, y: p.y + dy });
+    }
+    x += b.w + gap;
+    rowHeight = Math.max(rowHeight, b.h);
+  }
 }

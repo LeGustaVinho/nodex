@@ -11,12 +11,13 @@ import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
 import { TimelineView } from "./views/Timeline";
 import { RELATION_GROUPS } from "./graph/hierarchy";
-import { HierarchyView, OverviewView } from "./views/Knowledge";
+import { HierarchyView, KnowledgeView, OverviewView } from "./views/Knowledge";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 
 const VIEWS: { id: View; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "What the project is: entry points, routes, hotspots, data models" },
   { id: "hierarchy", label: "Hierarchy", hint: "Folders, namespaces, types and members as boxes you can open" },
+  { id: "knowledge", label: "Knowledge", hint: "HTTP calls, dependency injection, tests, throws and writes around a symbol" },
   { id: "architecture", label: "Architecture", hint: "Namespaces, modules, packages and their dependencies" },
   { id: "types", label: "Types", hint: "Classes, interfaces and how they relate" },
   { id: "calls", label: "Calls", hint: "Who calls a function, and what it calls" },
@@ -76,7 +77,44 @@ function TopBar() {
         ))}
       </nav>
       <div className="context">
-        {ui.view === "hierarchy" && (
+        {ui.view === "knowledge" && (
+          <>
+            <span className="chip" title={ui.knowledgeFocus ?? "Every knowledge relation of the project"}>
+              {ui.knowledgeFocus ? (index?.byId.get(ui.knowledgeFocus)?.name ?? ui.knowledgeFocus) : "whole project"}
+              {ui.knowledgeFocus && (
+                <button className="chip-x" onClick={() => ui.showKnowledge(null)} title="Show every knowledge relation">
+                  ×
+                </button>
+              )}
+            </span>
+            {ui.knowledgeFocus && (
+              <label className="toggle" title="How many steps of relations to follow">
+                depth
+                <select value={ui.knowledgeDepth} onChange={(e) => ui.setKnowledgeDepth(Number(e.target.value))}>
+                  {[1, 2, 3].map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="segmented" role="group" aria-label="Confidence">
+              {(["Exact", "Inferred", "Unresolved"] as const).map((c) => (
+                <button
+                  key={c}
+                  className={ui.confidences.includes(c) ? "on" : ""}
+                  aria-pressed={ui.confidences.includes(c)}
+                  title={{ Exact: "Proven by the code or a compiler", Inferred: "Deduced from a convention or a unique match", Unresolved: "Shown by the code, target unknown" }[c]}
+                  onClick={() => ui.toggleConfidence(c)}
+                >
+                  {c.toLowerCase()}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {(ui.view === "hierarchy" || ui.view === "knowledge") && (
           <>
             <div className="segmented" role="group" aria-label="Relations">
               {RELATION_GROUPS.map((g) => (
@@ -91,9 +129,11 @@ function TopBar() {
                 </button>
               ))}
             </div>
-            <button onClick={ui.collapseTree} title="Close every box">
-              Collapse all
-            </button>
+            {ui.view === "hierarchy" && (
+              <button onClick={ui.collapseTree} title="Close every box">
+                Collapse all
+              </button>
+            )}
           </>
         )}
         {ui.view === "types" && (
@@ -200,6 +240,7 @@ export function App() {
       <main className="main">
         {view === "overview" && <OverviewView />}
         {view === "hierarchy" && <HierarchyView />}
+        {view === "knowledge" && <KnowledgeView />}
         {view === "architecture" && <ArchitectureView />}
         {view === "types" && <TypesView />}
         {view === "calls" && <CallsView />}

@@ -340,6 +340,14 @@ export function Inspector() {
             Open Blueprint
           </button>
           <button onClick={() => showCalls(symbol.id)}>Show calls</button>
+          <button onClick={() => useUi.getState().showKnowledge(symbol.id)}>Knowledge</button>
+        </div>
+      )}
+      {!symbol.has_flow && !symbol.external && (
+        <div className="button-row">
+          <button onClick={() => useUi.getState().showKnowledge(symbol.id)} title="HTTP calls, DI, tests, throws and writes around it">
+            Show knowledge
+          </button>
         </div>
       )}
       <KnowledgeSection id={symbol.id} index={index} />

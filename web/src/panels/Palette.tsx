@@ -14,6 +14,7 @@ interface Command {
 const VIEW_COMMANDS: [View, string, string][] = [
   ["overview", "Overview", "What the project is: entry points, routes, hotspots"],
   ["hierarchy", "Hierarchy", "Folders, namespaces, types and members as nested boxes"],
+  ["knowledge", "Knowledge", "HTTP calls, DI, tests, throws and writes"],
   ["architecture", "Architecture", "Namespaces, modules and packages"],
   ["types", "Types", "Classes, interfaces and how they relate"],
   ["calls", "Calls", "Callers and callees of a function"],

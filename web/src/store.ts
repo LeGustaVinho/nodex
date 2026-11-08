@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Span } from "./gen/Span";
 import type { DetailLevel } from "./graph/flowGraph";
 
-export type View = "overview" | "hierarchy" | "architecture" | "types" | "calls" | "timeline" | "blueprint";
+export type View = "overview" | "hierarchy" | "knowledge" | "architecture" | "types" | "calls" | "timeline" | "blueprint";
 
 /** What the inspector and code panel show. */
 export type Selection =
@@ -37,7 +37,15 @@ interface UiState {
   /** Relation groups drawn by the Hierarchy view (`calls`, `types`, `imports`, `knowledge`). */
   relations: string[];
   paletteOpen: boolean;
+  /** Symbol the Knowledge view is centered on (null = every knowledge relation). */
+  knowledgeFocus: string | null;
+  knowledgeDepth: number;
+  /** Confidences drawn by the Knowledge view (`Exact`, `Inferred`, `Unresolved`). */
+  confidences: string[];
   setView: (v: View) => void;
+  showKnowledge: (symbol: string | null) => void;
+  setKnowledgeDepth: (depth: number) => void;
+  toggleConfidence: (confidence: string) => void;
   toggleTree: (id: string) => void;
   /** Opens every container in `ids` (revealing an item opens its ancestors). */
   expandTree: (ids: string[]) => void;
@@ -91,6 +99,16 @@ export const useUi = create<UiState>((set) => ({
   treeExpanded: {},
   relations: ["calls", "types", "knowledge"],
   paletteOpen: false,
+  knowledgeFocus: null,
+  knowledgeDepth: 2,
+  confidences: ["Exact", "Inferred", "Unresolved"],
+  showKnowledge: (knowledgeFocus) => {
+    writeHash("knowledge", null);
+    set({ knowledgeFocus, view: "knowledge" });
+  },
+  setKnowledgeDepth: (knowledgeDepth) => set({ knowledgeDepth }),
+  toggleConfidence: (c) =>
+    set((s) => ({ confidences: s.confidences.includes(c) ? s.confidences.filter((x) => x !== c) : [...s.confidences, c] })),
   toggleTree: (id) => set((s) => ({ treeExpanded: { ...s.treeExpanded, [id]: !s.treeExpanded[id] } })),
   expandTree: (ids) => set((s) => ({ treeExpanded: { ...s.treeExpanded, ...Object.fromEntries(ids.map((id) => [id, true])) } })),
   collapseTree: () => set({ treeExpanded: {} }),

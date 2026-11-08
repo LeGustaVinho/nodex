@@ -3,6 +3,7 @@ import type { StructEdge } from "../gen/StructEdge";
 import type { StructureGraph } from "../gen/StructureGraph";
 import type { Symbol } from "../gen/Symbol";
 import { Hierarchy, hierarchyGraph, kindsOf, rollup } from "./hierarchy";
+import { knowledgeGraph } from "./knowledgeGraph";
 import { rankSymbols } from "./search";
 import { StructureIndex } from "./structureGraph";
 
@@ -99,5 +100,29 @@ describe("rankSymbols", () => {
     expect(names.indexOf("App.Services.OrderService")).toBeLessThan(names.indexOf("web/src/api/orders.fetchOrders"));
     expect(rankSymbols(graph.symbols, "o")).toEqual([]);
     expect(rankSymbols(graph.symbols, "exception")[0].id).toBe("ext:Exception");
+  });
+});
+
+describe("knowledgeGraph", () => {
+  const index = new StructureIndex(graph);
+  const all = { kinds: kindsOf(["calls", "types", "knowledge"]), confidences: new Set(["Exact", "Inferred", "Unresolved"] as const), depth: 1 };
+
+  it("maps every knowledge relation when nothing is focused", () => {
+    const g = knowledgeGraph(index, null, all);
+    expect(g.edges.map((e) => e.kind).sort()).toEqual(["httpcalls", "throws"]);
+    expect(g.edges.find((e) => e.kind === "httpcalls")?.confidence).toBe("Inferred");
+  });
+
+  it("follows relations around a focus, filtered by confidence and depth", () => {
+    const find = "App.Services.OrderService.Find()";
+    const one = knowledgeGraph(index, find, all);
+    expect(new Set(one.nodes.map((n) => n.id))).toEqual(new Set([find, "App.Domain.Order", "App.Services.OrderService.Ship()", "web/src/api/orders.fetchOrders"]));
+    const exactOnly = knowledgeGraph(index, find, { ...all, confidences: new Set(["Exact"] as const) });
+    expect(exactOnly.nodes.some((n) => n.id === "web/src/api/orders.fetchOrders")).toBe(false);
+    const two = knowledgeGraph(index, find, { ...all, depth: 2 });
+    expect(two.nodes.some((n) => n.id === "App.Domain.Order.Total()")).toBe(true);
+    // A focused type stands for its members.
+    const type = knowledgeGraph(index, "App.Services.OrderService", all);
+    expect(type.nodes.some((n) => n.id === "App.Domain.Order")).toBe(true);
   });
 });
