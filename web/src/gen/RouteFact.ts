@@ -10,6 +10,12 @@ export type RouteFact = {
  */
 handler: string, 
 /**
+ * The handler as written when it is a name (`ordersController.list`, `Handlers.Get`,
+ * `handlers::list`). `nodex-core` resolves it over the whole project, so handlers declared in
+ * another file are found; `handler` is the frontend's best guess within the file.
+ */
+handler_ref?: string, 
+/**
  * Upper-case HTTP method (`GET`), `ANY` when every method matches, or `PAGE` for front-end routes.
  */
 method: string, 

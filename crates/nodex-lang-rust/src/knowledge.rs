@@ -76,7 +76,14 @@ impl Walker<'_> {
                     let inner = args.trim_matches(['(', ')']);
                     let Some(path) = inner.split(',').next().and_then(unquote).filter(|p| p.starts_with('/')) else { continue };
                     let method = if verb == "route" { "ANY".to_owned() } else { verb.to_uppercase() };
-                    self.out.routes.push(RouteFact { handler: id.clone(), method, path, framework: self.attr_framework.into(), span: src.span(node) });
+                    self.out.routes.push(RouteFact {
+                        handler: id.clone(),
+                        handler_ref: None,
+                        method,
+                        path,
+                        framework: self.attr_framework.into(),
+                        span: src.span(node),
+                    });
                 }
                 _ => {}
             }
@@ -134,9 +141,12 @@ impl Walker<'_> {
             (_, "route") => {
                 if let (Some(path), Some(methods)) = (first_string.filter(|p| p.starts_with('/')), args.get(1)) {
                     let framework = if src.norm(*methods).contains("web::") || src.text.contains("actix") { "actix" } else { "axum" };
-                    for (verb, handler) in method_handlers(src, *methods) {
-                        let handler = self.function_named(&handler).unwrap_or_else(|| owner.clone());
-                        self.out.routes.push(RouteFact { handler, method: verb, path: path.clone(), framework: framework.into(), span: src.span(node) });
+                    for (verb, written) in method_handlers(src, *methods) {
+                        let handler = self.function_named(&written).unwrap_or_else(|| owner.clone());
+                        // `handlers::list` may live in another module: `nodex-core` resolves the path.
+                        let is_path = !written.is_empty() && written.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | ':'));
+                        let handler_ref = is_path.then_some(written);
+                        self.out.routes.push(RouteFact { handler, handler_ref, method: verb, path: path.clone(), framework: framework.into(), span: src.span(node) });
                     }
                 }
             }
@@ -149,10 +159,15 @@ impl Walker<'_> {
             (r, verb) if (r.ends_with("client") || recv.ends_with("client")) && VERBS.contains(&verb) => {
                 self.http(&owner, verb, args.first().copied(), "reqwest", node)
             }
-            ("diesel", "insert_into" | "update" | "delete" | "replace_into") => {
-                let table = args.first().map(|a| src.norm(*a)).unwrap_or_default();
-                let table = table.split("::").next().unwrap_or(&table).to_owned();
-                self.out.mutations.push(MutationFact { owner, target: table, kind: "database".into(), span: src.span(node) });
+            ("diesel", "insert_into" | "update" | "delete" | "replace_into") => self.diesel_write(&owner, args.first().copied(), node),
+            // `use diesel::prelude::*` brings the DSL in scope: `insert_into(invoices::table)`,
+            // `update(invoices.find(id))`. Bare `update`/`delete` count only on a table expression.
+            ("", "insert_into" | "replace_into" | "update" | "delete") if src.text.contains("diesel") => {
+                let target = args.first().map(|a| src.norm(*a)).unwrap_or_default();
+                let table_like = target.contains("::table") || target.contains(".find(") || target.contains(".filter(");
+                if matches!(name.as_str(), "insert_into" | "replace_into") || table_like {
+                    self.diesel_write(&owner, args.first().copied(), node);
+                }
             }
             ("axum", "serve") | ("warp", "serve") | ("httpserver", "new") | ("rocket", "build") | ("server", "bind") => {
                 self.out.entry(&owner, EntryKind::ServerStart, "server start");
@@ -178,6 +193,13 @@ impl Walker<'_> {
         let src = self.src;
         let url = url.map(|u| unquote(src.text(u)).unwrap_or_else(|| format!("${{{}}}", src.norm(u)))).unwrap_or_default();
         self.out.http_calls.push(HttpCallFact { owner: owner.to_owned(), method: verb.to_uppercase(), url, client: client.into(), span: src.span(node) });
+    }
+
+    /// A diesel write to the table named by the first argument (`invoices::table`, `invoices.find(id)`).
+    fn diesel_write(&mut self, owner: &str, table: Option<Node>, node: Node) {
+        let text = table.map(|a| self.src.norm(a)).unwrap_or_default();
+        let table = text.split([':', '.', '(']).next().unwrap_or(&text).trim().to_owned();
+        self.out.mutations.push(MutationFact { owner: owner.to_owned(), target: table, kind: "database".into(), span: self.src.span(node) });
     }
 
     fn function_named(&self, name: &str) -> Option<String> {

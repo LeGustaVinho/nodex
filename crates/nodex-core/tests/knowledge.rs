@@ -189,7 +189,7 @@ fn exceptions_are_caught_by_callers_or_global_handlers() {
         global::CallSite { owner: cancel.clone(), target: cancel_order.clone(), catches: vec!["OrderNotFoundException".into()] },
         global::CallSite { owner: create.clone(), target: place.clone(), catches: Vec::new() },
     ];
-    let caught = global::caught_by_edges(&ctx, &sites, &handlers, &infos, &HashSet::new());
+    let caught = global::caught_by_edges(&ctx, &sites, &handlers, &infos, &HashSet::new(), &HashSet::new());
     let local = caught.iter().find(|e| e.from == cancel_order && e.to == cancel).expect("catch (OrderNotFoundException) in Cancel");
     assert!(local.confidence.is_none());
     let program = graph.symbols.iter().find(|s| s.id.starts_with("Program.<Main>$")).expect("program").id.clone();
@@ -280,4 +280,118 @@ fn rust_routes_models_env_and_tests() {
     assert_eq!(info("crate::main").entry.as_ref().map(|e| e.kind), Some(EntryKind::Main));
     assert!(info("crate::services::tests::describes_orders").test);
     assert!(info("crate::tests::checkout_test::checkout_empty_order_fails").test);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Review fixture: one case per knowledge bug found in review (`fixtures/knowledge/review`).
+
+fn routes_of<'a>(k: &'a nodex_ir::knowledge::ProjectKnowledge, handler: &str) -> Vec<(&'a str, &'a str)> {
+    let mut out: Vec<(&str, &str)> = k.routes.iter().filter(|r| r.handler == handler).map(|r| (r.method.as_str(), r.path.as_str())).collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn aspnet_action_routes_combine_route_and_verb_attributes() {
+    let mut project = open("knowledge/review");
+    let graph = project.structure();
+    let k = project.knowledge();
+    // `[Route("api/[controller]/[action]")]` on the controller.
+    assert_eq!(routes_of(&k, &id_of(&graph, "ItemsController", "List")), vec![("GET", "/api/Items/List")]);
+    // `[HttpGet] [Route("{id}")]` is one route.
+    assert_eq!(routes_of(&k, &id_of(&graph, "WidgetsController", "Get")), vec![("GET", "/api/widgets/{id}")]);
+    // A verb with its own template keeps it; the bare verb takes the `[Route]` template.
+    assert_eq!(
+        routes_of(&k, &id_of(&graph, "WidgetsController", "Change")),
+        vec![("POST", "/api/widgets/{id}/archive"), ("PUT", "/api/widgets/{id}/state")]
+    );
+    // `app.MapGet("/api/health", HealthHandlers.Check)` with the handler in another file.
+    assert_eq!(routes_of(&k, &id_of(&graph, "HealthHandlers", "Check")), vec![("GET", "/api/health")]);
+}
+
+#[test]
+fn a_throw_caught_in_its_own_function_reaches_no_handler() {
+    let mut project = open("knowledge/review");
+    let graph = project.structure();
+    let program = graph.symbols.iter().find(|s| s.id.starts_with("Program.<Main>$")).expect("program").id.clone();
+    let remove = id_of(&graph, "WidgetsController", "Remove");
+    assert!(edge(&graph, &remove, "ext:InvalidOperationException", StructEdgeKind::Throws).is_some(), "it still throws");
+    assert!(
+        !graph.edges.iter().any(|e| e.from == remove && e.kind == StructEdgeKind::CaughtBy),
+        "caught by its own catch (InvalidOperationException)"
+    );
+    let rename = id_of(&graph, "WidgetsController", "Rename");
+    assert!(edge(&graph, &rename, &program, StructEdgeKind::CaughtBy).is_some(), "uncaught at a route: app.UseExceptionHandler");
+}
+
+#[test]
+fn a_registration_repeated_is_still_one_implementation() {
+    let mut project = open("knowledge/review");
+    let graph = project.structure();
+    let symbols: HashMap<&str, &nodex_ir::Symbol> = graph.symbols.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut children: HashMap<&str, Vec<&nodex_ir::Symbol>> = HashMap::new();
+    for s in &graph.symbols {
+        if let Some(p) = &s.parent {
+            children.entry(p.as_str()).or_default().push(s);
+        }
+    }
+    let types = TypeLookup::new(&graph);
+    let caller = id_of(&graph, "WidgetsController", "Get");
+    let iface_do = id_of(&graph, "IThing", "Do");
+    let mut edges = graph.edges.clone();
+    edges.push(nodex_ir::StructEdge::new(caller.clone(), iface_do, StructEdgeKind::Calls));
+    let ctx = global::Ctx { symbols: &symbols, children: &children, types: &types, edges: &edges };
+    let files: Vec<&nodex_ir::FileIr> = project.files().map(|(_, f)| f).collect();
+    let di = global::di_edges(&ctx, &files);
+    assert_eq!(di.iter().filter(|e| e.from == "Review.IThing").count(), 2, "AddScoped<IThing, Thing>() twice");
+    let dispatch = global::di_dispatch(&ctx, &di);
+    let thing_do = id_of(&graph, ".Thing.", "Do");
+    let d = dispatch.iter().find(|e| e.from == caller && e.to == thing_do).expect("dispatched to Thing.Do");
+    assert_eq!(d.confidence, Some(Confidence::Inferred));
+}
+
+#[test]
+fn an_axios_instance_named_api_is_a_client_not_a_router() {
+    let mut project = open("knowledge/review");
+    let graph = project.structure();
+    let k = project.knowledge();
+    assert!(!k.routes.iter().any(|r| r.span.file == "web/src/client.ts"), "no routes in the front end: {:?}", k.routes);
+    let load = "web/src/client.loadWidget";
+    let call = k.http_calls.iter().find(|h| h.owner == load).expect("api.get(...) is an HTTP call");
+    assert_eq!((call.method.as_str(), call.url.as_str()), ("GET", "/api/widgets/${id}"));
+    let get = id_of(&graph, "WidgetsController", "Get");
+    assert_eq!(edge(&graph, load, &get, StructEdgeKind::HttpCalls).and_then(|e| e.confidence), Some(Confidence::Inferred));
+    assert!(k.http_calls.iter().any(|h| h.owner == "web/src/client.list"), "a config object after the URL");
+}
+
+#[test]
+fn route_handlers_declared_in_another_file_are_resolved() {
+    let mut project = open("knowledge/review");
+    let graph = project.structure();
+    let k = project.knowledge();
+    // `app.get("/api/catalog", widgets.list)` with `import * as widgets from "./widgets.controller"`;
+    // `web/src/client.list` has the same name.
+    assert_eq!(routes_of(&k, "server/src/widgets.controller.list"), vec![("GET", "/api/catalog")]);
+    // axum: `get(handlers::list)`.
+    let list = id_of(&graph, "handlers", "list");
+    assert_eq!(routes_of(&k, &list), vec![("GET", "/api/parts")]);
+}
+
+#[test]
+fn global_prefixes_apply_within_their_own_package() {
+    let mut project = open("knowledge/review");
+    let k = project.knowledge();
+    assert_eq!(routes_of(&k, "nest-a/src/reports.controller.ReportsController.all"), vec![("GET", "/alpha/reports")]);
+    assert_eq!(routes_of(&k, "nest-b/src/users.controller.UsersController.all"), vec![("GET", "/beta/users")]);
+}
+
+#[test]
+fn diesel_writes_without_the_crate_prefix_change_their_model() {
+    let mut project = open("knowledge/review");
+    let graph = project.structure();
+    let gadget = id_of(&graph, "models", "Gadget");
+    for f in ["add", "rename"] {
+        let id = id_of(&graph, "models", f);
+        assert!(edge(&graph, &id, &gadget, StructEdgeKind::Mutates).is_some(), "{f} writes gadgets");
+    }
 }

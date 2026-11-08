@@ -253,14 +253,24 @@ impl Project {
             }
         }
         // Knowledge: routes, HTTP calls, DI, tests, throws, complexity.
-        let derived = knowledge::build(&graph, &files, &constructs, &calls);
+        let package_roots: Vec<String> = self
+            .descriptors
+            .iter()
+            .flat_map(|d| d.manifests.iter())
+            .filter_map(|m| m.parent().and_then(|dir| self.relative(dir)))
+            .collect();
+        let derived = knowledge::build(&graph, &files, &constructs, &calls, &package_roots);
+        let mut known: std::collections::HashSet<String> = graph.symbols.iter().map(|s| s.id.clone()).collect();
         for ext in derived.externals {
-            if !graph.symbols.iter().any(|s| s.id == ext.id) {
+            if known.insert(ext.id.clone()) {
                 graph.symbols.push(ext);
             }
         }
+        // Exact relations already in the graph win over a derived copy (same endpoints and kind).
+        let mut present: std::collections::HashSet<(String, String, StructEdgeKind)> =
+            graph.edges.iter().map(|e| (e.from.clone(), e.to.clone(), e.kind)).collect();
         for e in derived.edges {
-            if !graph.edges.iter().any(|g| g.same_relation(&e)) {
+            if present.insert((e.from.clone(), e.to.clone(), e.kind)) {
                 graph.edges.push(e);
             }
         }

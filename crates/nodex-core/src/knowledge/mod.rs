@@ -11,9 +11,9 @@ pub mod flows;
 pub mod global;
 pub mod routes;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use nodex_ir::knowledge::{EntryKind, EntryPoint, ModelInfo, ProjectKnowledge, ResolvedRoute, SymbolInfo};
+use nodex_ir::knowledge::{EntryKind, EntryPoint, ModelInfo, ProjectKnowledge, ResolvedRoute, RouteFact, SymbolInfo};
 use nodex_ir::{FileIr, Language, StructEdge, StructEdgeKind, StructureGraph, Symbol, SymbolId, SymbolKind};
 
 /// Exact construction targets reported by semantic providers: file → (start, end, type).
@@ -37,8 +37,10 @@ pub struct RawCallSite {
     pub target: SymbolId,
 }
 
-/// Derives knowledge from the linked `graph` and the files' facts and flows.
-pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs, calls: &[RawCallSite]) -> Knowledge {
+/// Derives knowledge from the linked `graph` and the files' facts and flows. `package_roots` are
+/// the project-relative folders of the manifests (`backend-nest`, `""` for the root): project-wide
+/// route prefixes apply within one package.
+pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs, calls: &[RawCallSite], package_roots: &[String]) -> Knowledge {
     let types = TypeLookup::new(graph);
     let symbols: HashMap<&str, &Symbol> = graph.symbols.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut children: HashMap<&str, Vec<&Symbol>> = HashMap::new();
@@ -58,15 +60,18 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     // Exception types caught around each statement: file → (start, end, types).
     let mut protected: HashMap<&str, Vec<(u32, u32, Vec<String>)>> = HashMap::new();
     let mut handlers = Vec::new();
+    // Every throw: (function, exception type, types caught around the throw in that function).
+    let mut throw_sites: Vec<(SymbolId, SymbolId, Vec<String>)> = Vec::new();
 
     for file in files {
         // Flows: complexity, throws and catch regions.
         for flow in &file.flows {
             let entry = infos.entry(flow.symbol.clone()).or_insert_with(|| info(&flow.symbol));
             entry.complexity = flows::complexity(flow);
-            for (node_id, types) in flows::catch_regions(flow) {
-                if let Some(node) = flow.node(&node_id) {
-                    protected.entry(file.file.as_str()).or_default().push((node.span.start_byte, node.span.end_byte, types));
+            let regions = flows::catch_regions(flow);
+            for (node_id, types) in &regions {
+                if let Some(node) = flow.node(node_id) {
+                    protected.entry(file.file.as_str()).or_default().push((node.span.start_byte, node.span.end_byte, types.clone()));
                 }
             }
             let thrown = flows::throws(flow);
@@ -93,6 +98,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
                     }),
                     (None, None) => continue,
                 };
+                throw_sites.push((flow.symbol.clone(), target.clone(), regions.get(&t.node).cloned().unwrap_or_default()));
                 let key = (flow.symbol.clone(), target.clone(), StructEdgeKind::Throws);
                 edges.entry(key).or_insert_with(|| {
                     StructEdge::new(flow.symbol.clone(), target, StructEdgeKind::Throws)
@@ -153,7 +159,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
         }
     }
 
-    out.project.routes = resolve_routes(files);
+    out.project.routes = resolve_routes(files, &symbols, package_roots);
     for r in &out.project.routes {
         let entry = infos.entry(r.handler.clone()).or_insert_with(|| info(&r.handler));
         set_entry(entry, Some(EntryPoint { kind: EntryKind::Route, label: format!("{} {}", r.method, r.path) }));
@@ -215,8 +221,19 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
         }
         sites.push(global::CallSite { owner: c.owner.clone(), target: c.target.clone(), catches });
     }
-    let inferred: std::collections::HashSet<(String, String)> = dispatch.iter().map(|d| (d.from.clone(), d.to.clone())).collect();
-    let caught = global::caught_by_edges(&ctx, &sites, &handlers, &infos, &inferred);
+    let inferred: HashSet<(String, String)> = dispatch.iter().map(|d| (d.from.clone(), d.to.clone())).collect();
+    // Exceptions every throw site of a function catches itself never reach its callers.
+    let mut escaping: HashSet<(&str, &str)> = HashSet::new();
+    let mut thrown: HashSet<(&str, &str)> = HashSet::new();
+    for (from, ty, catches) in &throw_sites {
+        thrown.insert((from, ty));
+        if !global::handles(&ctx, ty, catches) {
+            escaping.insert((from, ty));
+        }
+    }
+    let caught_locally: HashSet<(String, String)> =
+        thrown.difference(&escaping).map(|(f, t)| ((*f).to_owned(), (*t).to_owned())).collect();
+    let caught = global::caught_by_edges(&ctx, &sites, &handlers, &infos, &inferred, &caught_locally);
 
     for e in di.into_iter().chain(dispatch).chain(mutates).chain(tests).chain(http).chain(caught) {
         edges.entry((e.from.clone(), e.to.clone(), e.kind)).or_insert(e);
@@ -245,23 +262,40 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     out
 }
 
-/// Applies project-wide prefixes (`global` per framework) and normalizes every route.
-pub fn resolve_routes(files: &[&FileIr]) -> Vec<ResolvedRoute> {
-    let mut global: HashMap<&str, &str> = HashMap::new();
+/// The package (manifest folder) a file belongs to: the deepest root that contains it.
+fn package_of<'r>(file: &str, roots: &'r [String]) -> &'r str {
+    roots
+        .iter()
+        .filter(|r| r.is_empty() || file.strip_prefix(r.as_str()).is_some_and(|rest| rest.starts_with('/')))
+        .max_by_key(|r| r.len())
+        .map(String::as_str)
+        .unwrap_or("")
+}
+
+/// Resolves the handlers named in another file, applies project-wide prefixes (`global`, per
+/// framework within one package) and normalizes every route.
+pub fn resolve_routes(files: &[&FileIr], symbols: &HashMap<&str, &Symbol>, package_roots: &[String]) -> Vec<ResolvedRoute> {
+    let mut global: HashMap<(&str, &str), &str> = HashMap::new();
     for file in files {
+        let package = package_of(&file.file, package_roots);
         for p in file.knowledge.prefixes.iter().filter(|p| p.kind == "global") {
-            global.insert(p.framework.as_str(), p.prefix.as_str());
+            global.insert((p.framework.as_str(), package), p.prefix.as_str());
         }
+    }
+    let mut functions: HashMap<&str, Vec<&Symbol>> = HashMap::new();
+    for s in symbols.values().filter(|s| matches!(s.kind, SymbolKind::Function | SymbolKind::Method) && !s.external) {
+        functions.entry(s.name.as_str()).or_default().push(s);
     }
     let mut out: Vec<ResolvedRoute> = Vec::new();
     for file in files {
+        let package = package_of(&file.file, package_roots);
         for r in &file.knowledge.routes {
-            let path = match global.get(r.framework.as_str()) {
+            let path = match global.get(&(r.framework.as_str(), package)) {
                 Some(prefix) if r.method != "PAGE" => routes::join_route(prefix, &r.path),
                 _ => routes::join_route("", &r.path),
             };
             out.push(ResolvedRoute {
-                handler: r.handler.clone(),
+                handler: resolve_handler(r, file.language, &functions, symbols).unwrap_or_else(|| r.handler.clone()),
                 method: r.method.clone(),
                 normalized: routes::normalize_route(&path),
                 path,
@@ -273,6 +307,32 @@ pub fn resolve_routes(files: &[&FileIr]) -> Vec<ResolvedRoute> {
     out.sort_by(|a, b| (&a.normalized, &a.method, &a.handler).cmp(&(&b.normalized, &b.method, &b.handler)));
     out.dedup_by(|a, b| a.normalized == b.normalized && a.method == b.method && a.handler == b.handler);
     out
+}
+
+/// The function a route names (`ordersController.list`, `Handlers.Get`, `handlers::list`): the
+/// only function of that name in the language, or the only one whose owner matches the qualifier
+/// (a class, an instance named after it, or a module). `None` keeps the frontend's guess.
+fn resolve_handler(r: &RouteFact, language: Language, functions: &HashMap<&str, Vec<&Symbol>>, symbols: &HashMap<&str, &Symbol>) -> Option<SymbolId> {
+    let written = r.handler_ref.as_deref()?.replace("::", ".");
+    let mut parts: Vec<&str> = written.split('.').filter(|p| !p.is_empty() && *p != "this").collect();
+    let name = parts.pop()?;
+    let candidates: Vec<&Symbol> = functions.get(name)?.iter().copied().filter(|s| s.language == language).collect();
+    let owner_matches = |s: &Symbol, q: &str| {
+        let Some(parent) = s.parent.as_deref().and_then(|p| symbols.get(p)) else { return false };
+        let tail = parent.qualified_name.rsplit(['/', '.', ':']).next().unwrap_or("");
+        let file_stem = parent.qualified_name.rsplit('/').next().unwrap_or("").split('.').next().unwrap_or("");
+        [parent.name.as_str(), tail, file_stem].iter().any(|n| !n.is_empty() && n.eq_ignore_ascii_case(q))
+    };
+    let narrowed: Vec<&Symbol> = match parts.last() {
+        Some(q) => candidates.iter().copied().filter(|s| owner_matches(s, q)).collect(),
+        None => Vec::new(),
+    };
+    let pick = if narrowed.is_empty() { &candidates } else { &narrowed };
+    match pick.as_slice() {
+        [one] => Some(one.id.clone()),
+        // Several: keep the frontend's choice when it is one of them.
+        _ => None,
+    }
 }
 
 /// Type lookup by simple name, preferring the caller's namespace.

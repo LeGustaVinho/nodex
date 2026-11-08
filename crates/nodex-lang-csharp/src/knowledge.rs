@@ -200,24 +200,17 @@ impl<'a, 't> Walker<'a, 't> {
         }
         if let Some(class) = class {
             if class.controller {
-                let prefix = class.route.as_deref().unwrap_or("");
-                let mut routed = false;
-                for a in &attrs {
-                    let method = HTTP_ATTRS.iter().find(|(n, _)| *n == a.name).map(|(_, m)| *m);
-                    let method = match (method, a.name.as_str()) {
-                        (Some(m), _) => m,
-                        (None, "Route") => "ANY",
-                        _ => continue,
-                    };
-                    let path = a.first_string().unwrap_or_default().replace("[action]", &name);
-                    self.route(&id, method, &join_aspnet(prefix, &path), "aspnet", node);
-                    routed = true;
+                let prefix = class.route.as_deref().unwrap_or("").replace("[action]", &name);
+                let routes = action_routes(&attrs);
+                let routed = !routes.is_empty();
+                for (method, path) in routes {
+                    self.route(&id, method, &join_aspnet(&prefix, &path.replace("[action]", &name)), "aspnet", node, None);
                 }
                 // `[Route]` on a class + no verb attribute on a public action: routed by convention.
                 if !routed && class.route.is_some() && modifiers.iter().any(|m| m == "public") && attrs.iter().all(|a| a.name != "NonAction") {
                     let method = HTTP_ATTRS.iter().map(|(n, m)| (n.trim_start_matches("Http"), *m)).find(|(verb, _)| name.starts_with(verb)).map(|(_, m)| m);
                     if let Some(m) = method {
-                        self.route(&id, m, &join_aspnet(prefix, ""), "aspnet", node);
+                        self.route(&id, m, &join_aspnet(&prefix, ""), "aspnet", node, None);
                     }
                 }
                 let anonymous = attrs.iter().any(|a| a.name == "AllowAnonymous");
@@ -231,9 +224,10 @@ impl<'a, 't> Walker<'a, 't> {
         }
     }
 
-    fn route(&mut self, handler: &str, method: &str, path: &str, framework: &str, node: Node) {
+    fn route(&mut self, handler: &str, method: &str, path: &str, framework: &str, node: Node, handler_ref: Option<String>) {
         self.out.routes.push(RouteFact {
             handler: handler.to_owned(),
+            handler_ref,
             method: method.to_owned(),
             path: path.to_owned(),
             framework: framework.to_owned(),
@@ -334,20 +328,21 @@ impl<'a, 't> Walker<'a, 't> {
             && let Some(path) = call.string_arg(0)
         {
             let prefix = self.groups.get(&call.receiver).cloned().unwrap_or_default();
-            let handler = call
-                .arg_nodes
-                .last()
+            let last = call.arg_nodes.last().copied();
+            // A method group (`Handlers.Get`) may live in another file: `nodex-core` resolves the name.
+            let handler_ref = last.filter(|h| matches!(h.kind(), "identifier" | "member_access_expression")).map(|h| src.norm(h));
+            let handler = last
                 .and_then(|h| match h.kind() {
                     "lambda_expression" | "anonymous_method_expression" => self.callbacks.get(&h.start_byte()).cloned(),
                     "identifier" | "member_access_expression" => {
-                        let name = src.norm(*h);
+                        let name = src.norm(h);
                         let name = name.rsplit('.').next().unwrap_or(&name).to_owned();
                         self.symbols.iter().find(|s| s.name == name && matches!(s.kind, SymbolKind::Method | SymbolKind::Function)).map(|s| s.id.clone())
                     }
                     _ => None,
                 })
                 .unwrap_or_else(|| owner.clone());
-            self.route(&handler, verb, &join_group(&prefix, &path), "aspnet-minimal", node);
+            self.route(&handler, verb, &join_group(&prefix, &path), "aspnet-minimal", node, handler_ref);
             return;
         }
 
@@ -436,6 +431,29 @@ impl<'a, 't> Walker<'a, 't> {
             span: self.src.span(node),
         });
     }
+}
+
+/// Routes of a controller action, before the controller prefix: a verb attribute's own template
+/// (`[HttpGet("{id}")]`), or the action's `[Route]` template with the verbs that have none
+/// (`[HttpGet] [Route("{id}")]` is one `GET {id}`). A `[Route]` beside verbs that all carry their
+/// own template matches every method, as in ASP.NET.
+fn action_routes(attrs: &[Attr]) -> Vec<(&'static str, String)> {
+    let mut verbs: Vec<(&'static str, Option<String>)> = Vec::new();
+    for a in attrs {
+        if let Some((_, m)) = HTTP_ATTRS.iter().find(|(n, _)| *n == a.name) {
+            verbs.push((m, a.first_string()));
+        }
+    }
+    let paths: Vec<String> = attrs.iter().filter(|a| a.name == "Route").filter_map(Attr::first_string).collect();
+    let mut out: Vec<(&'static str, String)> = verbs.iter().filter_map(|(m, p)| p.clone().map(|p| (*m, p))).collect();
+    let bare: Vec<&'static str> = verbs.iter().filter(|(_, p)| p.is_none()).map(|(m, _)| *m).collect();
+    match (bare.is_empty(), paths.is_empty()) {
+        (true, false) => out.extend(paths.iter().map(|p| ("ANY", p.clone()))),
+        (false, true) => out.extend(bare.iter().map(|m| (*m, String::new()))),
+        (false, false) => out.extend(bare.iter().flat_map(|m| paths.iter().map(move |p| (*m, p.clone())))),
+        (true, true) => {}
+    }
+    out
 }
 
 /// `_db.Orders`, `context.Users`, `dbContext.Set<T>()`: a receiver that is a database context.

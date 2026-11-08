@@ -72,9 +72,13 @@ pub fn di_edges(ctx: &Ctx, files: &[&FileIr]) -> Vec<StructEdge> {
 /// A call to a method of an interface whose only DI implementation is known also reaches that
 /// implementation's method. Inferred: the compiler only sees the interface.
 pub fn di_dispatch(ctx: &Ctx, di: &[StructEdge]) -> Vec<StructEdge> {
+    // Distinct implementations: one pair registered twice is still one implementation.
     let mut impls: HashMap<&str, Vec<&str>> = HashMap::new();
     for e in di {
-        impls.entry(e.from.as_str()).or_default().push(e.to.as_str());
+        let list = impls.entry(e.from.as_str()).or_default();
+        if !list.contains(&e.to.as_str()) {
+            list.push(e.to.as_str());
+        }
     }
     let mut out = Vec::new();
     for call in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Calls) {
@@ -277,15 +281,28 @@ pub struct CallSite {
     pub catches: Vec<String>,
 }
 
+/// True when one of `catches` (types of enclosing `catch` clauses; `*` for every error) handles
+/// exception type `ty` or one of its base types.
+pub fn handles(ctx: &Ctx, ty: &str, catches: &[String]) -> bool {
+    if catches.is_empty() {
+        return false;
+    }
+    let lineage = ancestors(ctx, ty);
+    catches.iter().any(|t| t == "*" || lineage.contains(&simple_name(t)))
+}
+
 /// Where each thrown exception is caught: walks up the callers of the throwing function until a
 /// call site's `catch` handles the type (or its base type). A throw that reaches a route handler
-/// without being caught goes to the framework's global error handlers.
+/// without being caught goes to the framework's global error handlers. `caught_locally` lists the
+/// (function, exception type) pairs whose every throw is inside a `catch` of that same function:
+/// they never reach a caller.
 pub fn caught_by_edges(
     ctx: &Ctx,
     sites: &[CallSite],
     handlers: &[GlobalHandlerFact],
     infos: &BTreeMap<SymbolId, SymbolInfo>,
     inferred_calls: &HashSet<(String, String)>,
+    caught_locally: &HashSet<(String, String)>,
 ) -> Vec<StructEdge> {
     let mut callers: HashMap<&str, Vec<&CallSite>> = HashMap::new();
     for s in sites {
@@ -293,6 +310,9 @@ pub fn caught_by_edges(
     }
     let mut out: BTreeMap<(String, String), StructEdge> = BTreeMap::new();
     for throw in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Throws) {
+        if caught_locally.contains(&(throw.from.clone(), throw.to.clone())) {
+            continue;
+        }
         let lineage = ancestors(ctx, &throw.to);
         let handles = |types: &[String]| types.iter().any(|t| t == "*" || lineage.contains(&simple_name(t)));
         // BFS over callers: (function reached, confidence so far, depth).

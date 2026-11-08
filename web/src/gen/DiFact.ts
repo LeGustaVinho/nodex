@@ -18,6 +18,11 @@ service: string,
  */
 implementation: string | null, 
 /**
- * `scoped`, `singleton`, `transient`, `hosted`, `context`, `client`, `value`, `factory`.
+ * `scoped`, `singleton`, `transient`, `hosted`, `context`, `client`, `class`, `value`,
+ * `factory`, `existing`, or `inject` for an injection point (`@Inject("TOKEN") x: Service`).
  */
-lifetime: string, framework: string, span: Span, };
+lifetime: string, 
+/**
+ * Injection token that links a registration to its injection points (`provide: "TOKEN"`).
+ */
+token: string | null, framework: string, span: Span, };

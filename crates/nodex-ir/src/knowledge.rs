@@ -40,6 +40,12 @@ impl Confidence {
 pub struct RouteFact {
     /// The function that handles the request.
     pub handler: SymbolId,
+    /// The handler as written when it is a name (`ordersController.list`, `Handlers.Get`,
+    /// `handlers::list`). `nodex-core` resolves it over the whole project, so handlers declared in
+    /// another file are found; `handler` is the frontend's best guess within the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub handler_ref: Option<String>,
     /// Upper-case HTTP method (`GET`), `ANY` when every method matches, or `PAGE` for front-end routes.
     pub method: String,
     /// Path as declared, joined with the prefixes known in the same file (controller `[Route]`,

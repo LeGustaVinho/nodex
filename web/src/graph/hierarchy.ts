@@ -83,9 +83,10 @@ export class Hierarchy {
     // A parent that is not part of the tree (external) makes the item a root.
     for (const item of this.items.values()) if (item.parent && !this.items.has(item.parent)) item.parent = null;
     this.link();
-    // Namespaces and modules with nothing declared in them (`(global)` for usings only) are noise.
+    // Namespaces and modules with nothing declared in them (`(global)` for usings only) are noise;
+    // a module with code of its own (top-level statements) stays.
     for (const item of [...this.items.values()]) {
-      const scope = !item.symbol || item.kind === "Namespace" || item.kind === "Module";
+      const scope = !item.symbol || ((item.kind === "Namespace" || item.kind === "Module") && !item.symbol.has_flow);
       if (scope && item.children.length === 0) this.items.delete(item.id);
     }
     this.link();

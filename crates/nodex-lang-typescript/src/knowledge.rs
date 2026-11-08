@@ -79,6 +79,8 @@ struct Walker<'a> {
     function_ids: &'a HashMap<usize, String>,
     /// `express`, `fastify`, `koa`, `hono`: the server framework this file uses.
     server: &'static str,
+    /// The file imports a server framework (receivers named `api`/`server` are routers only then).
+    imports_server: bool,
     out: FileKnowledge,
 }
 
@@ -93,7 +95,10 @@ pub fn extract(src: Src, root: Node, symbols: &[Symbol], function_ids: &HashMap<
     } else {
         "express"
     };
-    let mut w = Walker { src, owners: &owners, symbols, function_ids, server, out: FileKnowledge::default() };
+    let imports_server = ["express", "fastify", "koa", "hono", "@hapi/hapi", "restify"]
+        .iter()
+        .any(|m| original.contains(&format!("from \"{m}")) || original.contains(&format!("from '{m}")) || original.contains(&format!("require(\"{m}")) || original.contains(&format!("require('{m}")));
+    let mut w = Walker { src, owners: &owners, symbols, function_ids, server, imports_server, out: FileKnowledge::default() };
     w.file_level();
     w.walk(root, None);
     w.out
@@ -127,7 +132,14 @@ impl<'a> Walker<'a> {
                 if matches!(s.name.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS")
                     && let Some(span) = s.origins.first()
                 {
-                    self.out.routes.push(RouteFact { handler: s.id.clone(), method: s.name.clone(), path: path.clone(), framework: "nextjs".into(), span: span.clone() });
+                    self.out.routes.push(RouteFact {
+                        handler: s.id.clone(),
+                        handler_ref: None,
+                        method: s.name.clone(),
+                        path: path.clone(),
+                        framework: "nextjs".into(),
+                        span: span.clone(),
+                    });
                 }
             }
         } else if let Some(pages) = parts.windows(2).position(|w| w == ["pages", "api"]) {
@@ -139,7 +151,7 @@ impl<'a> Walker<'a> {
             if let Some(handler) = self.symbols.iter().find(|s| s.kind == SymbolKind::Function && s.flavors.iter().any(|f| f == "default-export"))
                 && let Some(span) = handler.origins.first()
             {
-                self.out.routes.push(RouteFact { handler: handler.id.clone(), method: "ANY".into(), path, framework: "nextjs".into(), span: span.clone() });
+                self.out.routes.push(RouteFact { handler: handler.id.clone(), handler_ref: None, method: "ANY".into(), path, framework: "nextjs".into(), span: span.clone() });
             }
         }
     }
@@ -289,7 +301,14 @@ impl<'a> Walker<'a> {
         for d in &decorators {
             if let (Some(prefix), Some((_, verb))) = (&prefix, NEST_VERBS.iter().find(|(n, _)| *n == d.name)) {
                 let path = d.args.first().and_then(|a| string_of(src, *a)).unwrap_or_default();
-                self.out.routes.push(RouteFact { handler: id.clone(), method: (*verb).into(), path: join(prefix, &path), framework: "nestjs".into(), span: src.span(node) });
+                self.out.routes.push(RouteFact {
+                    handler: id.clone(),
+                    handler_ref: None,
+                    method: (*verb).into(),
+                    path: join(prefix, &path),
+                    framework: "nestjs".into(),
+                    span: src.span(node),
+                });
             } else if matches!(d.name.as_str(), "MessagePattern" | "EventPattern" | "OnEvent" | "Cron" | "Interval" | "Timeout" | "Process" | "SubscribeMessage") {
                 self.out.entry(&id, EntryKind::EventHandler, format!("event handler @{}", d.name));
             }
@@ -350,10 +369,19 @@ impl<'a> Walker<'a> {
             }
         }
 
-        // Server routes: `app.get("/x", handler)`, `router.post("/x", auth, handler)`.
-        let routerish = matches!(recv_last.as_str(), "app" | "router" | "server" | "fastify" | "routes" | "api") || recv_last.ends_with("router");
+        // Server routes: `app.get("/x", handler)`, `router.post("/x", auth, handler)`. `api` and
+        // `server` are also common names of HTTP clients (`api.get("/orders")` on an axios
+        // instance), so they count only in files that import a server framework.
+        let routerish = matches!(recv_last.as_str(), "app" | "router" | "fastify")
+            || recv_last.ends_with("router")
+            || self.imports_server && matches!(recv_last.as_str(), "server" | "routes" | "api");
+        // A route always has a handler after the path; a client call has a config object or nothing.
+        let handler_arg = args.last().copied().filter(|a| {
+            args.len() >= 2 && (crate::syntax::is_function_value(a.kind()) || matches!(a.kind(), "identifier" | "member_expression" | "call_expression"))
+        });
         if routerish
             && ROUTE_VERBS.contains(&name.as_str())
+            && let Some(handler_arg) = handler_arg
             && let Some(path) = first_string.as_ref().filter(|p| p.starts_with('/') || p.as_str() == "*")
         {
             let method = match name.as_str() {
@@ -361,8 +389,9 @@ impl<'a> Walker<'a> {
                 "all" => "ANY".to_owned(),
                 other => other.to_uppercase(),
             };
-            let handler = self.handler_of(args.last().copied()).unwrap_or_else(|| owner.clone());
-            self.out.routes.push(RouteFact { handler, method, path: path.clone(), framework: self.server.into(), span: src.span(node) });
+            let (handler, handler_ref) = self.handler_of(Some(handler_arg));
+            let handler = handler.unwrap_or_else(|| owner.clone());
+            self.out.routes.push(RouteFact { handler, handler_ref, method, path: path.clone(), framework: self.server.into(), span: src.span(node) });
             return;
         }
         if routerish && name == "use" {
@@ -373,7 +402,7 @@ impl<'a> Walker<'a> {
             if let Some(f) = args.last().filter(|a| crate::syntax::is_function_value(a.kind()))
                 && parameters(src, *f).len() == 4
             {
-                let handler = self.handler_of(Some(*f)).unwrap_or_else(|| owner.clone());
+                let handler = self.handler_of(Some(*f)).0.unwrap_or_else(|| owner.clone());
                 self.out.handlers.push(GlobalHandlerFact { handler, exception: "*".into(), framework: self.server.into(), span: src.span(node) });
             }
             return;
@@ -428,22 +457,25 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The symbol of a route handler argument: an inline function with a Blueprint, or a named function.
-    fn handler_of(&self, arg: Option<Node>) -> Option<String> {
-        let arg = arg?;
+    /// The symbol of a route handler argument (an inline function with a Blueprint, or a function
+    /// of this file named like it) and, for a name, the name as written for `nodex-core` to resolve
+    /// over the project (`ordersController.list` from another module).
+    fn handler_of(&self, arg: Option<Node>) -> (Option<String>, Option<String>) {
+        let Some(arg) = arg else { return (None, None) };
         if let Some(id) = self.function_ids.get(&arg.start_byte()) {
-            return Some(id.clone());
+            return (Some(id.clone()), None);
         }
         if matches!(arg.kind(), "identifier" | "member_expression") {
             let text = self.src.norm(arg);
             let name = text.rsplit('.').next().unwrap_or(&text);
-            return self
+            let local = self
                 .symbols
                 .iter()
                 .find(|s| s.name == name && matches!(s.kind, SymbolKind::Function | SymbolKind::Method))
                 .map(|s| s.id.clone());
+            return (local, Some(text));
         }
-        None
+        (None, None)
     }
 
     /// A URL as written; `p:<index>` when it is a parameter of the owner (an HTTP wrapper); `${x}`

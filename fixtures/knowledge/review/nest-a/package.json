@@ -1,0 +1,1 @@
+{ "name": "nest-a", "dependencies": { "@nestjs/core": "^10.0.0" } }

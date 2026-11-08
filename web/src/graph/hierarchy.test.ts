@@ -83,6 +83,18 @@ describe("hierarchy", () => {
     expect(fromClass.map((r) => r.target)).toEqual(["ns:App.Domain"]);
   });
 
+  it("drops empty scopes but keeps modules with code of their own", () => {
+    const ts = (id: string, hasFlow: boolean): Symbol => ({
+      ...sym(id, "Module", null),
+      language: "typescript",
+      origins: [span(`${id.replace(/^ns:/, "")}.ts`)],
+      has_flow: hasFlow,
+    });
+    const scripts = new Hierarchy(new StructureIndex({ symbols: [ts("ns:server/src/main", true), ts("ns:server/src/types", false)], edges: [] }));
+    expect(scripts.get("ns:server/src/main")).toBeDefined();
+    expect(scripts.get("ns:server/src/types")).toBeUndefined();
+  });
+
   it("builds nested nodes for open containers", () => {
     const g = hierarchyGraph(h, index, new Set(["grp:ns:App"]), kindsOf(["calls"]));
     const app = g.nodes.find((n) => n.id === "grp:ns:App")!;
