@@ -16,12 +16,17 @@ use crate::{AppState, ServerEvent};
 /// Extra quiet time before re-analyzing, so a burst of saves costs one analysis.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Starts one worker per language that has a semantic provider.
+/// Starts one worker per language that has a semantic provider (none when `NODEX_NO_SEMANTIC`
+/// is set: graphs stay syntax-only, as in tests).
 pub fn spawn(state: &Arc<AppState>) {
+    if std::env::var_os("NODEX_NO_SEMANTIC").is_some() {
+        return;
+    }
     let (root, frontends) = match state.project.lock() {
         Ok(p) => (p.root().to_path_buf(), p.active_frontends()),
         Err(_) => return,
     };
+    let generation = state.generation.load(std::sync::atomic::Ordering::SeqCst);
     for frontend in frontends {
         let (tx, rx) = mpsc::channel::<Vec<PathBuf>>();
         if let Ok(mut senders) = state.semantic_tx.lock() {
@@ -31,7 +36,12 @@ pub fn spawn(state: &Arc<AppState>) {
         let root = root.clone();
         let language = frontend.id();
         let spawned = std::thread::Builder::new().name(format!("nodex-semantic-{language:?}")).spawn(move || {
+            // Another project was opened meanwhile: this worker's results belong to the old one.
+            let current = || state.generation.load(std::sync::atomic::Ordering::SeqCst) == generation;
             let set = |s: SemanticState, detail: String| {
+                if !current() {
+                    return;
+                }
                 if let Ok(mut p) = state.project.lock() {
                     p.set_semantic_status(language, s, detail);
                 }
@@ -54,6 +64,7 @@ pub fn spawn(state: &Arc<AppState>) {
             let mut result = provider.analyze();
             loop {
                 match result {
+                    Ok(_) if !current() => return,
                     Ok(facts) => {
                         tracing::info!(?language, refs = facts.refs.len(), "semantic facts ready");
                         if let Ok(mut p) = state.project.lock() {

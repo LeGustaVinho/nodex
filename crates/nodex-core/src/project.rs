@@ -102,6 +102,11 @@ impl Project {
         Ok(project)
     }
 
+    /// Every language frontend the project was opened with.
+    pub fn frontends(&self) -> Vec<Arc<dyn LanguageFrontend>> {
+        self.frontends.clone()
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }

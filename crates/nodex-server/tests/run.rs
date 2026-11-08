@@ -175,3 +175,99 @@ async fn runs_the_rust_sample_and_records_its_execution() {
     let threads: std::collections::BTreeSet<i32> = calls.spans.iter().map(|s| s.thread).collect();
     assert!(threads.len() >= 2, "the worker ran on its own thread: {threads:?}");
 }
+
+/// A browser app (React + Vite): `npm install` in fixtures/web/react-vite first. Nodex starts
+/// the dev server on an instrumented copy; the test plays the page by loading the app's
+/// JavaScript in Node with the browser runtime's WebSocket, so no browser is needed.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs Node.js, the nodex-ts sidecar and npm install in fixtures/web/react-vite"]
+async fn runs_a_browser_app_under_its_dev_server() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/web/react-vite");
+    let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(nodex_lang_typescript::TypeScriptFrontend)];
+    let project = Project::open(&root, frontends).unwrap();
+    // A real server so the page's WebSocket can reach `/trace`.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let state = AppState::new(project, "t".into(), port, Vec::new());
+    tokio::spawn(axum::serve(listener, nodex_server::router(state.clone())).into_future());
+    let mut events = state.events.subscribe();
+
+    runner::start(&state).expect("run starts");
+    struct StopOnPanic(Arc<AppState>);
+    impl Drop for StopOnPanic {
+        fn drop(&mut self) {
+            self.0.run.stop();
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+    let _guard = StopOnPanic(state.clone());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    let mut output = Vec::new();
+    let url = loop {
+        let event = tokio::time::timeout_at(deadline, events.recv()).await.expect("dev server starts in time").expect("event");
+        match event {
+            ServerEvent::RunOutput { lines } => output.extend(lines.into_iter().map(|l| l.text)),
+            ServerEvent::RunStatus(s) if s.url.is_some() => break s.url.unwrap(),
+            ServerEvent::RunStatus(s) if matches!(s.state, RunState::Exited | RunState::Failed) => panic!("{s:?}\n{}", output.join("\n")),
+            _ => {}
+        }
+    };
+    assert!(url.starts_with("http://localhost:5181"), "{url}");
+
+    // The page as served by Vite: the instrumented module and the runtime with this run's URL.
+    let cart = reqwest_text(&format!("{url}src/cart.ts")).await;
+    assert!(cart.contains("__nx.step("), "{cart}");
+    let runtime = reqwest_text(&format!("{url}__nodex_runtime.js")).await;
+    let ws_url = runtime.split("const WS_URL = \"").nth(1).and_then(|r| r.split('"').next()).expect("runtime has the run's URL").to_owned();
+    assert!(ws_url.contains(&format!(":{port}/trace?run=")), "{ws_url}");
+
+    // Play the page: send one frame like the runtime does (Enter + Step of method 1).
+    let (mut socket, _) = tokio_tungstenite::connect_async(ws_url.as_str()).await.expect("trace socket accepts the run token");
+    let frame = nodex_trace::protocol::encode_frame(&[
+        nodex_trace::Record { kind: nodex_trace::RecordKind::Sequence, thread: 42, micros: 0, method: 0, arg: 1, text: None },
+        nodex_trace::Record { kind: nodex_trace::RecordKind::Enter, thread: 1, micros: 1, method: 1, arg: 0, text: None },
+        nodex_trace::Record { kind: nodex_trace::RecordKind::Step, thread: 1, micros: 2, method: 1, arg: 1, text: None },
+    ]);
+    use futures_util::SinkExt;
+    socket.send(tokio_tungstenite::tungstenite::Message::Binary(frame.into())).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let snapshot = state.run.snapshot().trace.expect("trace recorded");
+    assert!(snapshot.events >= 2, "{snapshot:?}");
+    // A wrong token is refused.
+    let bad = ws_url.replace("run=", "run=x");
+    assert!(tokio_tungstenite::connect_async(bad.as_str()).await.is_err());
+
+    assert!(state.run.stop());
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv()).await.expect("stops in time").expect("event");
+        if let ServerEvent::RunStatus(s) = event
+            && s.state == RunState::Exited
+        {
+            assert_eq!(s.exit_code, Some(0), "a stop is not a failure");
+            break;
+        }
+    }
+}
+
+async fn reqwest_text(url: &str) -> String {
+    let url = url.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let addr = url.trim_start_matches("http://");
+        let (host, path) = addr.split_once('/').map(|(h, p)| (h.to_owned(), format!("/{p}"))).unwrap_or((addr.to_owned(), "/".into()));
+        use std::io::{Read, Write};
+        use std::net::ToSocketAddrs;
+        // Node dev servers may listen on `localhost` as IPv6 only: try every address.
+        let mut s = host
+            .to_socket_addrs()
+            .expect("resolves")
+            .find_map(|a| std::net::TcpStream::connect_timeout(&a, Duration::from_secs(5)).ok())
+            .expect("dev server reachable");
+        s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        write!(s, "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+        let mut body = String::new();
+        s.read_to_string(&mut body).unwrap();
+        body
+    })
+    .await
+    .unwrap()
+}

@@ -8,6 +8,7 @@
 
 mod expr;
 mod flow;
+mod debug;
 pub mod instrument;
 pub mod project;
 pub mod semantic;
@@ -45,6 +46,10 @@ impl LanguageFrontend for RustFrontend {
 
     fn semantic(&self, root: &Path) -> Option<Result<Box<dyn SemanticProvider>, String>> {
         Some(semantic::RustAnalyzer::start(root).map(|s| Box::new(s) as Box<dyn SemanticProvider>))
+    }
+
+    fn debugger(&self) -> Option<Box<dyn nodex_lang_api::DebugLauncher>> {
+        Some(Box::new(debug::RustDebugger))
     }
 
     fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {

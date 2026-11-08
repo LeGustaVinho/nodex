@@ -9,6 +9,7 @@
 
 mod expr;
 mod flow;
+mod debug;
 mod instrument;
 mod prepare;
 mod project;
@@ -46,6 +47,10 @@ impl LanguageFrontend for CSharpFrontend {
 
     fn semantic(&self, root: &Path) -> Option<Result<Box<dyn SemanticProvider>, String>> {
         Some(roslyn::RoslynSidecar::start(root).map(|s| Box::new(s) as Box<dyn SemanticProvider>))
+    }
+
+    fn debugger(&self) -> Option<Box<dyn nodex_lang_api::DebugLauncher>> {
+        Some(Box::new(debug::DotnetDebugger))
     }
 
     fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {

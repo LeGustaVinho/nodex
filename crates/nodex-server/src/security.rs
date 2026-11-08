@@ -24,7 +24,9 @@ pub async fn check_host_and_origin(State(state): State<Arc<AppState>>, req: Requ
     if !allowed_hosts(state.port).iter().any(|h| h == host) {
         return (StatusCode::FORBIDDEN, "forbidden host").into_response();
     }
-    if let Some(origin) = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) {
+    // Traced browser pages come from the app's dev server; `/trace` checks the run token.
+    let trace_intake = req.uri().path() == "/trace";
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()).filter(|_| !trace_intake) {
         let ok = allowed_hosts(state.port).iter().any(|h| origin == format!("http://{h}"))
             || state.dev_origins.iter().any(|d| d == origin);
         if !ok {

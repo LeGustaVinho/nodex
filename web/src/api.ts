@@ -1,6 +1,16 @@
 import type { CallsPage } from "./gen/CallsPage";
 import type { Catalog } from "./gen/Catalog";
 import type { FlowGraph } from "./gen/FlowGraph";
+import type { FolderListing } from "./gen/FolderListing";
+import type { AdapterProgress } from "./gen/AdapterProgress";
+import type { AdapterStatus } from "./gen/AdapterStatus";
+import type { Breakpoint } from "./gen/Breakpoint";
+import type { DebugScope } from "./gen/DebugScope";
+import type { DebugStatus } from "./gen/DebugStatus";
+import type { DebugStopped } from "./gen/DebugStopped";
+import type { DebugVariable } from "./gen/DebugVariable";
+import type { Language } from "./gen/Language";
+import type { RecentProject } from "./gen/RecentProject";
 import type { OutputLine } from "./gen/OutputLine";
 import type { ProjectSummary } from "./gen/ProjectSummary";
 import type { RunSnapshot } from "./gen/RunSnapshot";
@@ -60,6 +70,42 @@ export const api = {
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),
   layout: (key: string) => json<Positions>(`/api/layout?key=${encodeURIComponent(key)}`),
+  listFolders: (path: string) => json<FolderListing>(`/api/fs/list?path=${encodeURIComponent(path)}`),
+  recent: () => json<RecentProject[]>("/api/recent"),
+  openProject: async (path: string) =>
+    (
+      await request("/api/project/open", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path }),
+      })
+    ).json() as Promise<ProjectSummary>,
+  debug: () => json<{ status: DebugStatus; stopped: DebugStopped | null }>("/api/debug"),
+  debugStart: () => request("/api/debug/start", { method: "POST" }),
+  debugCommand: (command: "continue" | "next" | "stepIn" | "stepOut" | "pause" | "stop") =>
+    request("/api/debug/command", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command }) }),
+  breakpoints: () => json<Breakpoint[]>("/api/debug/breakpoints"),
+  putBreakpoints: async (file: string, lines: number[]) =>
+    (
+      await request("/api/debug/breakpoints", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file, lines }),
+      })
+    ).json() as Promise<Breakpoint[]>,
+  debugVariables: (reference: number) => json<DebugVariable[]>(`/api/debug/variables?reference=${reference}`),
+  debugScopes: (frame: number) => json<DebugScope[]>(`/api/debug/scopes?frame=${frame}`),
+  debugEvaluate: async (expression: string, frame: number | null) =>
+    (
+      await request("/api/debug/evaluate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expression, frame }),
+      })
+    ).json() as Promise<DebugVariable>,
+  adapters: () => json<AdapterStatus[]>("/api/debug/adapters"),
+  installAdapter: (language: Language) =>
+    request("/api/debug/adapters/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ language }) }),
   run: () => json<RunSnapshot>("/api/run"),
   runStart: () => request("/api/run", { method: "POST" }),
   runStop: () => request("/api/run/stop", { method: "POST" }),
@@ -78,7 +124,14 @@ export type ServerEvent =
   | { type: "semantic-changed" }
   | { type: "run-status"; data: RunStatus }
   | { type: "run-output"; data: { lines: OutputLine[] } }
-  | { type: "trace-frame"; data: TraceFrame };
+  | { type: "trace-frame"; data: TraceFrame }
+  | { type: "project-loading"; data: { path: string } }
+  | { type: "project-changed" }
+  | { type: "project-failed"; data: { error: string } }
+  | { type: "adapter-progress"; data: AdapterProgress }
+  | { type: "debug-status"; data: DebugStatus }
+  | { type: "debug-stopped"; data: DebugStopped }
+  | { type: "debug-continued" };
 
 /** Connects to the live-update socket, reconnecting with backoff. Returns a disposer. */
 export function connectEvents(onEvent: (e: ServerEvent) => void, onStatus: (connected: boolean) => void): () => void {

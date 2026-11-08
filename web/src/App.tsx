@@ -1,9 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DETAIL_LEVELS } from "./graph/flowGraph";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ApiError, api, connectEvents, token } from "./api";
 import { CodePanel } from "./panels/CodePanel";
 import { ConsolePanel, RunButton } from "./panels/RunPanel";
+import { OpenDialog } from "./panels/OpenDialog";
+import { DebugControls, DebugPanel } from "./panels/DebugPanel";
+import { loadDebug, useDebug } from "./debug";
 import { useTrace } from "./trace";
 import { Inspector } from "./panels/Inspector";
 import { Sidebar } from "./panels/Sidebar";
@@ -24,6 +27,7 @@ function useLiveUpdates() {
   const setConnected = useUi((s) => s.setConnected);
   useEffect(() => {
     void api.run().then((snap) => useTrace.getState().loadSnapshot(snap)).catch(() => undefined);
+    void loadDebug();
   }, []);
   useEffect(
     () =>
@@ -33,6 +37,33 @@ function useLiveUpdates() {
           if (event.type === "run-status") trace.setStatus(event.data);
           else if (event.type === "run-output") trace.appendOutput(event.data.lines);
           else if (event.type === "trace-frame") trace.applyFrame(event.data);
+          else if (event.type === "project-loading") useUi.getState().setProjectLoading(event.data.path);
+          else if (event.type === "project-failed") useUi.getState().setProjectLoading(null);
+          else if (event.type === "debug-status") useDebug.getState().setStatus(event.data);
+          else if (event.type === "debug-continued") useDebug.getState().setStopped(null);
+          else if (event.type === "adapter-progress") {
+            useDebug.getState().setProgress(event.data);
+            if (event.data.done) void queryClient.invalidateQueries({ queryKey: ["adapters"] });
+          } else if (event.type === "debug-stopped") {
+            useDebug.getState().setStopped(event.data);
+            // Show where it stopped: the Blueprint of the top project frame, at its node.
+            const top = event.data.frames.find((f) => f.flow);
+            if (top?.flow) {
+              const ui = useUi.getState();
+              if (ui.flowSymbol !== top.flow || ui.view !== "blueprint") ui.openFlow(top.flow);
+              if (top.node) ui.select({ kind: "flow-node", flow: top.flow, id: top.node });
+            }
+            void queryClient.invalidateQueries({ queryKey: ["debug-scopes"] });
+            void queryClient.invalidateQueries({ queryKey: ["debug-watch"] });
+          } else if (event.type === "project-changed") {
+            // Everything shown belonged to the old project.
+            trace.reset();
+            useDebug.getState().reset();
+            void loadDebug();
+            useUi.getState().resetForProject();
+            queryClient.clear();
+            return;
+          }
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys = event.type === "graph-changed" ? ["structure", "project", "flow", "source"] : ["structure", "project", "flow"];
             for (const key of keys) {
@@ -52,6 +83,7 @@ function TopBar() {
   const { index } = useStructure();
   const flowSymbol = ui.flowSymbol ? index?.byId.get(ui.flowSymbol) : undefined;
   const root = project.data?.root;
+  const [opening, setOpening] = useState(false);
   useEffect(() => {
     if (root) useUi.getState().loadDetail(root);
   }, [root]);
@@ -59,7 +91,15 @@ function TopBar() {
     <header className="topbar">
       <div className="brand">
         <span className="logo">◆</span> Nodex
-        {project.data && <span className="project-name">{project.data.name}</span>}
+        {project.data && (
+          <span className="project-name" title={project.data.root}>
+            {project.data.name}
+          </span>
+        )}
+        <button className="open-btn" onClick={() => setOpening(true)} title="Open another project or folder">
+          Open…
+        </button>
+        {opening && <OpenDialog onClose={() => setOpening(false)} />}
         {project.data?.flavors.includes("unity") && <span className="badge badge-unity">Unity</span>}
       </div>
       <nav className="tabs">
@@ -127,6 +167,7 @@ function TopBar() {
         )}
       </div>
       <RunButton />
+      <DebugControls />
       <SemanticBadge />
       <span className={`status ${ui.connected ? "on" : "off"}`} title={ui.connected ? "Live: updates on save" : "Disconnected"}>
         ●
@@ -177,6 +218,7 @@ export function App() {
         <ConsolePanel />
       </main>
       <section className="right">
+        <DebugPanel />
         <Inspector />
         <CodePanel />
       </section>

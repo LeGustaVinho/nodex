@@ -185,6 +185,22 @@ pub struct Recorder {
 }
 
 impl Recorder {
+    /// Adds methods of files instrumented again during the run (a browser app under a dev
+    /// server) and resolves against the current IR from now on.
+    pub fn extend(&mut self, methods: Vec<crate::map::MethodMap>, resolver: Resolver) {
+        for m in methods {
+            self.methods.insert(m.id, m);
+        }
+        self.resolver = resolver;
+        self.points.clear();
+        self.method_flow.clear();
+    }
+
+    /// The highest method id known (new methods continue after it).
+    pub fn max_method_id(&self) -> i32 {
+        self.methods.keys().copied().max().unwrap_or(0)
+    }
+
     pub fn new(map: &TraceMap, resolver: Resolver) -> Self {
         Self {
             methods: map.by_id(),

@@ -8,6 +8,7 @@
 mod expr;
 mod flow;
 mod frameworks;
+mod debug;
 mod instrument;
 mod prepare;
 mod project;
@@ -46,6 +47,10 @@ impl LanguageFrontend for TypeScriptFrontend {
 
     fn semantic(&self, root: &Path) -> Option<Result<Box<dyn SemanticProvider>, String>> {
         Some(semantic::TsSidecar::start(root).map(|s| Box::new(s) as Box<dyn SemanticProvider>))
+    }
+
+    fn debugger(&self) -> Option<Box<dyn nodex_lang_api::DebugLauncher>> {
+        Some(Box::new(debug::NodeDebugger))
     }
 
     fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {

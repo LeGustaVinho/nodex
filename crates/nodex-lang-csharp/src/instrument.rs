@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use nodex_lang_api::{RunCommand, TraceInstrumenter};
+use nodex_lang_api::{RunCommand, RunEnv, RunKind, TraceInstrumenter};
 
 use crate::sidecar;
 
@@ -13,7 +13,7 @@ const SKIP_DIRS: &[&str] = &["bin", "obj", ".git", "node_modules", "Library", "T
 pub struct DotnetInstrumenter;
 
 impl TraceInstrumenter for DotnetInstrumenter {
-    fn prepare(&self, root: &Path, out_dir: &Path, log: &mut dyn FnMut(&str)) -> Result<RunCommand, String> {
+    fn prepare(&self, root: &Path, out_dir: &Path, _env: &RunEnv, log: &mut dyn FnMut(&str)) -> Result<RunCommand, String> {
         let project = find_executable_project(root)?;
         let weaver = sidecar::locate("Nodex.Weaver", "NODEX_WEAVER")
             .ok_or("Nodex.Weaver not found; build it with `dotnet build sidecars/dotnet/Nodex.Weaver -c Release` or set NODEX_WEAVER")?;
@@ -42,12 +42,14 @@ impl TraceInstrumenter for DotnetInstrumenter {
             cwd: project.parent().unwrap_or(root).to_path_buf(),
             trace_map: traced.join("nodex-trace-map.json"),
             description: format!("{app} (.NET, instrumented)"),
+            kind: RunKind::Program,
+            env: Vec::new(),
         })
     }
 }
 
 /// Runs a command, forwarding each output line to `log`; returns stdout on success.
-fn run_logged(mut cmd: Command, log: &mut dyn FnMut(&str)) -> Result<String, String> {
+pub(crate) fn run_logged(mut cmd: Command, log: &mut dyn FnMut(&str)) -> Result<String, String> {
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -80,7 +82,7 @@ fn run_logged(mut cmd: Command, log: &mut dyn FnMut(&str)) -> Result<String, Str
 }
 
 /// The first `.csproj` (three folders deep) with `<OutputType>Exe</OutputType>`.
-fn find_executable_project(root: &Path) -> Result<PathBuf, String> {
+pub(crate) fn find_executable_project(root: &Path) -> Result<PathBuf, String> {
     let mut found = Vec::new();
     collect(root, 0, &mut found);
     found.sort();
@@ -113,7 +115,7 @@ fn collect(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 }
 
 /// The app's assembly name, from `<name>.runtimeconfig.json` in the build output.
-fn entry_assembly(build: &Path, project: &Path) -> Result<String, String> {
+pub(crate) fn entry_assembly(build: &Path, project: &Path) -> Result<String, String> {
     let stem = project.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let configs: Vec<String> = std::fs::read_dir(build)
         .map_err(|e| e.to_string())?
