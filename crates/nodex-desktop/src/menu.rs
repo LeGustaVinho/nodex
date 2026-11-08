@@ -52,6 +52,7 @@ fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let help = SubmenuBuilder::new(app, "&Help")
         .text("docs", "&Documentation")
         .text("logs", "Open &Logs Folder")
+        .text("licenses", "Third-Party &Licenses")
         .separator()
         .text("updates", "Check for &Updates…")
         .text("about", "&About Nodex")
@@ -122,9 +123,25 @@ pub fn handle(app: &AppHandle, event: MenuEvent) {
                 error_dialog(app, "Cannot open the logs folder", &e.to_string());
             }
         }
+        "licenses" => {
+            // Shipped next to the app; a build in the repository finds the staged copy.
+            let file = nodex_lang_api::sidecar::locate(
+                "NODEX_NOTICES",
+                &["THIRD-PARTY-NOTICES.txt"],
+                &["target/nodex-dist/resources/THIRD-PARTY-NOTICES.txt"],
+            );
+            match file {
+                Some(file) => {
+                    if let Err(e) = app.opener().open_path(file.to_string_lossy(), None::<&str>) {
+                        error_dialog(app, "Cannot open the licenses", &e.to_string());
+                    }
+                }
+                None => error_dialog(app, "Third-party licenses", "This build does not include THIRD-PARTY-NOTICES.txt (run cargo xtask dist)."),
+            }
+        }
         "about" => {
             let text = format!(
-                "Nodex {}\n\nRead code in any language as node graphs.\n\nMIT License",
+                "Nodex {}\n\nRead code in any language as node graphs.\n\nMIT License. Includes third-party software: Help → Third-Party Licenses.",
                 env!("CARGO_PKG_VERSION")
             );
             app.dialog().message(text).title("About Nodex").show(|_| {});

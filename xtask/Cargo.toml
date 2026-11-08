@@ -7,3 +7,4 @@ publish = false
 description = "Nodex build tasks: `cargo xtask dist` builds the web UI, the sidecars and the installer"
 
 [dependencies]
+serde_json.workspace = true

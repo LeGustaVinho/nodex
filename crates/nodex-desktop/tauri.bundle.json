@@ -3,7 +3,9 @@
   "bundle": {
     "resources": {
       "../../target/nodex-dist/resources/sidecars/": "sidecars/",
-      "../../target/nodex-dist/resources/samples/": "samples/"
+      "../../target/nodex-dist/resources/samples/": "samples/",
+      "../../target/nodex-dist/resources/LICENSE.txt": "LICENSE.txt",
+      "../../target/nodex-dist/resources/THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
     },
     "windows": {
       "nsis": {

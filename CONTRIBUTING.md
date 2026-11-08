@@ -13,7 +13,7 @@ Open an issue with:
 
 ## Building from source
 
-You need Rust (stable), Node.js with pnpm, and the .NET 10 SDK. See [README.md](README.md) for the commands. In short:
+You need Rust (stable), Node.js with pnpm, and the .NET 10 SDK. See [docs/development.md](docs/development.md) for the details. In short:
 
 ```bash
 pnpm --dir web install

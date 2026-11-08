@@ -19,6 +19,8 @@
 //! `cargo xtask version <x.y.z>` sets the version everywhere it is written; `cargo xtask notes
 //! <x.y.z>` prints that version's CHANGELOG section (the release notes).
 
+mod licenses;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -38,10 +40,15 @@ fn main() -> ExitCode {
         Some("dist") => dist(&args[1..]),
         Some("version") if args.len() == 2 => set_version(&args[1]),
         Some("notes") if args.len() == 2 => release_notes(&args[1]).map(|n| println!("{n}")),
+        Some("licenses") => {
+            let stage = stage_dir(&root());
+            licenses::write(&root(), &stage, &stage.join("THIRD-PARTY-NOTICES.txt"))
+        }
         _ => {
             eprintln!("usage: cargo xtask dist [--no-bundle] [--skip-web]");
             eprintln!("       cargo xtask version <x.y.z>");
             eprintln!("       cargo xtask notes <x.y.z>");
+            eprintln!("       cargo xtask licenses   (after dist --no-bundle)");
             return ExitCode::from(2);
         }
     };
@@ -56,6 +63,11 @@ fn main() -> ExitCode {
 
 type Result<T = ()> = std::result::Result<T, String>;
 
+/// Where `dist` stages what the installer adds to the app's resource folder.
+fn stage_dir(root: &Path) -> PathBuf {
+    root.join("target").join("nodex-dist").join("resources")
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the repository").to_path_buf()
 }
@@ -64,7 +76,7 @@ fn dist(args: &[String]) -> Result {
     let bundle = !args.iter().any(|a| a == "--no-bundle");
     let web = !args.iter().any(|a| a == "--skip-web");
     let root = root();
-    let stage = root.join("target").join("nodex-dist").join("resources");
+    let stage = stage_dir(&root);
     if stage.exists() {
         fs::remove_dir_all(&stage).map_err(|e| format!("cannot clear {}: {e}", stage.display()))?;
     }
@@ -119,6 +131,10 @@ fn dist(args: &[String]) -> Result {
             }
         }
     }
+
+    step("Licenses");
+    fs::copy(root.join("LICENSE"), stage.join("LICENSE.txt")).map_err(|e| format!("cannot copy LICENSE: {e}"))?;
+    licenses::write(&root, &stage, &stage.join("THIRD-PARTY-NOTICES.txt"))?;
 
     println!("\nStaged resources in {}", stage.display());
     if !bundle {

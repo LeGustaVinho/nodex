@@ -1,113 +1,55 @@
 # Nodex
 
-Nodex turns source code into language-agnostic, Blueprint-style node graphs so a programmer can read code in a language they do not know.
-The same logic looks the same in every language: a C# `foreach`, a TypeScript `for..of` and a Rust `for x in iter` are one **For Each** node.
+**Read code in any language as node graphs.**
 
-**Status**: milestones M0–M4.1 — C# (plain .NET and Unity) structure, Blueprints, Roslyn semantics with a Calls view, and live execution traces for .NET programs with replay, exceptions and a call Timeline. Unity Play Mode traces, TypeScript and Rust are on the roadmap. M9 adds a knowledge graph for C#, TypeScript/JavaScript and Rust — entry points, HTTP routes and the front-end calls that reach them, dependency injection, tests, exceptions and data models — ported from CodeGraph. It also reads authorization (roles, policies, anonymous endpoints), mounted routers (Express `app.use`, axum `nest`, actix `scope`, Rocket `mount`), commands, background jobs, message consumers, UI handlers and pages, constructor injection, and state machines declared with XState, Stateless or a Unity Animator.
-Full documentation lives in the Obsidian vault at `D:\MEGA\Obsidian\Default\Nodex` (start at `Nodex.md`).
+Nodex turns C#, Unity, TypeScript/JavaScript and Rust projects into language-agnostic, Blueprint-style node graphs, UML diagrams and live execution traces. A programmer can then read code in a language they do not know. The same logic looks the same in every language: a C# `foreach`, a TypeScript `for..of` and a Rust `for x in iter` are one **For Each** node.
 
-## Quick start
+![A function as a Blueprint, with its inspector and code](docs/images/blueprint.png)
 
-```bash
-pnpm --dir web install
-```
+## Download
 
-```bash
-pnpm --dir web build
-```
+Get the installer from the [latest release](https://github.com/LeGustaVinho/nodex/releases/latest) (`Nodex_<version>_x64-setup.exe`, Windows 10 and 11) and run it. It installs for your user only, without administrator rights, and keeps itself up to date.
 
-Optional, for exact calls, events and `var` types (needs the .NET 10 SDK):
+> The installer is not code-signed yet, so Windows may say it "protected your PC". Choose **More info → Run anyway**.
 
-```bash
-dotnet build sidecars/dotnet/Nodex.Roslyn -c Release
-```
+Then open a folder from the welcome screen, drop one on the window, or right-click a folder in Explorer and choose **Open with Nodex**. New to Nodex? Start with one of the sample projects on the welcome screen.
 
-Optional, to run programs with live traces (**▶ Run** in the UI):
+![The welcome screen](docs/images/welcome.png)
 
-```bash
-dotnet build sidecars/dotnet/Nodex.Weaver -c Release
-```
+## What you need
 
-```bash
-cargo run --release -p nodex-server -- open fixtures/csharp/Sample
-```
+Nodex shows every project's structure and graphs on its own. Each language's toolchain adds exact, compiler-grade analysis, ▶ Run with live traces, and debugging. The welcome screen and the Environment dialog show what is installed.
 
-The server prints a link with a session token and opens it in your browser.
+| Language | Install | It adds |
+| :--- | :--- | :--- |
+| C# (.NET) | [.NET SDK 10](https://dotnet.microsoft.com/download) or newer | Exact calls, events and types; Run and Debug |
+| Unity | [Unity](https://unity.com/download) 2021.3 or newer (and the .NET SDK for exact C# analysis) | Play Mode traces and debugging |
+| TypeScript / JavaScript | [Node.js](https://nodejs.org/en/download) | Exact calls and types; Run and Debug for Node and browser apps |
+| Rust | [rustup](https://rustup.rs) with `rust-analyzer` | Exact calls and types; Run and Debug |
 
-Or run the desktop app, which hosts the same server and UI in its own window (open a folder with File → Open Folder…, by dropping it on the window, or by passing it as an argument):
+## What it shows
 
-```bash
-cargo run --release -p nodex-desktop
-```
+- **Overview**: entry points, HTTP routes, hotspots, data models and state machines.
+- **Hierarchy**: folders, namespaces, types and members as boxes that open in place.
+- **Knowledge**: front-end calls to back-end routes, dependency injection, tests, exceptions and data writes.
+- **UML**: use case, component, class, sequence, activity, state and package diagrams, exported as Mermaid, SVG or PNG.
+- **Architecture**, **Types** and **Calls**: how the code fits together.
+- **Blueprint**: one function as nodes, with plain-language labels, an inspector that explains each concept, and two-way sync with the code.
+- **▶ Run** and **Timeline**: run the program and watch the graphs light up, then replay any call step by step.
+- **Debug**: breakpoints and stepping, in the code and in the graph.
 
-## Views
+![A sequence diagram drawn from the code](docs/images/uml.png)
 
-- **Overview** — what the project is: entry points (program, routes, commands, jobs, message consumers, UI), HTTP routes, hotspots (cyclomatic complexity), data models, declared state machines, and relations by kind.
-- **Hierarchy** — folders and namespaces, modules, types and members as boxes that open in place; relations roll up onto the visible boxes.
-- **Knowledge** — HTTP calls from front-end code to back-end routes, dependency injection (registrations and constructor injection), tests, thrown and caught exceptions, and data writes, around one symbol or for the whole project. Relations no compiler proves are drawn dashed (inferred) or dotted red (unresolved).
-- **UML** — the seven UML diagrams (Mermaid) of the project, a folder, a file, a symbol or the selected code: members with UML visibility, inheritance and realization, associations with multiplicities, composition and aggregation, entities and their keys, controllers and DI services as stereotypes; packages with coupling metrics and dependency cycles; components with the HTTP calls between front end and back end, provided interfaces, databases, caches and external APIs. Right-click a folder, a file, a symbol or a Hierarchy box, use the Inspector, the palette, or Ctrl+Shift+U in the code. Activity diagrams show how a function runs (decisions, loops with their way back, try/catch, fork/join, the HTTP requests and data changes it makes, calls expanded in place on demand); sequence diagrams follow a function's calls through other types and modules, across HTTP from front end to back end, through dependency injection to the implementation, down to the database, with alt/opt/loop/par/critical fragments. A wider scope lists its functions to start from (entry points first). State diagrams come from declared machines (XState, Stateless, Unity Animator) and from the code: enum, literal and flag fields, a stored entity's status changed by services (triggered by the route that reaches them), React `useState`, the State pattern, a local driving a loop and Rust type-states, with source states read from guard clauses, `switch` cases and helper guards. Use case diagrams show the entry points by component with their actors (roles from `[Authorize]`, `@Roles` or `requireRole`, visitors, operators, schedulers, brokers), «include» and «extend» from shared operations, and UI actions that include the API use case they call. After a run, a sequence diagram can draw the recorded calls of any call picked in the Timeline (arguments, return values, exceptions, repeated calls folded into loops), and activity and sequence diagrams mark what ran. Click an element to see why it is drawn; export Mermaid, Markdown, SVG or PNG. 
-- **Architecture** — namespaces, imported namespaces and packages.
-- **Types** — classes, interfaces and records, with *extends*, *implements*, *uses* and *creates* edges.
-- **Calls** — callers and callees of a function, including events it raises and who handles them (needs the sidecar).
-- **Timeline** — after a run, every function call as a bar over time (flame chart); double-click one to replay it.
-- **▶ Run** — builds an instrumented copy of a .NET program and runs it: nodes count executions, show the values they produce and glow while running; **Replay** walks through a function step by step.
-- **Blueprint** — the statements of one function as nodes, with exec wires, data wires for locals, plain-language labels, an inspector that explains each concept, and two-way sync with the code.
+The [guide](docs/guide.md) explains each view, Run and debugging, settings and troubleshooting.
 
-## Repository layout
+## Privacy
 
-| Path | Contents |
-| :--- | :--- |
-| `crates/nodex-ir` | Language-agnostic IR; generates TypeScript types into `web/src/gen` |
-| `crates/nodex-lang-api` | `LanguageFrontend` trait and the lowering kit |
-| `crates/nodex-lang-csharp` | C#/Unity frontend (tree-sitter) |
-| `crates/nodex-core` | Project model, linker, concept catalog, canonical forms, knowledge graph (routes, HTTP links, DI, tests, caught exceptions) |
-| `crates/nodex-uml` | UML diagrams (use case, component, class, sequence, activity, state, package) built from the structure, knowledge and flow graphs and recorded runs, as Mermaid text |
-| `crates/nodex-trace` | Trace protocol decoder, span resolver, recorder (counts, values, replay timeline, call tree with callers and call sites) |
-| `crates/nodex-server` | `nodex` CLI, HTTP/WebSocket API, file watcher, semantic worker, run manager, embedded UI |
-| `crates/nodex-desktop` | Desktop app (Tauri): the server in-process and the UI in a native window, menu, single instance |
-| `web/` | React + React Flow + ELK + Monaco UI |
-| `catalog/` | Concept and flavor definitions (single source for code, UI and docs) |
-| `fixtures/` | C#, Unity and Rosetta (same algorithm in C#/TS/Rust) test inputs |
-| `sidecars/` | Planned .NET and Unity helpers (Roslyn semantics, trace runtime, IL weaver) |
+Your code never leaves your computer. Nodex goes online only for two things: to check for updates, and to download a debug adapter when you click Install. Adapters are checked against a pinned hash, and updates are signed.
 
-Press **Ctrl+K** (or `/`) anywhere to search symbols and views.
+## Contributing
 
-## Development
+Bug reports and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). To build from source, run the tests or make the installer, see [docs/development.md](docs/development.md). Security issues: [SECURITY.md](SECURITY.md).
 
-```bash
-cargo test --workspace
-```
+## License
 
-```bash
-pnpm --dir web test
-```
-
-Tests that drive the real .NET sidecars (Roslyn, weaver) are ignored by default; run them after building both:
-
-```bash
-cargo test --workspace -- --ignored
-```
-
-Build the Windows installer (web UI, .NET and Node sidecars, trace runtimes and samples, then `cargo tauri build`; needs pnpm, npm, the .NET SDK and the Tauri CLI):
-
-```bash
-cargo install tauri-cli --version "^2" --locked
-```
-
-```bash
-cargo xtask dist
-```
-
-The installer lands in `target/release/bundle/nsis/`. It installs per user (no administrator rights) and adds "Open with Nodex" to folders in Explorer. `cargo xtask dist --no-bundle` only stages the resources in `target/nodex-dist/resources`.
-
-UI development with hot reload — start the server allowing the Vite origin, then Vite:
-
-```bash
-cargo run -p nodex-server -- open fixtures/csharp/Sample --no-browser --dev-origin http://localhost:5173
-```
-
-```bash
-pnpm --dir web dev
-```
-
-Open the "Dev UI" link the server prints. After changing IR types, run `cargo test -p nodex-ir -p nodex-core` to regenerate `web/src/gen`.
+[MIT](LICENSE). Nodex includes third-party software under its own licenses, listed in the app under Help → Third-Party Licenses.

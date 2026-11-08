@@ -88,7 +88,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               <span className="muted">Version</span>
               <span>Nodex {env.data?.version ?? "…"}</span>
               <span className="muted">License</span>
-              <span>MIT</span>
+              <span>MIT{isDesktop && " · third-party licenses: Help → Third-Party Licenses"}</span>
               <span className="muted">Source</span>
               <a href={REPOSITORY} target="_blank" rel="noreferrer">
                 {REPOSITORY.replace("https://", "")}
