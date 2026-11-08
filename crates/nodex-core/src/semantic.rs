@@ -5,7 +5,7 @@
 //! - Flows: resolved call targets on nodes and expressions, event subscriptions and raises
 //!   promoted to `Subscribe`/`Emit`, inferred types on `var` data pins.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use nodex_ir::semantic::{ByteRange, RefKind, SemanticFacts, SemanticTarget};
 use nodex_ir::{
@@ -23,12 +23,18 @@ struct Entry {
 /// Finds the symbol declared at a byte offset, through declaration spans (`Symbol::origins`).
 pub struct Locator {
     by_file: HashMap<String, Vec<Entry>>,
+    /// Kind of every located symbol, by id.
+    kinds: HashMap<SymbolId, SymbolKind>,
 }
 
 impl Locator {
     pub fn new(symbols: &[Symbol]) -> Self {
         let mut by_file: HashMap<String, Vec<Entry>> = HashMap::new();
+        let mut kinds = HashMap::new();
         for s in symbols.iter().filter(|s| !s.external) {
+            if !s.origins.is_empty() {
+                kinds.insert(s.id.clone(), s.kind);
+            }
             for o in &s.origins {
                 by_file.entry(o.file.clone()).or_default().push(Entry {
                     start: o.start_byte,
@@ -39,7 +45,7 @@ impl Locator {
                 });
             }
         }
-        Self { by_file }
+        Self { by_file, kinds }
     }
 
     /// The smallest symbol whose declaration contains `byte` and passes `filter`.
@@ -70,7 +76,7 @@ impl Locator {
     }
 
     fn kind_of(&self, id: &str) -> Option<SymbolKind> {
-        self.by_file.values().flatten().find(|e| e.id == id).map(|e| e.kind)
+        self.kinds.get(id).copied()
     }
 }
 
@@ -89,7 +95,8 @@ pub struct SemanticEdges {
 
 pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> SemanticEdges {
     let mut edges = BTreeSet::new();
-    let mut externals: HashMap<String, Symbol> = HashMap::new();
+    // Sorted by id, so the graph comes out the same on every run.
+    let mut externals: BTreeMap<String, Symbol> = BTreeMap::new();
     let mut typed_bases = HashSet::new();
     let mut constructs = Vec::new();
     let mut calls = Vec::new();

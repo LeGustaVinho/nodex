@@ -238,10 +238,14 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
         }
         out
     };
+    let mut dispatch_from: HashMap<&str, Vec<&StructEdge>> = HashMap::new();
+    for d in &dispatch {
+        dispatch_from.entry(d.from.as_str()).or_default().push(d);
+    }
     let mut sites: Vec<global::CallSite> = Vec::new();
     for c in calls {
         let catches = catches_at(&c.file, c.start, c.end);
-        for d in dispatch.iter().filter(|d| d.from == c.owner) {
+        for d in dispatch_from.get(c.owner.as_str()).into_iter().flatten() {
             let reaches = symbols.get(d.to.as_str()).zip(symbols.get(c.target.as_str())).is_some_and(|(imp, iface)| imp.name == iface.name);
             if reaches {
                 sites.push(global::CallSite { owner: c.owner.clone(), target: d.to.clone(), catches: catches.clone() });

@@ -251,17 +251,24 @@ pub fn test_edges(ctx: &Ctx, infos: &BTreeMap<SymbolId, SymbolInfo>) -> Vec<Stru
                 .or_insert_with(|| StructEdge::new(e.from.clone(), e.to.clone(), StructEdgeKind::Tests).with_evidence("the test calls it"));
         }
     }
+    // Modules by the last segment of their path (`src/auth` → `auth`), for test modules.
+    let mut modules_by_stem: HashMap<&str, Vec<&Symbol>> = HashMap::new();
+    for s in ctx.symbols.values().filter(|s| s.kind == SymbolKind::Module) {
+        if let Some((_, last)) = s.qualified_name.rsplit_once('/') {
+            modules_by_stem.entry(last).or_default().push(s);
+        }
+    }
     for id in infos.iter().filter(|(_, i)| i.test).map(|(id, _)| id) {
         let Some(sym) = ctx.symbols.get(id.as_str()) else { continue };
         if sym.kind == SymbolKind::Module {
             // `__tests__/auth.test` → the module `.../auth`.
             let last = sym.qualified_name.rsplit('/').next().unwrap_or(&sym.qualified_name);
             let Some(stem) = [".test", ".spec", ".e2e-spec", ".e2e"].iter().find_map(|s| last.strip_suffix(s)) else { continue };
-            let suffix = format!("/{stem}");
-            let targets: Vec<&&Symbol> = ctx
-                .symbols
-                .values()
-                .filter(|s| s.kind == SymbolKind::Module && s.id != *id && s.qualified_name.ends_with(&suffix) && !is_test(&s.id))
+            let targets: Vec<&&Symbol> = modules_by_stem
+                .get(stem)
+                .into_iter()
+                .flatten()
+                .filter(|s| s.id != *id && !is_test(&s.id))
                 .collect();
             if let [target] = targets.as_slice() {
                 out.entry((id.clone(), target.id.clone())).or_insert_with(|| {

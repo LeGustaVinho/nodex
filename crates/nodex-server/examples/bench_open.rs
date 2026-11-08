@@ -94,8 +94,8 @@ fn main() {
         println!("summary json           {}   {}", ms(summary_t), mb(summary.len()));
         println!("structure + knowledge  {}   {} symbols, {} edges", ms(structure_t), graph.symbols.len(), graph.edges.len());
         println!("knowledge (cached)     {}", ms(knowledge_t));
-        println!("structure json         {}   {}", ms(graph_json_t), mb(graph_json.len()));
-        println!("knowledge json         {}   {}", ms(knowledge_json_t), mb(knowledge_json.len()));
+        println!("structure json         {}   {}  hash {:016x}", ms(graph_json_t), mb(graph_json.len()), hash(&graph_json));
+        println!("knowledge json         {}   {}  hash {:016x}", ms(knowledge_json_t), mb(knowledge_json.len()), hash(&knowledge_json));
         println!("time to first data     {}", ms(open + structure_t + graph_json_t));
         last = Some(project);
     }
@@ -137,7 +137,15 @@ fn main() {
     let (graph, rebuild_t) = time(|| project.structure());
     let (graph_json, graph_json_t) = time(|| serde_json::to_vec(&*graph).unwrap());
     println!("rebuild with facts     {}   {} symbols, {} edges", ms(rebuild_t), graph.symbols.len(), graph.edges.len());
-    println!("structure json         {}   {}", ms(graph_json_t), mb(graph_json.len()));
+    println!("structure json         {}   {}  hash {:016x}", ms(graph_json_t), mb(graph_json.len()), hash(&graph_json));
+}
+
+/// A hash of a payload, to check that a change leaves the output identical.
+fn hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
 }
 
 /// Lowers every file again on this thread and prints the slowest ones.

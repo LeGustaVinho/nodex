@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use nodex_ir::knowledge::ProjectKnowledge;
 use nodex_ir::semantic::{SemanticFacts, SemanticState, SemanticStatus};
-use nodex_ir::{Diagnostic, FileIr, FlowGraph, Language, PackageRef, StructEdgeKind, StructureGraph};
+use nodex_ir::{Diagnostic, FileIr, FlowGraph, Language, PackageRef, StructEdge, StructEdgeKind, StructureGraph};
 use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SourceFile};
 use rayon::prelude::*;
 use serde::Serialize;
@@ -274,6 +274,7 @@ impl Project {
         let mut constructs = knowledge::Constructs::new();
         let mut calls: Vec<knowledge::RawCallSite> = Vec::new();
         let timer = crate::perf::phase("structure.semantic");
+        let mut known: std::collections::HashSet<String> = graph.symbols.iter().map(|s| s.id.clone()).collect();
         for (language, entry) in &self.semantic {
             let Some(facts) = &entry.facts else { continue };
             let derived = semantic::edges(facts, &locator, *language);
@@ -287,12 +288,13 @@ impl Project {
                 !(matches!(e.kind, StructEdgeKind::Inherits | StructEdgeKind::Implements) && derived.typed_bases.contains(&e.from))
             });
             for ext in derived.externals {
-                if !graph.symbols.iter().any(|s| s.id == ext.id) {
+                if known.insert(ext.id.clone()) {
                     graph.symbols.push(ext);
                 }
             }
+            let mut present: std::collections::HashSet<StructEdge> = graph.edges.iter().cloned().collect();
             for e in derived.edges {
-                if !graph.edges.contains(&e) {
+                if present.insert(e.clone()) {
                     graph.edges.push(e);
                 }
             }
@@ -309,7 +311,6 @@ impl Project {
         let derived = knowledge::build(&graph, &files, &constructs, &calls, &package_roots);
         timer.finish("");
         let timer = crate::perf::phase("structure.merge");
-        let mut known: std::collections::HashSet<String> = graph.symbols.iter().map(|s| s.id.clone()).collect();
         for ext in derived.externals {
             if known.insert(ext.id.clone()) {
                 graph.symbols.push(ext);
@@ -327,7 +328,7 @@ impl Project {
         // Drop external types no edge refers to any more (name-based guesses replaced above).
         let referenced: std::collections::HashSet<&str> =
             graph.edges.iter().flat_map(|e| [e.from.as_str(), e.to.as_str()]).collect();
-        let orphans: Vec<String> = graph
+        let orphans: std::collections::HashSet<String> = graph
             .symbols
             .iter()
             .filter(|s| s.id.starts_with("ext:") && !referenced.contains(s.id.as_str()))

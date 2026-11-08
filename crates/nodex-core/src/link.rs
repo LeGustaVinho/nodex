@@ -84,16 +84,16 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
 
     // 3. Type references.
     let index = TypeIndex::new(&symbols);
-    let imports_by_file: HashMap<&str, Vec<&str>> = files
-        .iter()
-        .map(|f| (f.file.as_str(), f.imports.iter().map(|i| i.target.as_str()).collect()))
-        .collect();
+    // Namespaces of the referring symbols, dotted (`app::orders` → `app.orders`), computed once.
+    let mut namespaces: HashMap<String, Option<String>> = HashMap::new();
     for file in files {
-        let imports = imports_by_file.get(file.file.as_str()).cloned().unwrap_or_default();
+        let imports: Vec<String> = file.imports.iter().map(|i| dotted(&i.target).into_owned()).collect();
         for r in &file.type_refs {
             let renamed_from = renamed.get(&r.from);
             let r = &nodex_ir::TypeRef { from: renamed_from.cloned().unwrap_or_else(|| r.from.clone()), name: r.name.clone(), relation: r.relation };
-            let from_ns = namespace_of(&symbols, &r.from);
+            let from_ns = namespaces
+                .entry(r.from.clone())
+                .or_insert_with(|| namespace_of(&symbols, &r.from).map(|n| dotted(&n).into_owned()));
             match index.resolve(&r.name, from_ns.as_deref(), &imports) {
                 Some(target) if target != r.from => {
                     let kind = match r.relation {
@@ -310,29 +310,52 @@ pub fn package_name(spec: &str) -> String {
     first.to_owned()
 }
 
+/// Rust paths (`app::orders::Order`) compare like dotted names.
+fn dotted(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.contains("::") { name.replace("::", ".").into() } else { name.into() }
+}
+
 /// Type lookup by simple name.
 struct TypeIndex {
     by_name: HashMap<String, Vec<(String, String)>>, // simple name -> (id, qualified name)
+    /// Simple name -> namespace directly holding the type -> its first candidate. A common
+    /// name (`Order`, `Program`) can have thousands of candidates in a large project.
+    by_parent: HashMap<String, HashMap<String, usize>>,
+    /// Simple name -> any namespace enclosing the type -> its first candidate (for imports).
+    by_ancestor: HashMap<String, HashMap<String, usize>>,
 }
 
 impl TypeIndex {
     fn new(symbols: &BTreeMap<String, Symbol>) -> Self {
         let mut by_name: HashMap<String, Vec<(String, String)>> = HashMap::new();
         for s in symbols.values().filter(|s| s.kind.is_type()) {
-            // Rust paths (`app::orders::Order`) compare like dotted names.
-            let dotted = s.id.replace("::", ".");
+            let dotted = dotted(&s.id);
             let simple = dotted.rsplit('.').next().unwrap_or(&dotted);
             let simple = simple.split('`').next().unwrap_or(simple).to_owned();
-            by_name.entry(simple).or_default().push((s.id.clone(), s.qualified_name.replace("::", ".")));
+            by_name.entry(simple).or_default().push((s.id.clone(), self::dotted(&s.qualified_name).into_owned()));
         }
-        Self { by_name }
+        let mut by_parent: HashMap<String, HashMap<String, usize>> = HashMap::new();
+        let mut by_ancestor: HashMap<String, HashMap<String, usize>> = HashMap::new();
+        for (simple, candidates) in by_name.iter().filter(|(_, c)| c.len() > 1) {
+            let parents = by_parent.entry(simple.clone()).or_default();
+            let ancestors = by_ancestor.entry(simple.clone()).or_default();
+            for (i, (_, q)) in candidates.iter().enumerate() {
+                if let Some((parent, _)) = q.rsplit_once('.') {
+                    parents.entry(parent.to_owned()).or_insert(i);
+                }
+                let mut scope = q.as_str();
+                while let Some((head, _)) = scope.rsplit_once('.') {
+                    ancestors.entry(head.to_owned()).or_insert(i);
+                    scope = head;
+                }
+            }
+        }
+        Self { by_name, by_parent, by_ancestor }
     }
 
-    fn resolve(&self, name: &str, from_ns: Option<&str>, imports: &[&str]) -> Option<String> {
-        let name = &name.replace("::", ".");
-        let from_ns = from_ns.map(|n| n.replace("::", "."));
-        let from_ns = from_ns.as_deref();
-        let imports: Vec<String> = imports.iter().map(|i| i.replace("::", ".")).collect();
+    /// `from_ns` and `imports` are already dotted.
+    fn resolve(&self, name: &str, from_ns: Option<&str>, imports: &[String]) -> Option<String> {
+        let name = &*dotted(name);
         let simple = name.rsplit('.').next().unwrap_or(name);
         let candidates = self.by_name.get(simple)?;
         if candidates.len() == 1 {
@@ -343,24 +366,25 @@ impl TypeIndex {
             }
             return Some(id.clone());
         }
-        let in_ns = |ns: &str, q: &str| q.strip_prefix(ns).is_some_and(|rest| rest.starts_with('.'));
         if name.contains('.')
             && let Some((id, _)) = candidates.iter().find(|(_, q)| q.ends_with(name)) {
                 return Some(id.clone());
             }
         if let Some(ns) = from_ns {
-            // Same namespace, then enclosing namespaces.
+            // Same namespace, then enclosing namespaces: a candidate directly inside the scope.
+            let parents = self.by_parent.get(simple);
             let mut scope = Some(ns);
             while let Some(s) = scope {
-                if let Some((id, _)) = candidates.iter().find(|(_, q)| in_ns(s, q) && !q[s.len() + 1..].contains('.')) {
-                    return Some(id.clone());
+                if let Some(&i) = parents.and_then(|p| p.get(s)) {
+                    return Some(candidates[i].0.clone());
                 }
                 scope = s.rsplit_once('.').map(|(head, _)| head);
             }
         }
-        for imp in &imports {
-            if let Some((id, _)) = candidates.iter().find(|(_, q)| in_ns(imp, q)) {
-                return Some(id.clone());
+        let ancestors = self.by_ancestor.get(simple);
+        for imp in imports {
+            if let Some(&i) = ancestors.and_then(|a| a.get(imp.as_str())) {
+                return Some(candidates[i].0.clone());
             }
         }
         candidates.first().map(|(id, _)| id.clone())
