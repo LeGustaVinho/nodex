@@ -53,3 +53,19 @@ insta = { version = "1", features = ["yaml"] }
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# The heavy work of opening a project (lowering, linking, knowledge, UML) runs in these crates:
+# unoptimized, a debug build took several times longer than release to show a graph. Level 1
+# keeps them debuggable and quick to rebuild.
+[profile.dev.package.nodex-core]
+opt-level = 1
+[profile.dev.package.nodex-ir]
+opt-level = 1
+[profile.dev.package.nodex-uml]
+opt-level = 1
+[profile.dev.package.nodex-lang-csharp]
+opt-level = 1
+[profile.dev.package.nodex-lang-typescript]
+opt-level = 1
+[profile.dev.package.nodex-lang-rust]
+opt-level = 1
