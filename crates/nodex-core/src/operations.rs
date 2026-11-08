@@ -24,6 +24,9 @@ pub struct Pattern {
     pub name: String,
     /// `true` for a call (`()`), `false` for a property read.
     pub call: bool,
+    /// `~random|rng.Next()`: any receiver whose name contains one of these (lower-case) words,
+    /// for member names too common to trust on any receiver.
+    pub hint: Vec<String>,
 }
 
 impl Pattern {
@@ -47,11 +50,18 @@ impl Pattern {
             // A bare name without `()` would match every variable.
             return None;
         }
+        if let Some(words) = receiver.strip_prefix('~') {
+            let hint: Vec<String> = words.split('|').map(str::trim).filter(|w| !w.is_empty()).map(str::to_lowercase).collect();
+            if hint.is_empty() {
+                return None;
+            }
+            return Some(Self { receiver: None, name: name.to_owned(), call, hint });
+        }
         let receiver = match receiver {
             "*" => None,
             r => Some(r.replace("::", ".")),
         };
-        Some(Self { receiver, name: name.to_owned(), call })
+        Some(Self { receiver, name: name.to_owned(), call, hint: Vec::new() })
     }
 }
 
@@ -154,6 +164,49 @@ fn strip_generics(name: &str) -> &str {
     name.split('<').next().unwrap_or(name).trim()
 }
 
+/// The receiver of a hinted pattern looks like one of its words: `_random`, `this.rng`,
+/// `new Random()`, `Random.Shared`; with semantics, the call must be the standard library's.
+fn hint_agrees(e: &Expr, pattern: &Pattern, language: Language) -> bool {
+    if let Some(t) = e.target.as_deref() {
+        return library_target(t, language);
+    }
+    let Some(r) = e.children.first().filter(|c| c.flavors.iter().any(|f| f == "target")) else { return false };
+    let written = match r.concept {
+        Concept::Construct => r.label.trim_start_matches("new ").to_owned(),
+        _ => path(r).unwrap_or_default(),
+    };
+    // Words of the receiver's name (`_sharedRandom` → shared, random; `RNG` → rng); a word must
+    // start with a hint (`random`, `randomizer`), so `brand` or `operand` do not count as `rand`.
+    let last = written.rsplit('.').next().unwrap_or(&written);
+    let words = name_words(last);
+    let all = if r.concept == Concept::Construct || written.contains('.') { name_words(&written) } else { Vec::new() };
+    pattern.hint.iter().any(|h| words.iter().chain(&all).any(|w| w.starts_with(h.as_str())))
+}
+
+/// `_sharedRandom` → `["shared", "random"]`; `RNG` → `["rng"]`; `Random.Shared` → both.
+fn name_words(name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let chars: Vec<char> = name.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if !c.is_alphanumeric() {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur).to_lowercase());
+            }
+            continue;
+        }
+        let boundary = c.is_uppercase() && i > 0 && (chars[i - 1].is_lowercase() || chars.get(i + 1).is_some_and(|n| n.is_lowercase()) && chars[i - 1].is_uppercase());
+        if boundary && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur).to_lowercase());
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur.to_lowercase());
+    }
+    out
+}
+
 fn match_expr(e: &Expr, language: Language) -> Option<String> {
     let (call, name, receiver) = match e.concept {
         Concept::Call => {
@@ -197,6 +250,7 @@ fn match_expr(e: &Expr, language: Language) -> Option<String> {
             (Some(_), Some(None)) => false,
             // `*.Name`: any receiver, but only when the call is not a project method and, with
             // semantics, the method belongs to the standard library.
+            (None, Some(_)) if !pattern.hint.is_empty() => !project_symbol && hint_agrees(e, pattern, language),
             (None, Some(_)) => !project_symbol && e.target.as_deref().is_none_or(|t| library_target(t, language)),
             (None, None) => false,
         };
@@ -331,6 +385,36 @@ mod tests {
         let mut member = call("x", "parseInt", vec![]);
         recognize(&mut member, Language::Typescript);
         assert_eq!(member.op, None);
+    }
+
+    #[test]
+    fn next_is_random_only_on_a_random_generator() {
+        let p = Pattern::parse("~random|rng.Next()").unwrap();
+        assert_eq!((p.receiver, p.hint), (None, vec!["random".to_owned(), "rng".to_owned()]));
+        let op = |mut x: Expr| {
+            recognize(&mut x, Language::Csharp);
+            x.op
+        };
+        let random = Some("math.random".to_owned());
+        // A field or local named like a generator, `new Random()`, `Random.Shared`.
+        assert_eq!(op(call("_random", "Next", vec![e(Concept::Literal, "10", vec![])])), random);
+        assert_eq!(op(call("rng", "NextDouble", vec![])), random);
+        assert_eq!(op(call("sharedRandom", "Next", vec![])), random);
+        let ctor = e(Concept::Construct, "new Random", vec![]);
+        assert_eq!(op(e(Concept::Call, "Next", vec![target(ctor)])), random);
+        let shared = e(Concept::GetMember, ".Shared", vec![e(Concept::Var, "Random", vec![])]);
+        assert_eq!(op(e(Concept::Call, "Next", vec![target(shared), e(Concept::Literal, "1", vec![]), e(Concept::Literal, "6", vec![])])), random);
+        // A state, an iterator, a linked list node: their own `Next`.
+        assert_eq!(op(call("_state", "Next", vec![e(Concept::Var, "this", vec![])])), None);
+        assert_eq!(op(call("node", "Next", vec![])), None);
+        assert_eq!(op(call("brand", "Next", vec![])), None, "`brand` is not `rand`");
+        // With semantics, the resolved target decides.
+        let mut lib = call("source", "Next", vec![]);
+        lib.target = Some("System.Random.Next(int)".into());
+        assert_eq!(op(lib), random);
+        let mut mine = call("random", "Next", vec![]);
+        mine.target = Some("Game.RandomTable.Next()".into());
+        assert_eq!(op(mine), None);
     }
 
     #[test]

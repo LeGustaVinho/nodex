@@ -16,6 +16,9 @@
 #       "Math.Max()"   call on that receiver (or a target named so)
 #       "*.ToUpper()"  method call on any receiver (the receiver is the first input)
 #       "*.Length"     property read on any receiver
+#       "~random|rng.Next()"  method call on a receiver that looks like one of the words (a
+#                      variable named `_random` or `rng`, `new Random()`), or that a compiler
+#                      resolved to the standard library; for names too common to trust alone
 #       "parseInt()"   free function
 # Types: number, text, bool, list, map, any, time.
 
@@ -445,7 +448,7 @@ explain = "A different number every time (between 0 and 1, or in a given range).
 cs = "random.Next(), Random.Range(a, b)"
 ts = "Math.random()"
 rs = "rand::random()"
-calls_cs = ["*.Next()", "*.NextDouble()", "Random.Range()", "Random.Shared.Next()"]
+calls_cs = ["~random|rng|rand|rnd|dice.Next()", "~random|rng|rand|rnd|dice.NextDouble()", "Random.Range()", "Random.Shared.Next()"]
 calls_ts = ["Math.random()"]
 calls_rs = ["rand::random()"]
 
