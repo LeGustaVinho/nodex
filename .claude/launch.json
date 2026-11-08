@@ -51,6 +51,13 @@
       "url": "http://127.0.0.1:7491"
     },
     {
+      "name": "m9-fullstack",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/knowledge/fullstack", "--no-browser", "--port", "7492"],
+      "port": 7492,
+      "url": "http://127.0.0.1:7492"
+    },
+    {
       "name": "web-dev",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "web", "dev"],

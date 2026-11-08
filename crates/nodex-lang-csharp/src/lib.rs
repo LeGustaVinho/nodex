@@ -10,6 +10,7 @@
 mod expr;
 mod flow;
 mod instrument;
+mod knowledge;
 mod prepare;
 mod project;
 pub mod roslyn;
@@ -188,6 +189,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         ir.flows.push(lowered.graph);
     }
 
+    ir.knowledge = knowledge::extract(src, root, &symbols, &callbacks);
     ir.symbols = symbols;
     ir.imports = imports;
     ir.type_refs = type_refs;

@@ -9,4 +9,8 @@ export type SymbolFacts = { symbol: string, entry: EntryPoint | null,
 /**
  * A test case (or a class of test cases).
  */
-test: boolean, data_model: DataModel | null, };
+test: boolean, data_model: DataModel | null, 
+/**
+ * Side effects the syntax shows (`DB_READ`, `NETWORK_IO`, `FILE_IO`, `LOGGING`, `AUTH_REQUIRED`).
+ */
+capabilities: Array<string>, };

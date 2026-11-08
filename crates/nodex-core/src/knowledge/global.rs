@@ -1,0 +1,267 @@
+//! Project-wide knowledge relations, ported from CodeGraph (`crates/semantic/src/global.rs` and
+//! `models.rs`): dependency injection, data models and their writes, tests, and where thrown
+//! exceptions are caught.
+
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+
+use nodex_ir::knowledge::{Confidence, DataModel, EntityFact, EntryKind, GlobalHandlerFact, ModelField, ModelInfo, SymbolInfo};
+use nodex_ir::{FileIr, StructEdge, StructEdgeKind, Symbol, SymbolId, SymbolKind};
+
+use super::{TypeLookup, namespace_of, simple_name};
+
+/// Read-only views over the linked graph shared by the passes.
+pub struct Ctx<'a> {
+    pub symbols: &'a HashMap<&'a str, &'a Symbol>,
+    pub children: &'a HashMap<&'a str, Vec<&'a Symbol>>,
+    pub types: &'a TypeLookup,
+    pub edges: &'a [StructEdge],
+}
+
+impl Ctx<'_> {
+    fn resolve(&self, name: &str, from: &str) -> Option<SymbolId> {
+        self.types.resolve(name, namespace_of(self.symbols, from).as_deref())
+    }
+
+    fn name(&self, id: &str) -> String {
+        self.symbols.get(id).map(|s| s.name.clone()).unwrap_or_else(|| id.trim_start_matches("ext:").to_owned())
+    }
+}
+
+/// `services.AddScoped<IOrderService, OrderService>()`: the service type is provided by the
+/// implementation. Exact: the registration says so.
+pub fn di_edges(ctx: &Ctx, files: &[&FileIr]) -> Vec<StructEdge> {
+    let mut out = Vec::new();
+    for file in files {
+        for d in &file.knowledge.di {
+            let Some(implementation) = &d.implementation else { continue };
+            let (Some(service), Some(imp)) = (ctx.resolve(&d.service, &d.owner), ctx.resolve(implementation, &d.owner)) else { continue };
+            if service == imp {
+                continue;
+            }
+            out.push(
+                StructEdge::new(service, imp, StructEdgeKind::ResolvesDi)
+                    .with_evidence(format!("registered as {} ({}) in {}", d.lifetime, d.framework, ctx.name(&d.owner)))
+                    .with_site(d.span.clone()),
+            );
+        }
+    }
+    out
+}
+
+/// A call to a method of an interface whose only DI implementation is known also reaches that
+/// implementation's method. Inferred: the compiler only sees the interface.
+pub fn di_dispatch(ctx: &Ctx, di: &[StructEdge]) -> Vec<StructEdge> {
+    let mut impls: HashMap<&str, Vec<&str>> = HashMap::new();
+    for e in di {
+        impls.entry(e.from.as_str()).or_default().push(e.to.as_str());
+    }
+    let mut out = Vec::new();
+    for call in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Calls) {
+        let Some(target) = ctx.symbols.get(call.to.as_str()) else { continue };
+        let Some(owner) = target.parent.as_deref() else { continue };
+        let Some([imp]) = impls.get(owner).map(Vec::as_slice) else { continue };
+        let Some(member) = ctx.children.get(imp).and_then(|kids| kids.iter().find(|k| k.name == target.name && k.kind == target.kind)) else { continue };
+        out.push(
+            StructEdge::new(call.from.clone(), member.id.clone(), StructEdgeKind::Calls)
+                .with_confidence(Confidence::Inferred)
+                .with_evidence(format!("{} is provided by {} through dependency injection", ctx.name(owner), ctx.name(imp))),
+        );
+    }
+    out
+}
+
+/// Data models named by entity facts, with fields read from the entity type's members.
+/// Returns the models and, per context property (`Orders`), the entity it exposes.
+pub fn models(ctx: &Ctx, files: &[&FileIr]) -> (Vec<ModelInfo>, HashMap<String, SymbolId>) {
+    let entities: Vec<&EntityFact> = files.iter().flat_map(|f| f.knowledge.entities.iter()).collect();
+    let mut by_entity: BTreeMap<SymbolId, &EntityFact> = BTreeMap::new();
+    let mut by_property = HashMap::new();
+    for e in &entities {
+        let Some(id) = ctx.resolve(&e.entity, &e.owner) else { continue };
+        if ctx.symbols.get(id.as_str()).is_some_and(|s| s.external) {
+            continue;
+        }
+        if let Some(p) = &e.property {
+            by_property.insert(p.clone(), id.clone());
+        }
+        by_entity.entry(id).or_insert(e);
+    }
+    let names: HashSet<String> = by_entity.keys().map(|id| ctx.name(id)).collect();
+    let mut out = Vec::new();
+    for (id, fact) in &by_entity {
+        let entity_name = ctx.name(id);
+        let mut fields = Vec::new();
+        for m in ctx.children.get(id.as_str()).into_iter().flatten() {
+            if !matches!(m.kind, SymbolKind::Property | SymbolKind::Field) || m.flavors.iter().any(|f| f == "static" || f == "const") {
+                continue;
+            }
+            let ty = m.type_text.clone();
+            let key = m.flavors.iter().any(|f| f == "attr:Key") || m.name == "Id" || m.name.eq_ignore_ascii_case(&format!("{entity_name}Id"));
+            let element = ty.as_deref().map(element_type).unwrap_or_default();
+            let target = if names.contains(&element) && element != entity_name {
+                Some(element.clone())
+            } else if !key && m.name.len() > 2 && m.name.ends_with("Id") {
+                let stem = &m.name[..m.name.len() - 2];
+                names.contains(stem).then(|| stem.to_owned())
+            } else {
+                None
+            };
+            fields.push(ModelField {
+                name: m.name.clone(),
+                ty,
+                primary_key: key,
+                foreign_key: !key && m.name.ends_with("Id") && m.name.len() > 2,
+                target,
+            });
+        }
+        out.push(ModelInfo { symbol: id.clone(), model: DataModel { framework: fact.framework.clone(), table: fact.table.clone(), fields } });
+    }
+    (out, by_property)
+}
+
+/// `List<OrderItem>` → `OrderItem`, `Customer?` → `Customer`, `Order[]` → `Order`.
+fn element_type(ty: &str) -> String {
+    let t = ty.trim().trim_end_matches('?').trim_end_matches("[]");
+    let inner = match (t.find('<'), t.rfind('>')) {
+        (Some(a), Some(b)) if b > a => &t[a + 1..b],
+        _ => t,
+    };
+    simple_name(inner.split(',').next_back().unwrap_or(inner).trim())
+}
+
+/// Writes to a context property (`_db.Orders.Add(o)`) change that entity.
+pub fn mutation_edges(files: &[&FileIr], by_property: &HashMap<String, SymbolId>) -> Vec<StructEdge> {
+    let mut out: BTreeMap<(String, String), StructEdge> = BTreeMap::new();
+    for file in files {
+        for m in file.knowledge.mutations.iter().filter(|m| m.kind == "database") {
+            let Some(entity) = m.target.split('.').rev().find_map(|part| by_property.get(part)) else { continue };
+            out.entry((m.owner.clone(), entity.clone())).or_insert_with(|| {
+                StructEdge::new(m.owner.clone(), entity.clone(), StructEdgeKind::Mutates)
+                    .with_evidence(format!("writes `{}`", m.target))
+                    .with_site(m.span.clone())
+            });
+        }
+    }
+    out.into_values().collect()
+}
+
+/// Tests and what they exercise: what a test calls (exact), and test classes named after a type
+/// (`OrderServiceTests` → `OrderService`, inferred).
+pub fn test_edges(ctx: &Ctx, infos: &BTreeMap<SymbolId, SymbolInfo>) -> Vec<StructEdge> {
+    let is_test = |id: &str| -> bool {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            if infos.get(c).is_some_and(|i| i.test) {
+                return true;
+            }
+            cur = ctx.symbols.get(c).and_then(|s| s.parent.as_deref());
+        }
+        false
+    };
+    let mut out: BTreeMap<(String, String), StructEdge> = BTreeMap::new();
+    for e in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Calls) {
+        if is_test(&e.from) && !is_test(&e.to) && ctx.symbols.get(e.to.as_str()).is_some_and(|s| !s.external) {
+            out.entry((e.from.clone(), e.to.clone()))
+                .or_insert_with(|| StructEdge::new(e.from.clone(), e.to.clone(), StructEdgeKind::Tests).with_evidence("the test calls it"));
+        }
+    }
+    for id in infos.iter().filter(|(_, i)| i.test).map(|(id, _)| id) {
+        let Some(sym) = ctx.symbols.get(id.as_str()) else { continue };
+        if !sym.kind.is_type() {
+            continue;
+        }
+        let Some(stem) = ["Tests", "Test", "Specs", "Spec", "Should"].iter().find_map(|s| sym.name.strip_suffix(s)).filter(|s| !s.is_empty()) else { continue };
+        let Some(target) = ctx.resolve(stem, id) else { continue };
+        if target != *id && !is_test(&target) {
+            out.entry((id.clone(), target.clone())).or_insert_with(|| {
+                StructEdge::new(id.clone(), target, StructEdgeKind::Tests)
+                    .with_confidence(Confidence::Inferred)
+                    .with_evidence(format!("{} is named after it", sym.name))
+            });
+        }
+    }
+    out.into_values().collect()
+}
+
+/// A call made by `owner` to `target` at a site protected by `catches` (exception types handled
+/// by the enclosing `catch` clauses; `*` handles every error).
+pub struct CallSite {
+    pub owner: SymbolId,
+    pub target: SymbolId,
+    pub catches: Vec<String>,
+}
+
+/// Where each thrown exception is caught: walks up the callers of the throwing function until a
+/// call site's `catch` handles the type (or its base type). A throw that reaches a route handler
+/// without being caught goes to the framework's global error handlers.
+pub fn caught_by_edges(
+    ctx: &Ctx,
+    sites: &[CallSite],
+    handlers: &[GlobalHandlerFact],
+    infos: &BTreeMap<SymbolId, SymbolInfo>,
+    inferred_calls: &HashSet<(String, String)>,
+) -> Vec<StructEdge> {
+    let mut callers: HashMap<&str, Vec<&CallSite>> = HashMap::new();
+    for s in sites {
+        callers.entry(s.target.as_str()).or_default().push(s);
+    }
+    let mut out: BTreeMap<(String, String), StructEdge> = BTreeMap::new();
+    for throw in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Throws) {
+        let lineage = ancestors(ctx, &throw.to);
+        let handles = |types: &[String]| types.iter().any(|t| t == "*" || lineage.contains(&simple_name(t)));
+        // BFS over callers: (function reached, confidence so far, depth).
+        let mut queue = VecDeque::from([(throw.from.as_str(), Confidence::Exact, 0usize)]);
+        let mut seen = HashSet::new();
+        while let Some((callee, confidence, depth)) = queue.pop_front() {
+            if !seen.insert(callee) || depth > 6 {
+                continue;
+            }
+            let at_route = infos.get(callee).and_then(|i| i.entry.as_ref()).is_some_and(|e| e.kind == EntryKind::Route);
+            if at_route {
+                for h in handlers {
+                    if h.handler == callee {
+                        continue;
+                    }
+                    out.entry((throw.from.clone(), h.handler.clone())).or_insert_with(|| {
+                        StructEdge::new(throw.from.clone(), h.handler.clone(), StructEdgeKind::CaughtBy)
+                            .with_confidence(Confidence::Inferred)
+                            .with_evidence(format!("{} reaches route handler {} uncaught; the {} global handler takes it", ctx.name(&throw.to), ctx.name(callee), h.framework))
+                            .with_site(h.span.clone())
+                    });
+                }
+                continue;
+            }
+            for site in callers.get(callee).into_iter().flatten() {
+                let hop = if inferred_calls.contains(&(site.owner.clone(), site.target.clone())) { Confidence::Inferred } else { Confidence::Exact };
+                let confidence = confidence.weakest(hop);
+                if handles(&site.catches) {
+                    out.entry((throw.from.clone(), site.owner.clone())).or_insert_with(|| {
+                        StructEdge::new(throw.from.clone(), site.owner.clone(), StructEdgeKind::CaughtBy)
+                            .with_confidence(confidence)
+                            .with_evidence(format!("{} is caught in {} (catch {})", ctx.name(&throw.to), ctx.name(&site.owner), site.catches.join(" | ")))
+                    });
+                } else {
+                    queue.push_back((site.owner.as_str(), confidence, depth + 1));
+                }
+            }
+        }
+    }
+    out.into_values().collect()
+}
+
+/// Simple names of a type and its base types (through `Inherits` edges), plus the universal roots.
+fn ancestors(ctx: &Ctx, ty: &str) -> HashSet<String> {
+    let mut out: HashSet<String> = ["Exception", "Error", "Throwable", "object", "Object"].iter().map(|s| s.to_string()).collect();
+    let mut cur = vec![ty.to_owned()];
+    let mut seen = HashSet::new();
+    while let Some(t) = cur.pop() {
+        if !seen.insert(t.clone()) {
+            continue;
+        }
+        out.insert(simple_name(&ctx.name(&t)));
+        for e in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Inherits && e.from == t) {
+            cur.push(e.to.clone());
+        }
+    }
+    out
+}

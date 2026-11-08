@@ -228,9 +228,13 @@ impl Project {
         // Semantic facts replace guesses: exact bases, calls, events.
         let locator = Arc::new(semantic::Locator::new(&graph.symbols));
         let mut constructs = knowledge::Constructs::new();
+        let mut calls: Vec<knowledge::RawCallSite> = Vec::new();
         for (language, entry) in &self.semantic {
             let Some(facts) = &entry.facts else { continue };
             let derived = semantic::edges(facts, &locator, *language);
+            for (site, owner, target) in derived.calls {
+                calls.push(knowledge::RawCallSite { file: site.file, start: site.start, end: site.end, owner, target });
+            }
             for (site, ty) in derived.constructs {
                 constructs.entry(site.file).or_default().push((site.start, site.end, ty));
             }
@@ -249,7 +253,7 @@ impl Project {
             }
         }
         // Knowledge: routes, HTTP calls, DI, tests, throws, complexity.
-        let derived = knowledge::build(&graph, &files, &constructs);
+        let derived = knowledge::build(&graph, &files, &constructs, &calls);
         for ext in derived.externals {
             if !graph.symbols.iter().any(|s| s.id == ext.id) {
                 graph.symbols.push(ext);

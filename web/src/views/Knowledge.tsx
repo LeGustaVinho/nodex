@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { api } from "../api";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
 import { HIERARCHY_CAP, Hierarchy, type HierarchyNodeData, hierarchyGraph, kindsOf } from "../graph/hierarchy";
-import type { StructureIndex } from "../graph/structureGraph";
+import { type StructureIndex, isTypeKind } from "../graph/structureGraph";
 import { useUi } from "../store";
 import { KNOWLEDGE_COLORS } from "./GraphCanvas";
 import { GraphCanvas } from "./GraphCanvas";
@@ -168,7 +168,8 @@ export function OverviewView() {
     else select({ kind: "symbol", id }, s?.origins[0] ?? null);
   };
   const entries = (k?.symbols ?? []).filter((s) => s.entry && !s.test);
-  const tests = (k?.symbols ?? []).filter((s) => s.test).length;
+  // Test cases only: classes of tests are marked too.
+  const tests = (k?.symbols ?? []).filter((s) => s.test && !isTypeKind(index.byId.get(s.symbol)?.kind ?? "Class")).length;
   const hotspots = [...(k?.symbols ?? [])].filter((s) => s.complexity > 1).sort((a, b) => b.complexity - a.complexity).slice(0, 10);
   const maxKind = stats.byKind[0]?.[1] ?? 1;
 

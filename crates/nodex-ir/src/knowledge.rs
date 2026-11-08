@@ -131,6 +131,24 @@ pub struct GlobalHandlerFact {
     pub span: Span,
 }
 
+/// A persisted entity named by the code: an EF Core `DbSet<Order> Orders`, a `[Table("orders")]`
+/// class, a TypeORM `@Entity()`, a diesel `table!`. `nodex-core` resolves the entity type and
+/// reads its fields from the structure graph.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash)]
+#[ts(export)]
+pub struct EntityFact {
+    /// The symbol that names it: the database context, or the entity type itself.
+    pub owner: SymbolId,
+    /// Entity type as written (`Order`).
+    pub entity: String,
+    /// Property of the context that exposes the entity (`Orders`), used to link mutations.
+    pub property: Option<String>,
+    /// `efcore`, `typeorm`, `diesel`, `sea-orm`, ...
+    pub framework: String,
+    pub table: Option<String>,
+    pub span: Span,
+}
+
 /// Why a function runs without being called by project code.
 #[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[ts(export)]
@@ -191,6 +209,9 @@ pub struct SymbolFacts {
     /// A test case (or a class of test cases).
     pub test: bool,
     pub data_model: Option<DataModel>,
+    /// Side effects the syntax shows (`DB_READ`, `NETWORK_IO`, `FILE_IO`, `LOGGING`, `AUTH_REQUIRED`).
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 /// Every knowledge fact of one file.
@@ -204,6 +225,7 @@ pub struct FileKnowledge {
     pub config: Vec<ConfigFact>,
     pub mutations: Vec<MutationFact>,
     pub handlers: Vec<GlobalHandlerFact>,
+    pub entities: Vec<EntityFact>,
     pub symbols: Vec<SymbolFacts>,
 }
 
@@ -217,7 +239,13 @@ impl FileKnowledge {
         match self.symbols.iter().position(|s| s.symbol == symbol) {
             Some(i) => &mut self.symbols[i],
             None => {
-                self.symbols.push(SymbolFacts { symbol: symbol.to_owned(), entry: None, test: false, data_model: None });
+                self.symbols.push(SymbolFacts {
+                    symbol: symbol.to_owned(),
+                    entry: None,
+                    test: false,
+                    data_model: None,
+                    capabilities: Vec::new(),
+                });
                 self.symbols.last_mut().expect("just pushed")
             }
         }
@@ -228,6 +256,14 @@ impl FileKnowledge {
         let facts = self.symbol_mut(symbol);
         if facts.entry.is_none() {
             facts.entry = Some(EntryPoint { kind, label: label.into() });
+        }
+    }
+
+    /// Adds a side-effect tag to `symbol`.
+    pub fn capability(&mut self, symbol: &str, tag: &str) {
+        let facts = self.symbol_mut(symbol);
+        if !facts.capabilities.iter().any(|c| c == tag) {
+            facts.capabilities.push(tag.to_owned());
         }
     }
 }

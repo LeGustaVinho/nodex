@@ -83,6 +83,8 @@ pub struct SemanticEdges {
     pub typed_bases: HashSet<SymbolId>,
     /// Project types created at each construction site (`new X(...)`), for knowledge passes.
     pub constructs: Vec<(ByteRange, SymbolId)>,
+    /// Every resolved call: site, calling function, called symbol.
+    pub calls: Vec<(ByteRange, SymbolId, SymbolId)>,
 }
 
 pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> SemanticEdges {
@@ -90,6 +92,7 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
     let mut externals: HashMap<String, Symbol> = HashMap::new();
     let mut typed_bases = HashSet::new();
     let mut constructs = Vec::new();
+    let mut calls = Vec::new();
     let mut by_site: HashMap<&ByteRange, Vec<(&RefKind, &SemanticTarget)>> = HashMap::new();
 
     for r in &facts.refs {
@@ -98,6 +101,7 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
             RefKind::Call => {
                 if let (Some(owner), Some(target)) = (locator.owner(&r.site), locator.target(&r.target))
                     && owner.id != target {
+                        calls.push((r.site.clone(), owner.id.clone(), target.clone()));
                         edges.insert((owner.id.clone(), target, StructEdgeKind::Calls));
                     }
             }
@@ -173,6 +177,7 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
         externals: externals.into_values().collect(),
         typed_bases,
         constructs,
+        calls,
     }
 }
 
