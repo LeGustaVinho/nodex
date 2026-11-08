@@ -85,6 +85,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/api/project", get(api::project))
         .route("/api/structure", get(api::structure))
+        .route("/api/knowledge", get(api::knowledge))
         .route("/api/flow", get(api::flow))
         .route("/api/source", get(api::source))
         .route("/api/catalog", get(api::catalog))

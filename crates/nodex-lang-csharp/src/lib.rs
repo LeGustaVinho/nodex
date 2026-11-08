@@ -103,6 +103,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         imports: Vec::new(),
         type_refs: Vec::new(),
         diagnostics: Vec::new(),
+        knowledge: Default::default(),
     };
     if parser
         .set_language(&tree_sitter_c_sharp::LANGUAGE.into())

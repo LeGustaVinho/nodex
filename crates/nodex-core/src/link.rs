@@ -145,7 +145,7 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
     all.extend(external.into_values());
     StructureGraph {
         symbols: all,
-        edges: edges.into_iter().map(|(from, to, kind)| StructEdge { from, to, kind }).collect(),
+        edges: edges.into_iter().map(|(from, to, kind)| StructEdge::new(from, to, kind)).collect(),
     }
 }
 

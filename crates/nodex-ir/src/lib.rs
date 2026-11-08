@@ -151,6 +151,34 @@ pub enum StructEdgeKind {
     Raises,
     /// A type fits an interface without declaring it (TypeScript structural typing).
     Compatible,
+    // Knowledge relations (see `knowledge`).
+    /// A function sends an HTTP request that a route handler serves.
+    HttpCalls,
+    /// A service type is provided by an implementation through dependency injection.
+    ResolvesDi,
+    /// A test exercises a symbol.
+    Tests,
+    /// A function throws an exception type.
+    Throws,
+    /// An exception type thrown by a function is caught by a handler (a function or a global handler).
+    CaughtBy,
+    /// A function changes persisted or shared state (the target is a data model or a field).
+    Mutates,
+}
+
+impl StructEdgeKind {
+    /// True for relations derived from knowledge facts rather than from declarations.
+    pub fn is_knowledge(self) -> bool {
+        matches!(
+            self,
+            StructEdgeKind::HttpCalls
+                | StructEdgeKind::ResolvesDi
+                | StructEdgeKind::Tests
+                | StructEdgeKind::Throws
+                | StructEdgeKind::CaughtBy
+                | StructEdgeKind::Mutates
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq, Hash)]
@@ -159,6 +187,46 @@ pub struct StructEdge {
     pub from: SymbolId,
     pub to: SymbolId,
     pub kind: StructEdgeKind,
+    /// Set only on knowledge relations no compiler proves; absent means the relation is exact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub confidence: Option<knowledge::Confidence>,
+    /// Plain-language reason for a knowledge relation (`GET /api/orders matches [HttpGet]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub evidence: Option<String>,
+    /// Where the relation is visible in the source (the call, the registration, the throw).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub site: Option<Span>,
+}
+
+impl StructEdge {
+    /// An exact relation without evidence.
+    pub fn new(from: impl Into<SymbolId>, to: impl Into<SymbolId>, kind: StructEdgeKind) -> Self {
+        Self { from: from.into(), to: to.into(), kind, confidence: None, evidence: None, site: None }
+    }
+
+    pub fn with_confidence(mut self, confidence: knowledge::Confidence) -> Self {
+        // Exact is the default meaning of an absent confidence.
+        self.confidence = (confidence != knowledge::Confidence::Exact).then_some(confidence);
+        self
+    }
+
+    pub fn with_evidence(mut self, evidence: impl Into<String>) -> Self {
+        self.evidence = Some(evidence.into());
+        self
+    }
+
+    pub fn with_site(mut self, site: Span) -> Self {
+        self.site = Some(site);
+        self
+    }
+
+    /// Same endpoints and relation (ignores confidence, evidence and site).
+    pub fn same_relation(&self, other: &StructEdge) -> bool {
+        self.from == other.from && self.to == other.to && self.kind == other.kind
+    }
 }
 
 /// The linked structure of a whole project.
@@ -234,6 +302,9 @@ pub struct FileIr {
     pub imports: Vec<ImportRef>,
     pub type_refs: Vec<TypeRef>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Routes, HTTP calls, DI, configuration, tests, entry points and data models.
+    #[serde(default)]
+    pub knowledge: knowledge::FileKnowledge,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -530,12 +601,13 @@ impl FlowGraph {
     }
 }
 
+pub mod knowledge;
+pub mod semantic;
+
 /// Builds a stable node id from the owning symbol, the concept and a content anchor.
 ///
 /// The anchor is the normalized statement header plus an ordinal among identical headers,
 /// so inserting or removing a statement does not change the ids of the other statements.
-pub mod semantic;
-
 pub fn stable_id(symbol: &str, concept: Concept, anchor: &str, ordinal: u32) -> NodeId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(symbol.as_bytes());

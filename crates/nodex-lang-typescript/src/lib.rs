@@ -134,6 +134,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         imports: Vec::new(),
         type_refs: Vec::new(),
         diagnostics: Vec::new(),
+        knowledge: Default::default(),
     };
     if rel_path.ends_with(".min.js") || rel_path.ends_with(".min.mjs") {
         ir.diagnostics.push(Diagnostic { severity: Severity::Info, message: "Minified file: not shown.".into(), span: None });

@@ -1119,6 +1119,8 @@ impl Lowering<'_, '_> {
                 None => "on any error".to_owned(),
             };
             let pin = self.b.exec_out(&id, "catch:0", &truncate(&label, 40));
+            // JavaScript catches every error; a TypeScript annotation can only be `unknown`/`any`.
+            self.b.set_pin_type(&id, "catch:0", "*");
             self.b.push_scope();
             if let Some(p) = param {
                 let mut names = Vec::new();

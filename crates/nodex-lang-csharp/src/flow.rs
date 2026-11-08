@@ -775,6 +775,7 @@ impl<'a> Lowering<'a> {
             }
             labels.push(label.clone());
             let pin = self.b.exec_out(&id, &format!("catch:{i}"), &truncate(&label, 40));
+            self.b.set_pin_type(&id, &format!("catch:{i}"), ty.as_deref().unwrap_or("*"));
             let catch_body = clause.child_by_field_name("body").or_else(|| named_children(clause).into_iter().rfind(|c| c.kind() == "block"));
             self.b.push_scope();
             if let Some(v) = var {

@@ -8,6 +8,7 @@
 
 pub mod canon;
 pub mod catalog;
+pub mod knowledge;
 pub mod link;
 pub mod operations;
 pub mod project;

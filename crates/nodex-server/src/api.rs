@@ -28,6 +28,11 @@ pub async fn structure(State(state): State<Arc<AppState>>) -> ApiResult {
     Ok(Json(&*graph).into_response())
 }
 
+pub async fn knowledge(State(state): State<Arc<AppState>>) -> ApiResult {
+    let knowledge = state.project.lock().map_err(poisoned)?.knowledge();
+    Ok(Json(&*knowledge).into_response())
+}
+
 #[derive(Deserialize)]
 pub struct FlowQuery {
     symbol: String,

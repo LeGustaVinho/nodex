@@ -177,6 +177,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         imports: Vec::new(),
         type_refs: Vec::new(),
         diagnostics: Vec::new(),
+        knowledge: Default::default(),
     };
     let prepared = without_bom(text);
     let text = prepared.as_str();

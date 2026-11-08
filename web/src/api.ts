@@ -2,6 +2,7 @@ import type { CallsPage } from "./gen/CallsPage";
 import type { Catalog } from "./gen/Catalog";
 import type { FlowGraph } from "./gen/FlowGraph";
 import type { OutputLine } from "./gen/OutputLine";
+import type { ProjectKnowledge } from "./gen/ProjectKnowledge";
 import type { ProjectSummary } from "./gen/ProjectSummary";
 import type { RunSnapshot } from "./gen/RunSnapshot";
 import type { RunStatus } from "./gen/RunStatus";
@@ -56,6 +57,7 @@ export type Positions = Record<string, { x: number; y: number }>;
 export const api = {
   project: () => json<ProjectSummary>("/api/project"),
   structure: () => json<StructureGraph>("/api/structure"),
+  knowledge: () => json<ProjectKnowledge>("/api/knowledge"),
   catalog: () => json<Catalog>("/api/catalog"),
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),

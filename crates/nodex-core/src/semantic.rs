@@ -81,12 +81,15 @@ pub struct SemanticEdges {
     pub externals: Vec<Symbol>,
     /// Types whose bases the facts describe; their name-based base edges should be dropped.
     pub typed_bases: HashSet<SymbolId>,
+    /// Project types created at each construction site (`new X(...)`), for knowledge passes.
+    pub constructs: Vec<(ByteRange, SymbolId)>,
 }
 
 pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> SemanticEdges {
     let mut edges = BTreeSet::new();
     let mut externals: HashMap<String, Symbol> = HashMap::new();
     let mut typed_bases = HashSet::new();
+    let mut constructs = Vec::new();
     let mut by_site: HashMap<&ByteRange, Vec<(&RefKind, &SemanticTarget)>> = HashMap::new();
 
     for r in &facts.refs {
@@ -107,6 +110,9 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
                         r.target.decl.as_ref().and_then(|d| locator.owning_type(d)).map(|e| e.id.clone())
                     }
                 });
+                if let Some(ty) = &ty {
+                    constructs.push((r.site.clone(), ty.clone()));
+                }
                 if let (Some(owner), Some(ty)) = (locator.owner(&r.site), ty) {
                     edges.insert((owner.id.clone(), ty, StructEdgeKind::Instantiates));
                 }
@@ -163,9 +169,10 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
     }
 
     SemanticEdges {
-        edges: edges.into_iter().map(|(from, to, kind)| StructEdge { from, to, kind }).collect(),
+        edges: edges.into_iter().map(|(from, to, kind)| StructEdge::new(from, to, kind)).collect(),
         externals: externals.into_values().collect(),
         typed_bases,
+        constructs,
     }
 }
 

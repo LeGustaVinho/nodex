@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
+use nodex_ir::knowledge::ProjectKnowledge;
 use nodex_ir::semantic::{SemanticFacts, SemanticState, SemanticStatus};
 use nodex_ir::{Diagnostic, FileIr, FlowGraph, Language, PackageRef, StructEdgeKind, StructureGraph};
 use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SourceFile};
@@ -12,7 +13,7 @@ use rayon::prelude::*;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::{link, semantic};
+use crate::{knowledge, link, semantic};
 
 /// Directories never scanned (build output, dependencies, engine caches, VCS).
 pub const IGNORED_DIRS: &[&str] = &[
@@ -58,6 +59,7 @@ pub struct Project {
     descriptors: Vec<ProjectDescriptor>,
     files: BTreeMap<String, FileEntry>,
     structure: Option<Arc<StructureGraph>>,
+    knowledge: Option<Arc<ProjectKnowledge>>,
     semantic: BTreeMap<Language, SemanticEntry>,
     locator: Option<Arc<semantic::Locator>>,
 }
@@ -81,6 +83,7 @@ impl Project {
             descriptors,
             files: BTreeMap::new(),
             structure: None,
+            knowledge: None,
             semantic: BTreeMap::new(),
             locator: None,
         };
@@ -224,9 +227,13 @@ impl Project {
 
         // Semantic facts replace guesses: exact bases, calls, events.
         let locator = Arc::new(semantic::Locator::new(&graph.symbols));
+        let mut constructs = knowledge::Constructs::new();
         for (language, entry) in &self.semantic {
             let Some(facts) = &entry.facts else { continue };
             let derived = semantic::edges(facts, &locator, *language);
+            for (site, ty) in derived.constructs {
+                constructs.entry(site.file).or_default().push((site.start, site.end, ty));
+            }
             graph.edges.retain(|e| {
                 !(matches!(e.kind, StructEdgeKind::Inherits | StructEdgeKind::Implements) && derived.typed_bases.contains(&e.from))
             });
@@ -241,6 +248,19 @@ impl Project {
                 }
             }
         }
+        // Knowledge: routes, HTTP calls, DI, tests, throws, complexity.
+        let derived = knowledge::build(&graph, &files, &constructs);
+        for ext in derived.externals {
+            if !graph.symbols.iter().any(|s| s.id == ext.id) {
+                graph.symbols.push(ext);
+            }
+        }
+        for e in derived.edges {
+            if !graph.edges.iter().any(|g| g.same_relation(&e)) {
+                graph.edges.push(e);
+            }
+        }
+
         // Drop external types no edge refers to any more (name-based guesses replaced above).
         let referenced: std::collections::HashSet<&str> =
             graph.edges.iter().flat_map(|e| [e.from.as_str(), e.to.as_str()]).collect();
@@ -253,9 +273,20 @@ impl Project {
         graph.symbols.retain(|s| !orphans.contains(&s.id));
 
         let graph = Arc::new(graph);
+        self.knowledge = Some(Arc::new(derived.project));
         self.locator = Some(locator);
         self.structure = Some(graph.clone());
         graph
+    }
+
+    /// Project-wide knowledge: routes, HTTP calls, DI, configuration, data models and per-symbol
+    /// metrics (computed with the structure graph).
+    pub fn knowledge(&mut self) -> Arc<ProjectKnowledge> {
+        if self.knowledge.is_none() {
+            self.structure = None;
+            self.structure();
+        }
+        self.knowledge.clone().unwrap_or_default()
     }
 
     /// The flow graph of `symbol`, enriched with semantic facts when available.
@@ -314,6 +345,7 @@ impl Project {
 
     fn invalidate(&mut self) {
         self.structure = None;
+        self.knowledge = None;
         self.locator = None;
     }
 

@@ -291,6 +291,16 @@ impl FlowBuilder {
         }
     }
 
+    /// Sets the type a pin carries. On the `catch:<i>` exec pins of a `Try` node it is the
+    /// exception type the clause handles (`*` for every error); `nodex-core` reads it to link
+    /// throws to the code that catches them.
+    pub fn set_pin_type(&mut self, node: &NodeId, pin: &str, ty: &str) {
+        let n = self.node_mut(node);
+        if let Some(p) = n.outputs.iter_mut().chain(n.inputs.iter_mut()).find(|p| p.id == pin) {
+            p.ty = Some(ty.to_owned());
+        }
+    }
+
     /// Connects the definition of local `name` (if any) to a data input on `node`.
     pub fn read(&mut self, node: &NodeId, name: &str) {
         self.read_with(node, name, None);
