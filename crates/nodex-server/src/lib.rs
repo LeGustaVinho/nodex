@@ -13,6 +13,7 @@ pub mod environment;
 pub mod logging;
 pub mod projects;
 pub mod runner;
+pub mod samples;
 pub mod security;
 pub mod semantic_worker;
 pub mod server;
@@ -160,6 +161,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/project", get(api::project))
         .route("/api/project/open", post(api::project_open))
         .route("/api/project/close", post(api::project_close))
+        .route("/api/samples", get(api::samples))
+        .route("/api/samples/open", post(api::sample_open))
         .route("/api/fs/list", get(api::fs_list))
         .route("/api/recent", get(api::recent))
         .route("/api/catalog", get(api::catalog))

@@ -101,7 +101,29 @@ static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Tells the locators where the installed app keeps its resources (the Tauri resource folder,
 /// which is not the executable's folder on every system). Later calls are ignored.
 pub fn set_resource_dir(dir: impl Into<PathBuf>) {
-    let _ = RESOURCE_DIR.set(dir.into());
+    let _ = RESOURCE_DIR.set(plain_path(dir.into()));
+}
+
+/// `C:\x` for a Windows verbatim path `\\?\C:\x` (what Tauri reports), which some tools passed
+/// such a path as an argument do not accept; UNC (`\\?\UNC\…`) and other paths are kept.
+fn plain_path(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verbatim_drive_paths_become_plain() {
+        assert_eq!(plain_path(PathBuf::from(r"\\?\C:\Apps\Nodex")), PathBuf::from(r"C:\Apps\Nodex"));
+        assert_eq!(plain_path(PathBuf::from(r"\\?\UNC\server\share")), PathBuf::from(r"\\?\UNC\server\share"));
+        assert_eq!(plain_path(PathBuf::from("/opt/nodex")), PathBuf::from("/opt/nodex"));
+    }
 }
 
 /// Folders an installed Nodex keeps its sidecars in: the resource folder, then the
@@ -115,10 +137,11 @@ pub fn install_dirs() -> Vec<PathBuf> {
 /// builds only, this crate (so a release binary never carries the build machine's paths).
 fn source_roots() -> Vec<PathBuf> {
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+    #[allow(unused_mut)]
     let mut roots: Vec<PathBuf> = exe_dir.into_iter().collect();
-    if cfg!(debug_assertions) {
-        roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
-    }
+    // An attribute, not `cfg!`: the path must not even be compiled into a release build.
+    #[cfg(debug_assertions)]
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
     roots
 }
 

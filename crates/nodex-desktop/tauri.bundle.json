@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../target/nodex-dist/resources/sidecars/": "sidecars/",
+      "../../target/nodex-dist/resources/samples/": "samples/"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./installer/hooks.nsh"
+      }
+    }
+  }
+}

@@ -1,3 +1,7 @@
 [env]
 # ts-rs writes generated TypeScript bindings here (run `cargo test -p nodex-ir`).
 TS_RS_EXPORT_DIR = { value = "web/src/gen", relative = true }
+
+[alias]
+# `cargo xtask dist`: web UI, sidecars, samples and the installer (see xtask/src/main.rs).
+xtask = "run --quiet --package xtask --"

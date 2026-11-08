@@ -125,14 +125,20 @@ pub fn list(path: &str) -> Result<FolderListing, String> {
     Ok(FolderListing { path: display(&dir), parent: parent.or(Some(String::new())), kinds: folder_kinds(&dir), entries, home })
 }
 
-/// Where Nodex keeps per-user settings: `%APPDATA%\nodex`, `~/Library/Application Support/nodex`,
+/// The app's identifier (`identifier` in `crates/nodex-desktop/tauri.conf.json`). On Windows it
+/// names Nodex's folders under `%APPDATA%` and `%LOCALAPPDATA%`: the installer puts the program in
+/// `%LOCALAPPDATA%\Nodex`, so data must live elsewhere, and its "Delete the application data"
+/// option removes these folders.
+pub const APP_ID: &str = "io.github.legustavinho.nodex";
+
+/// Where Nodex keeps per-user settings: `%APPDATA%\<APP_ID>`, `~/Library/Application Support/nodex`,
 /// `$XDG_CONFIG_HOME/nodex` or `~/.config/nodex`. `NODEX_CONFIG_DIR` overrides it.
 pub fn config_dir() -> Option<PathBuf> {
     if let Some(d) = std::env::var_os("NODEX_CONFIG_DIR") {
         return Some(PathBuf::from(d));
     }
     if cfg!(windows) {
-        return std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("nodex"));
+        return std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join(APP_ID));
     }
     if cfg!(target_os = "macos") {
         return home_dir().map(|h| h.join("Library/Application Support/nodex"));
@@ -140,12 +146,13 @@ pub fn config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home_dir().map(|h| h.join(".config"))).map(|c| c.join("nodex"))
 }
 
-/// Where Nodex keeps downloads, logs and other data that can be rebuilt: `%LOCALAPPDATA%\nodex`,
+/// Where Nodex keeps downloads, logs and other data that can be rebuilt: `%LOCALAPPDATA%\<APP_ID>`,
 /// `~/Library/Caches/nodex`, `$XDG_CACHE_HOME/nodex` or `~/.cache/nodex` (the temp folder if none).
 pub fn data_dir() -> PathBuf {
-    let base = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
+    if cfg!(windows) {
+        return std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join(APP_ID);
+    }
+    let base = if cfg!(target_os = "macos") {
         home_dir().map(|h| h.join("Library/Caches"))
     } else {
         std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| home_dir().map(|h| h.join(".cache")))
@@ -154,7 +161,19 @@ pub fn data_dir() -> PathBuf {
 }
 
 fn recent_file() -> Option<PathBuf> {
-    config_dir().map(|d| d.join("recent.json"))
+    let file = config_dir().map(|d| d.join("recent.json"))?;
+    // Earlier builds kept the list in %APPDATA%\nodex: bring it over once.
+    if cfg!(windows)
+        && std::env::var_os("NODEX_CONFIG_DIR").is_none()
+        && !file.exists()
+        && let Some(old) = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("nodex").join("recent.json"))
+        && old.is_file()
+        && let Some(dir) = file.parent()
+    {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::copy(old, &file);
+    }
+    Some(file)
 }
 
 pub fn recent() -> Vec<RecentProject> {
@@ -257,6 +276,13 @@ pub fn close(state: &Arc<AppState>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_id_matches_the_desktop_identifier() {
+        let conf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../nodex-desktop/tauri.conf.json");
+        let conf: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(conf).unwrap()).unwrap();
+        assert_eq!(conf["identifier"], APP_ID);
+    }
 
     #[test]
     fn kinds_of_the_fixtures() {

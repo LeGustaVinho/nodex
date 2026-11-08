@@ -93,6 +93,8 @@ pub fn handle(app: &AppHandle, event: MenuEvent) {
             }
         }
         "zoom-in" | "zoom-out" | "zoom-reset" => zoom(app, id),
+        // Developer tools exist in debug builds only (the menu item too).
+        #[cfg(debug_assertions)]
         "devtools" => {
             if let Some(w) = app.get_webview_window(MAIN) {
                 w.open_devtools();

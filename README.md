@@ -88,6 +88,18 @@ Tests that drive the real .NET sidecars (Roslyn, weaver) are ignored by default;
 cargo test --workspace -- --ignored
 ```
 
+Build the Windows installer (web UI, .NET and Node sidecars, trace runtimes and samples, then `cargo tauri build`; needs pnpm, npm, the .NET SDK and the Tauri CLI):
+
+```bash
+cargo install tauri-cli --version "^2" --locked
+```
+
+```bash
+cargo xtask dist
+```
+
+The installer lands in `target/release/bundle/nsis/`. It installs per user (no administrator rights) and adds "Open with Nodex" to folders in Explorer. `cargo xtask dist --no-bundle` only stages the resources in `target/nodex-dist/resources`.
+
 UI development with hot reload — start the server allowing the Vite origin, then Vite:
 
 ```bash

@@ -498,3 +498,6 @@ button.semantic { cursor: pointer; background: transparent; }
 .connection-lost { z-index: 150; }
 .small-modal { width: min(420px, 100%); }
 .pad { padding: 4px 14px 14px; margin: 0; line-height: 1.45; }
+.welcome-samples { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.welcome-sample { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 8px; }
+.welcome-sample:hover:not(:disabled) { border-color: #3a74ad; }

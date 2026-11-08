@@ -65,6 +65,27 @@ pub async fn project_open(State(state): State<Arc<AppState>>, Json(req): Json<Op
     Ok(Json(summary).into_response())
 }
 
+/// The sample projects shipped with Nodex.
+pub async fn samples() -> ApiResult {
+    Ok(Json(crate::samples::list()).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct SampleRequest {
+    id: String,
+}
+
+/// Copies a sample to the user's data folder (once) and opens it.
+pub async fn sample_open(State(state): State<Arc<AppState>>, Json(req): Json<SampleRequest>) -> ApiResult {
+    let dir = tokio::task::spawn_blocking(move || crate::samples::prepare(&req.id))
+        .await
+        .map_err(internal)?
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
+    crate::projects::open(&state, dir.to_string_lossy().into_owned()).await.map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
+    let summary = state.project.lock().map_err(poisoned)?.summary();
+    Ok(Json(summary).into_response())
+}
+
 /// Closes the folder (back to the welcome screen); browsers get `project-changed`.
 pub async fn project_close(State(state): State<Arc<AppState>>) -> ApiResult {
     crate::projects::close(&state).map_err(internal)?;

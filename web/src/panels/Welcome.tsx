@@ -25,6 +25,7 @@ export function Logo({ size = 56 }: { size?: number }) {
 /** The start screen when no folder is open: open one, reopen a recent one, check the tools. */
 export function Welcome() {
   const recent = useQuery({ queryKey: ["recent"], queryFn: api.recent });
+  const samples = useQuery({ queryKey: ["samples"], queryFn: api.samples });
   const env = useEnvironment();
   const loading = useUi((s) => s.projectLoading);
   const setEnvironmentOpen = useUi((s) => s.setEnvironmentOpen);
@@ -36,6 +37,14 @@ export function Welcome() {
     setError(null);
     try {
       await api.openProject(path);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  const openSample = async (id: string) => {
+    setError(null);
+    try {
+      await api.openSample(id);
     } catch (e) {
       setError(errorText(e));
     }
@@ -87,7 +96,20 @@ export function Welcome() {
         <div className="welcome-columns">
           <section>
             <div className="section-title">Recent</div>
-            {recent.data && recent.data.length === 0 && <div className="empty-note">Folders you open appear here.</div>}
+            {recent.data && recent.data.length === 0 && (samples.data ?? []).length === 0 && (
+              <div className="empty-note">Folders you open appear here.</div>
+            )}
+            {(samples.data ?? []).length > 0 && (recent.data ?? []).length < 3 && (
+              <div className="welcome-samples">
+                <div className="muted small">New to Nodex? Start with a sample:</div>
+                {(samples.data ?? []).map((s) => (
+                  <button key={s.id} className="welcome-sample" disabled={!!loading} onClick={() => void openSample(s.id)}>
+                    <strong>{s.name}</strong>
+                    <span className="muted small">{s.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {(recent.data ?? []).map((r) => (
               <button key={r.path} className="welcome-recent" disabled={!!loading} onClick={() => void open(r.path)} title={r.path}>
                 <span className="recent-name">{r.name || folderName(r.path)}</span>

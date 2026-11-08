@@ -2,7 +2,7 @@
 //!
 //! Each language names a pinned adapter build ([`nodex_lang_api::AdapterSpec`]). Nothing is
 //! downloaded until the user clicks *Install*; the archive is checked against its pinned SHA-256
-//! before it is unpacked into the per-user cache folder (`%LOCALAPPDATA%\nodex\adapters`,
+//! before it is unpacked into the per-user cache folder (`%LOCALAPPDATA%\<app id>\adapters`,
 //! `~/Library/Caches/nodex/adapters`, `$XDG_CACHE_HOME/nodex/adapters`; `NODEX_ADAPTERS_DIR`
 //! overrides it). Each adapter's own environment variable (`NODEX_NETCOREDBG`, …) can point to
 //! one installed elsewhere.
