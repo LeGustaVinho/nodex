@@ -106,6 +106,7 @@ interface UiState {
   selection: Selection;
   /** Span to reveal in the code panel. */
   codeFocus: Span | null;
+  codeFocusRevision: string | null;
   /** Statement nodes whose expression trees are expanded. */
   expanded: Record<string, boolean>;
   classOpen: Record<string, boolean>;
@@ -205,8 +206,8 @@ interface UiState {
   setNamespace: (ns: string | null) => void;
   showCalls: (symbol: string) => void;
   setCallDepth: (depth: number) => void;
-  select: (s: Selection, span?: Span | null) => void;
-  focusCode: (span: Span | null) => void;
+  select: (s: Selection, span?: Span | null, revision?: string) => void;
+  focusCode: (span: Span | null, revision?: string) => void;
   /** Opens or closes a statement's details; `shown` is whether they are shown now. */
   toggleExpanded: (flow: string, nodeId: string, shown: boolean) => void;
   setDetail: (level: DetailLevel) => void;
@@ -264,6 +265,7 @@ export const useUi = create<UiState>((set, get) => {
   callDepth: 2,
   selection: null,
   codeFocus: null,
+  codeFocusRevision: null,
   expanded: {},
   classOpen: {},
   toggleClassMember: (id, shown) => set((s) => ({ classOpen: { ...s.classOpen, [id]: !shown } })),
@@ -330,6 +332,7 @@ export const useUi = create<UiState>((set, get) => {
       callFocus: null,
       selection: null,
       codeFocus: null,
+      codeFocusRevision: null,
       expanded: {},
       classOpen: {},
       context: [],
@@ -431,8 +434,8 @@ export const useUi = create<UiState>((set, get) => {
     set({ callFocus, view: "calls" });
   },
   setCallDepth: (callDepth) => set({ callDepth }),
-  select: (selection, span) => set(span === undefined ? { selection } : { selection, codeFocus: span }),
-  focusCode: (codeFocus) => set({ codeFocus }),
+  select: (selection, span, revision) => set(span === undefined ? { selection } : { selection, codeFocus: span, codeFocusRevision: revision ?? null }),
+  focusCode: (codeFocus, revision) => set({ codeFocus, codeFocusRevision: revision ?? null }),
   toggleExpanded: (flow, id, shown) => set((s) => ({ expanded: { ...s.expanded, [expansionKey(flow, id)]: !shown } })),
   setDetail: (detail) =>
     set((s) => {

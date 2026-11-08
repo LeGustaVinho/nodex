@@ -36,6 +36,7 @@ interface ProgramSpec {
 export class ProjectHost {
   readonly root: string;
   readonly messages: string[] = [];
+  readonly configurationFiles = new Set<string>();
   private specs: ProgramSpec[] = [];
   private cache = new Map<string, ts.SourceFile>();
 
@@ -45,12 +46,20 @@ export class ProjectHost {
 
   /** Finds the configurations and builds the programs. */
   open(): void {
+    this.configurationFiles.clear();
     this.specs = this.discover();
     this.build();
   }
 
   /** Re-reads `changed` files (absolute paths) and rebuilds the programs incrementally. */
   update(changed: string[]): void {
+    if (changed.some((file) => !CODE_FILE.test(file))) {
+      // Options and package resolution can rebind every reference even when the source is identical.
+      this.cache.clear();
+      this.messages.length = 0;
+      this.open();
+      return;
+    }
     for (const file of changed) {
       for (const key of [...this.cache.keys()]) {
         if (samePath(key, file)) this.cache.delete(key);
@@ -90,17 +99,17 @@ export class ProjectHost {
     return `TypeScript ${ts.version} · ${configs.join(", ")} · ${this.sourceFiles().length} files`;
   }
 
-  /** Project source files (not declaration files, not dependencies) with their program. */
-  sourceFiles(): { file: ts.SourceFile; program: ts.Program }[] {
+  /** Semantic analysis can request each program's view of a shared file. */
+  sourceFiles(allContexts = false): { file: ts.SourceFile; program: ts.Program; context: string }[] {
     const seen = new Set<string>();
-    const out: { file: ts.SourceFile; program: ts.Program }[] = [];
+    const out: { file: ts.SourceFile; program: ts.Program; context: string }[] = [];
     for (const spec of this.specs) {
       const program = spec.program;
       if (!program) continue;
       for (const sf of program.getSourceFiles()) {
-        if (sf.isDeclarationFile || seen.has(sf.fileName) || !this.isProjectFile(sf.fileName)) continue;
+        if ((!allContexts && seen.has(sf.fileName)) || !this.isProjectFile(sf.fileName) || program.isSourceFileDefaultLibrary(sf)) continue;
         seen.add(sf.fileName);
-        out.push({ file: sf, program });
+        out.push({ file: sf, program, context: spec.config ?? "" });
       }
     }
     return out;
@@ -177,6 +186,14 @@ export class ProjectHost {
   private parseConfig(config: string): ts.ParsedCommandLine | undefined {
     const parsed = ts.getParsedCommandLineOfConfigFile(config, { noEmit: true }, {
       ...ts.sys,
+      readFile: (file) => {
+        const absolute = path.resolve(file);
+        if (this.isProjectFile(absolute)) {
+          const rel = this.relative(absolute);
+          if (rel) this.configurationFiles.add(rel);
+        }
+        return ts.sys.readFile(file);
+      },
       onUnRecoverableConfigFileDiagnostic: (d) => {
         this.messages.push(`${path.basename(config)}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`);
       },

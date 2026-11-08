@@ -22,7 +22,7 @@ async function serve(): Promise<void> {
   const write = (message: unknown) => out.write(`${JSON.stringify(message)}\n`);
 
   let host: ProjectHost | undefined;
-  // Per-file facts, so an update re-analyzes only what changed.
+  // Reuse file facts when the compiler has no source changes.
   let cache: FactsCache = new Map();
   const require = (): ProjectHost => {
     if (!host) throw new Error("call 'open' first");

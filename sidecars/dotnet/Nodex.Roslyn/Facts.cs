@@ -25,10 +25,13 @@ public sealed record SemanticTarget(
 
 public sealed record SemanticRef(ByteRange Site, RefKind Kind, SemanticTarget Target);
 
+public sealed record NavigationFact(ByteRange Site, SemanticTarget Target, bool Implementation = false);
+
 public sealed record LocalTypeFact(ByteRange Site, string Name, string Ty);
 
 public sealed record SemanticFacts(
     string Source,
     List<SemanticRef> Refs,
     List<LocalTypeFact> Locals,
+    List<NavigationFact> Navigation,
     List<string> Messages);

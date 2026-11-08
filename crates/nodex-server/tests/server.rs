@@ -56,8 +56,30 @@ async fn starts_without_a_project_then_opens_one_and_shuts_down() {
     let (status, body) = http(port, &token, "POST", "/api/project/open", Some(&format!("{{\"path\":{path}}}"))).await;
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("\"open\":true"), "{body}");
-    let (status, _) = http(port, &token, "GET", "/api/structure", None).await;
+    let (status, body) = http(port, &token, "GET", "/api/structure", None).await;
     assert_eq!(status, 200);
+    let graph: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let id = graph["symbols"].as_array().unwrap().iter()
+        .find(|s| s["kind"] == "Function" && s["origins"].as_array().is_some_and(|o| !o.is_empty()))
+        .and_then(|s| s["id"].as_str()).expect("project function");
+    let query = |kind: &str| format!("/api/navigation?{}", form_urlencoded::Serializer::new(String::new())
+        .append_pair("symbol", id).append_pair("kind", kind).finish());
+    let (status, body) = http(port, &token, "GET", &query("declaration"), None).await;
+    assert_eq!(status, 200);
+    let data: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(data["coverage"], "indexed");
+    assert_eq!(data["locations"][0]["symbol"], id);
+    assert!(data["locations"][0]["span"]["start_line"].as_u64().unwrap() > 0);
+    let file = data["locations"][0]["span"]["file"].as_str().unwrap();
+    let source_query = form_urlencoded::Serializer::new(String::new()).append_pair("file", file).finish();
+    let (status, source) = http(port, &token, "GET", &format!("/api/source?{source_query}"), None).await;
+    assert_eq!(status, 200);
+    assert_eq!(data["locations"][0]["source_revision"], nodex_core::navigation::source_revision(&source));
+    let (status, body) = http(port, &token, "GET", &query("usages"), None).await;
+    assert_eq!(status, 200);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["coverage"], "partial");
+    assert_eq!(http(port, "wrong", "GET", &query("usages"), None).await.0, 401);
+    assert_eq!(http(port, &token, "GET", "/api/navigation?symbol=missing&kind=usages", None).await.0, 404);
     assert!(server.state.watcher.lock().unwrap().is_some());
 
     // Closing goes back to the welcome screen; opening again works.

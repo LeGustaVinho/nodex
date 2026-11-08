@@ -15,6 +15,7 @@ pub mod operations;
 pub mod perf;
 pub mod project;
 pub mod semantic;
+pub mod navigation;
 pub mod units;
 
 pub use catalog::Catalog;

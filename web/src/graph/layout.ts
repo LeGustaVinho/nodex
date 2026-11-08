@@ -50,13 +50,16 @@ const CACHE_SIZE = 24;
 /** Everything about a graph that changes its layout (ids, sizes, ports, nesting, layout edges). */
 export function layoutSignature(g: GGraph): string {
   const parts: string[] = [g.direction, String(g.aspectRatio ?? ""), g.layout ?? "", g.focus ?? "", String(g.spacing ?? 1)];
+  const sideNodes = new Set<string>();
   for (const n of g.nodes) {
     const ports = n.ports.map((p) => `${p.id}${p.side[0]}`).join(",");
     const box = n.box ? `${n.box.width}x${n.box.height}+${n.box.offsetX}` : "";
     const attach = n.attach ? `${n.attach.to}@${n.attach.dx},${n.attach.dy}` : "";
     parts.push(`${n.id}|${n.width}x${n.height}|${box}|${n.parent ?? ""}|${n.container ? 1 : 0}|${n.direction ?? ""}|${n.headerHeight ?? ""}|${attach}|${ports}`);
+    if (n.layoutSide) sideNodes.add(n.id);
   }
-  for (const e of g.edges) if (e.layout) parts.push(`${e.source}:${e.sourceHandle ?? ""}>${e.target}:${e.targetHandle ?? ""}`);
+  for (const id of sideNodes) parts.push(`side:${id}`);
+  for (const e of g.edges) if (e.layout || sideNodes.has(e.target)) parts.push(`${e.source}:${e.sourceHandle ?? ""}>${e.target}:${e.targetHandle ?? ""}`);
   for (const e of g.layoutLinks ?? []) parts.push(`link:${e.source}>${e.target}`);
   return hash(parts.join("\n"));
 }
@@ -82,7 +85,7 @@ async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions
     attachNodes(g, positions);
     return positions;
   }
-  const laidOut = g.nodes.filter((n) => !n.attach);
+  const laidOut = g.nodes.filter((n) => !n.attach && !n.layoutSide);
   const nodeIds = new Set(laidOut.map((n) => n.id));
   const kids = new Map<string | undefined, GNode[]>();
   for (const n of laidOut) {
@@ -200,9 +203,60 @@ async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions
     }
   };
   read(result.children ?? []);
+  placeSideColumns(g, positions);
   if (g.aspectRatio) packComponents(g, positions, g.aspectRatio, 60 * factor);
   attachNodes(g, positions);
   return positions;
+}
+
+/** Keep side cards out of the main layout and align them with the sources of their wires. */
+export function placeSideColumns(g: GGraph, positions: Positions) {
+  const sideNodes = g.nodes.filter((n) => n.layoutSide && n.parent);
+  if (!sideNodes.length) return;
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  const incoming = new Map(sideNodes.map((n) => [n.id, [] as string[]]));
+  for (const e of g.edges) incoming.get(e.target)?.push(e.source);
+  const columns = new Map<string, { node: GNode; anchorY: number }[]>();
+  for (const node of sideNodes) {
+    const parent = node.parent!;
+    const centers: number[] = [];
+    for (const source of incoming.get(node.id)!) {
+      let n = byId.get(source);
+      let center = (n?.height ?? 0) / 2;
+      while (n && n.id !== parent) {
+        const position = positions.get(n.id);
+        if (!position) break;
+        center += position.y;
+        n = n.parent ? byId.get(n.parent) : undefined;
+      }
+      if (n?.id === parent) centers.push(center);
+    }
+    centers.sort((a, b) => a - b);
+    const middle = Math.floor(centers.length / 2);
+    const anchorY = centers.length ? (centers[middle] + centers[Math.floor((centers.length - 1) / 2)]) / 2 : Infinity;
+    const column = columns.get(parent) ?? [];
+    column.push({ node, anchorY });
+    columns.set(parent, column);
+  }
+  const padding = 12;
+  for (const [id, column] of columns) {
+    const parent = byId.get(id);
+    const box = positions.get(id);
+    if (!parent || !box) continue;
+    // An otherwise empty class uses the full interior for its fields.
+    const x = box.width === undefined ? padding : box.width - padding + 72;
+    let nextY = parent.headerHeight ?? 34;
+    let right = parent.width;
+    let bottom = box.height ?? parent.height;
+    for (const { node, anchorY } of column.sort((a, b) => a.anchorY - b.anchorY)) {
+      const y = Number.isFinite(anchorY) ? Math.max(nextY, anchorY - node.height / 2) : nextY;
+      positions.set(node.id, { x, y });
+      nextY = y + node.height + 16;
+      right = Math.max(right, x + node.width + padding);
+      bottom = Math.max(bottom, y + node.height + padding);
+    }
+    positions.set(id, { ...box, width: right, height: bottom });
+  }
 }
 
 /** Attached nodes follow their anchor. */

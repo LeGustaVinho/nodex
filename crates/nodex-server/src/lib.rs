@@ -88,7 +88,7 @@ pub struct AppState {
     pub catalog: Catalog,
     pub layout_lock: Mutex<()>,
     /// Channels to the semantic workers (changed absolute paths).
-    pub semantic_tx: Mutex<Vec<mpsc::Sender<Vec<PathBuf>>>>,
+    pub semantic_tx: Mutex<Vec<mpsc::Sender<(u64, Vec<PathBuf>)>>>,
     pub run: runner::RunManager,
     pub debug: debugger::DebugManager,
     /// Recent UML diagrams.
@@ -162,6 +162,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     // Routes about the open folder answer 409 on the welcome screen (no folder yet).
     let project = Router::new()
         .route("/api/structure", get(api::structure))
+        .route("/api/navigation", get(api::navigation))
         .route("/api/knowledge", get(api::knowledge))
         .route("/api/uml", get(uml::diagram))
         .route("/api/uml/availability", get(uml::availability))

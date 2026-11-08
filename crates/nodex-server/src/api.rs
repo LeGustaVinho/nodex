@@ -34,6 +34,40 @@ pub async fn knowledge(State(state): State<Arc<AppState>>) -> ApiResult {
 }
 
 #[derive(Deserialize)]
+pub struct NavigationParams {
+    symbol: String,
+    kind: nodex_core::navigation::NavigationKind,
+}
+
+pub async fn navigation(State(state): State<Arc<AppState>>, Query(q): Query<NavigationParams>) -> ApiResult {
+    use std::sync::atomic::Ordering;
+    let generation = state.generation.load(Ordering::SeqCst);
+    let project_changed = || (StatusCode::CONFLICT, "project changed during navigation".to_owned());
+    loop {
+        crate::builds::graphs(&state).await.map_err(internal)?;
+        let (query, version) = {
+            let project = state.project.lock().map_err(poisoned)?;
+            if state.generation.load(Ordering::SeqCst) != generation {
+                return Err(project_changed());
+            }
+            if project.built().is_none() {
+                continue;
+            }
+            (project.navigation(&q.symbol, q.kind).ok_or_else(|| not_found("symbol"))?, project.version())
+        };
+        let result = tokio::task::spawn_blocking(move || query.resolve()).await.map_err(internal)?;
+        let project = state.project.lock().map_err(poisoned)?;
+        if state.generation.load(Ordering::SeqCst) != generation {
+            return Err(project_changed());
+        }
+        if project.version() == version {
+            drop(project);
+            return Ok(Json(result).into_response());
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct FlowQuery {
     symbol: String,
 }
@@ -67,7 +101,12 @@ pub struct SourceQuery {
 
 pub async fn source(State(state): State<Arc<AppState>>, Query(q): Query<SourceQuery>) -> ApiResult {
     let text = state.project.lock().map_err(poisoned)?.source(&q.file).ok_or_else(|| not_found("file"))?;
-    Ok(([("content-type", "text/plain; charset=utf-8")], text).into_response())
+    let revision = nodex_core::navigation::source_revision(&text);
+    Ok(([
+        ("content-type", "text/plain; charset=utf-8"),
+        ("cache-control", "no-store"),
+        ("x-nodex-source-revision", revision.as_str()),
+    ], text).into_response())
 }
 
 #[derive(Deserialize)]

@@ -16,8 +16,18 @@ pub struct LineIndex<'a> {
 impl<'a> LineIndex<'a> {
     pub fn new(text: &'a str) -> Self {
         let mut line_starts = vec![0];
-        line_starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
+        let bytes = text.as_bytes();
+        line_starts.extend(bytes.iter().enumerate().filter_map(|(i, &byte)| {
+            (byte == b'\n' || (byte == b'\r' && bytes.get(i + 1) != Some(&b'\n'))).then_some(i + 1)
+        }));
         Self { text, line_starts }
+    }
+
+    pub fn line_text(&self, line: u32) -> Option<&'a str> {
+        let i = line.checked_sub(1)? as usize;
+        let start = *self.line_starts.get(i)?;
+        let end = self.line_starts.get(i + 1).copied().unwrap_or(self.text.len());
+        Some(self.text[start..end].trim_end_matches(['\r', '\n']))
     }
 
     /// Returns `(line, column)`, both 1-based.
@@ -427,6 +437,17 @@ mod tests {
         assert_eq!(idx.position(3), (2, 1));
         // "çé" is 4 bytes but 2 UTF-16 units.
         assert_eq!(idx.position(3 + 4), (2, 3));
+    }
+
+    #[test]
+    fn line_index_handles_cr_crlf_and_lf() {
+        let text = "one\rtwó\r\nthree\nfour";
+        let index = LineIndex::new(text);
+        assert_eq!(index.position(text.find('ó').unwrap()), (2, 3));
+        assert_eq!(index.position(text.find("three").unwrap()), (3, 1));
+        assert_eq!(index.position(text.find("four").unwrap()), (4, 1));
+        assert_eq!(index.line_text(2), Some("twó"));
+        assert_eq!(index.line_text(3), Some("three"));
     }
 
     #[test]

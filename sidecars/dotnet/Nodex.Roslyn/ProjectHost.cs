@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -9,7 +10,7 @@ namespace Nodex.Roslyn;
 /// Prefers MSBuild (.sln/.slnx/.csproj); falls back to a loose-files compilation against the
 /// running .NET's reference assemblies when there is no project file or loading fails
 /// (for example a Unity project opened without the editor's generated projects).
-public sealed class ProjectHost
+public sealed class ProjectHost : IDisposable
 {
     // Must match nodex-core's IGNORED_DIRS.
     private static readonly HashSet<string> IgnoredDirs = new(StringComparer.OrdinalIgnoreCase)
@@ -23,7 +24,7 @@ public sealed class ProjectHost
     public string Root { get; }
     public string Source { get; }
     public List<string> Messages { get; } = [];
-    public int DocumentCount => SourceDocuments().Count();
+    public int DocumentCount => SourceDocuments().Select(doc => doc.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
 
     private ProjectHost(string root, Solution solution, string source, List<string> messages)
     {
@@ -42,9 +43,10 @@ public sealed class ProjectHost
         var entries = FindProjectEntries(root);
         if (entries.Count > 0)
         {
+            MSBuildWorkspace? workspace = null;
             try
             {
-                var workspace = MSBuildWorkspace.Create();
+                workspace = MSBuildWorkspace.Create();
 #pragma warning disable CS0618 // WorkspaceFailed is the portable way to observe load problems.
                 workspace.WorkspaceFailed += (_, e) =>
                 {
@@ -70,9 +72,15 @@ public sealed class ProjectHost
             {
                 messages.Add($"MSBuild load failed ({ex.Message}); using loose files instead.");
             }
+            workspace?.Dispose();
         }
         return new ProjectHost(root, LooseFiles(root), "Roslyn · loose files (no build)", messages);
     }
+
+    public static bool IsBuildConfiguration(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is ".csproj" or ".sln" or ".slnx" or ".props" or ".targets";
+
+    public void Dispose() => _solution.Workspace.Dispose();
 
     /// Solutions first (at most two folders deep), otherwise every .csproj (three deep).
     private static List<string> FindProjectEntries(string root)
@@ -140,15 +148,14 @@ public sealed class ProjectHost
 
     public string Relative(string path) => Path.GetRelativePath(Root, path).Replace('\\', '/');
 
-    /// One document per file path (multi-targeted projects list a file several times).
+    /// A linked file can bind different symbols in different projects.
     public IEnumerable<Document> SourceDocuments()
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var project in _solution.Projects.Where(p => p.Language == LanguageNames.CSharp))
         {
             foreach (var doc in project.Documents)
             {
-                if (IsSourceFile(doc.FilePath) && seen.Add(doc.FilePath!)) yield return doc;
+                if (IsSourceFile(doc.FilePath)) yield return doc;
             }
         }
     }
@@ -192,17 +199,20 @@ public sealed class ProjectHost
     public async Task<SemanticFacts> AnalyzeAsync()
     {
         var docs = SourceDocuments().ToList();
+        var sharedPaths = docs.GroupBy(doc => doc.FilePath!, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Skip(1).Any()).Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var maps = FactCollector.NewMaps();
+        var interfaceConflicts = new ConcurrentDictionary<Compilation, Lazy<HashSet<INamedTypeSymbol>>>();
         var parts = new FactCollector[docs.Count];
         var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) };
         await Parallel.ForEachAsync(Enumerable.Range(0, docs.Count), options, async (i, _) =>
         {
-            var part = new FactCollector(this, maps);
+            var part = new FactCollector(this, maps, interfaceConflicts, sharedPaths.Contains(docs[i].FilePath!));
             await part.CollectAsync(docs[i]);
             parts[i] = part;
         });
-        var all = new FactCollector(this, maps);
+        var all = new FactCollector(this, maps, interfaceConflicts);
         foreach (var part in parts) all.Merge(part);
-        return all.Finish(Source, Messages);
+        return all.Finish(Source, Messages, sharedPaths.Count > 0);
     }
 }

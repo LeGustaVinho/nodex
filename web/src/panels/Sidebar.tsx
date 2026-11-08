@@ -3,6 +3,7 @@ import { Fragment, type ReactNode, useLayoutEffect, useMemo, useRef, useState } 
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { openMenu } from "../components/ContextMenu";
+import { navigationMenuItems } from "../navigation";
 import { blueprintMenuItems, contextMenuItems } from "../uml/contextMenu";
 import { Splitter } from "../components/Splitter";
 import type { Symbol } from "../gen/Symbol";
@@ -107,7 +108,9 @@ export function Sidebar() {
   // has a module per file: tens of thousands of rows).
   const symbolRows: VirtualRow[] = [];
   const row = (symbol: Symbol, depth: number, extra: { caret?: string; onCaret?: () => void; active?: boolean } = {}) =>
-    symbolRows.push({ key: symbol.id, render: () => <TreeRow symbol={symbol} depth={depth} {...extra} onClick={() => clickSymbol(symbol)} /> });
+    symbolRows.push({ key: symbol.id, render: () => (
+      <TreeRow symbol={symbol} owner={index.byId.get(symbol.parent ?? "")} depth={depth} {...extra} onClick={() => clickSymbol(symbol)} />
+    ) });
 
   const pushMembers = (owner: Symbol, depth: number) => {
     for (const m of index.members(owner.id)) {
@@ -270,13 +273,14 @@ function VirtualList({ rows }: { rows: VirtualRow[] }) {
   );
 }
 
-function TreeRow(props: { symbol: Symbol; depth: number; caret?: string; onCaret?: () => void; active?: boolean; onClick: () => void }) {
-  const { symbol, depth, caret, onCaret, active, onClick } = props;
+function TreeRow(props: { symbol: Symbol; owner?: Symbol; depth: number; caret?: string; onCaret?: () => void; active?: boolean; onClick: () => void }) {
+  const { symbol, owner, depth, caret, onCaret, active, onClick } = props;
   return (
     <div
       className={`row ${active ? "active" : ""}`}
       style={{ paddingLeft: 6 + depth * 14 }}
       onContextMenu={(e) => openMenu(e, [
+        ...navigationMenuItems(symbol, owner),
         ...(!symbol.external ? contextMenuItems({ kind: "symbol", id: symbol.id }) : []),
         ...blueprintMenuItems(symbol),
         ...umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`),

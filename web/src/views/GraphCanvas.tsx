@@ -21,7 +21,7 @@ import { api, type Positions as SavedPositions } from "../api";
 import { typeColor } from "../catalog";
 import { BlueprintNode } from "../components/BlueprintNode";
 import { CallNode } from "../components/CallNode";
-import { ClassBox, FieldsCard, MethodNode } from "../components/ClassNodes";
+import { ClassBox, FieldCard, MethodNode } from "../components/ClassNodes";
 import { ExprNode } from "../components/ExprNode";
 import { OwnershipEdge } from "../components/OwnershipEdge";
 import { HierarchyGroup, HierarchyNode } from "../components/HierarchyNodes";
@@ -64,7 +64,7 @@ const nodeTypes: NodeTypes = {
   classBox: ClassBox,
   methodBox: MethodNode,
   methodCard: MethodNode,
-  fieldsCard: FieldsCard,
+  fieldCard: FieldCard,
 };
 
 const edgeTypes: EdgeTypes = { ownership: OwnershipEdge };

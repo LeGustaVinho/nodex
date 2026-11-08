@@ -95,6 +95,13 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .app > .right > .inspector { flex: 0 1 var(--inspector-h, 45%); min-height: 0; }
 .app > .right > :last-child { flex: 1 1 0; min-height: 160px; }
 .inspector { overflow: auto; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.navigation-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.navigation-head button { flex: none; }
+.navigation-results [role="status"] { color: var(--muted); font-size: 12px; }
+.navigation-file { margin-top: 10px; display: grid; gap: 3px; }
+.navigation-file > strong, .navigation-file code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-file button { display: flex; align-items: baseline; gap: 8px; min-width: 0; text-align: left; }
+.navigation-file button span { flex: none; }
 .empty-note { color: var(--muted); }
 .insp-head { display: flex; align-items: baseline; gap: 8px; border-left: 4px solid var(--accent-ui); padding-left: 8px; margin-bottom: 6px; }
 .insp-concept { font-size: 16px; font-weight: 600; }
@@ -710,7 +717,7 @@ table.grid td { padding: 3px 6px 3px 0; border-bottom: 1px solid #262b34; vertic
 .context-symbol .muted { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .ov-context { color: var(--muted); font-size: 12px; }
 
-.class-box, .class-method, .class-fields { position: relative; overflow: visible; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.class-box, .class-method, .class-field { position: relative; overflow: visible; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
 .class-box, .method-box { height: 100%; min-height: 52px; background: #191d2566; }
 .class-box { min-height: 76px; border-color: #535a70; }
 .class-box-head, .class-method-head { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 7px 7px 0 0; background: var(--panel-2); }
@@ -720,12 +727,13 @@ table.grid td { padding: 3px 6px 3px 0; border-bottom: 1px solid #262b34; vertic
 .class-actions { display: flex; flex: none; gap: 4px; }
 .class-actions button, .class-toggle { padding: 1px 6px; }
 .method-box { border-color: #475971; }
-.method-card, .class-fields { background: var(--panel); }
-.class-method.selected, .class-box.selected { border-color: var(--accent); }
+.method-card, .class-field { background: var(--panel); }
+.class-method.selected, .class-box.selected, .class-field.selected { border-color: var(--accent); }
 .class-method-head span { font-family: var(--mono); }
 .class-method-meta { display: flex; gap: 10px; padding: 4px 10px 7px; color: var(--muted); font-size: 11px; }
-.class-fields-head { padding: 7px 10px; font-weight: 600; }
-.class-field { display: flex; gap: 7px; align-items: center; height: 24px; padding: 0 10px; border-top: 1px solid var(--line); }
-.class-field span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.class-field .badge { flex: none; margin-left: auto; }
+.class-field { height: 48px; padding: 4px 10px; }
+.class-field-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.class-field-title strong, .class-field-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.class-field-title .badge { flex: none; }
+.class-field-type { display: block; font-size: 11px; }
 .class-wire-handle { opacity: 0; pointer-events: none; }

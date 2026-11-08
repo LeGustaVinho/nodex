@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use nodex_core::Project;
-use nodex_ir::semantic::{ByteRange, RefKind, SemanticFacts, SemanticRef, SemanticState, SemanticTarget};
+use nodex_ir::semantic::{ByteRange, NavigationFact, RefKind, SemanticFacts, SemanticRef, SemanticState, SemanticTarget};
 use nodex_ir::{Concept, Expr, StructEdgeKind};
 use nodex_lang_api::LanguageFrontend;
 use nodex_lang_csharp::CSharpFrontend;
@@ -54,6 +54,9 @@ fn synthetic_call_fact_links_flow_and_structure() {
             },
         }],
         locals: Vec::new(),
+        navigation: None,
+        implementation_contracts: Vec::new(),
+        configuration_files: Vec::new(),
         messages: Vec::new(),
     };
     project.apply_semantic(nodex_ir::Language::Csharp, facts);
@@ -66,6 +69,93 @@ fn synthetic_call_fact_links_flow_and_structure() {
     let annotated = find_expr(node.expr.as_ref().unwrap(), &|e| e.symbol.is_some()).expect("expression annotated");
     assert_eq!(annotated.target.as_deref(), Some("OrderService.TotalForCustomer(string)"));
     assert!(project.summary().semantic.iter().any(|s| s.state == SemanticState::Ready));
+}
+
+#[test]
+fn navigation_uses_compiler_sites_and_hides_stale_results_while_loading() {
+    use nodex_core::navigation::NavigationKind;
+    let mut project = open("csharp/Sample");
+    let graph = project.structure();
+    let decl = &graph.symbols.iter().find(|s| s.id == TOTAL).unwrap().origins[0];
+    let source = project.source("Program.cs").unwrap();
+    let start = source.find("TotalForCustomer(").unwrap() as u32;
+    let site = ByteRange { file: "Program.cs".into(), start, end: start + "TotalForCustomer".len() as u32 };
+    let fact = NavigationFact {
+        site: site.clone(),
+        target: SemanticTarget {
+            decl: Some(ByteRange { file: decl.file.clone(), start: decl.start_byte, end: decl.end_byte }),
+            display: TOTAL.into(), container: None, kind: "method".into(), linq: false, external: false,
+        },
+        implementation: false,
+        implementation_kind: None,
+    };
+    project.apply_semantic(nodex_ir::Language::Csharp, SemanticFacts {
+        navigation: Some(vec![fact.clone(), fact]),
+        ..Default::default()
+    });
+    project.structure();
+    let usages = |p: &Project| serde_json::to_value(p.navigation(TOTAL, NavigationKind::Usages).unwrap().resolve()).unwrap();
+    let result = usages(&project);
+    assert_eq!(result["coverage"], "indexed");
+    let locations = result["locations"].as_array().unwrap();
+    assert_eq!(locations.len(), 1);
+    assert_eq!(locations[0]["span"]["start_byte"], start);
+    assert_eq!(locations[0]["symbol"], MAIN);
+    assert!(locations[0]["snippet"].as_str().unwrap().contains("TotalForCustomer"));
+    project.set_semantic_status(nodex_ir::Language::Csharp, SemanticState::Loading, "updating");
+    let result = usages(&project);
+    assert_eq!(result["coverage"], "loading");
+    assert_eq!(result["locations"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn member_expression_navigation_requires_an_unambiguous_reference() {
+    let mut project = open("csharp/Sample");
+    let graph = project.structure();
+    let file = "Services/OrderService.cs";
+    let source = project.source(file).unwrap();
+    let start = source.find("order.Amount").unwrap() as u32 + "order.".len() as u32;
+    let site = ByteRange { file: file.into(), start, end: start + "Amount".len() as u32 };
+    let fact_for = |name: &str| {
+        let member = graph.symbols.iter().find(|s| s.name == name && s.kind == nodex_ir::SymbolKind::Property).unwrap();
+        let decl = &member.origins[0];
+        NavigationFact {
+            site: site.clone(),
+            target: SemanticTarget {
+                decl: Some(ByteRange { file: decl.file.clone(), start: decl.start_byte, end: decl.end_byte }),
+                display: member.name.clone(), container: None, kind: "property".into(), linq: false, external: false,
+            },
+            implementation: false,
+            implementation_kind: None,
+        }
+    };
+    let resolve = |project: &mut Project, navigation| {
+        project.apply_semantic(nodex_ir::Language::Csharp, SemanticFacts {
+            navigation: Some(navigation),
+            ..Default::default()
+        });
+        let flow = project.flow(TOTAL).unwrap();
+        let member = flow.nodes.iter().filter_map(|node| node.expr.as_ref()).find_map(|expr| {
+            find_expr(expr, &|e| e.concept == Concept::GetMember && e.label == ".Amount")
+        }).unwrap();
+        member.symbol.clone()
+    };
+    assert!(resolve(&mut project, vec![fact_for("Amount")]).is_some_and(|id| id.ends_with(".Amount")));
+    assert_eq!(resolve(&mut project, vec![fact_for("Amount"), fact_for("Status")]), None);
+}
+
+#[test]
+fn msbuild_project_changes_invalidate_csharp_analysis() {
+    let mut project = open("csharp/Sample");
+    project.apply_semantic(nodex_ir::Language::Csharp, SemanticFacts::default());
+    let config = project.root().join("Sample.csproj");
+    assert!(config.is_file());
+    let revision = project.source_revision();
+
+    assert_eq!(project.refresh_path(&config).as_deref(), Some("Sample.csproj"));
+    assert_eq!(project.source_revision(), revision + 1);
+    assert_eq!(project.summary().semantic[0].state, SemanticState::Loading);
+    assert!(project.refresh_path(&config).is_none());
 }
 
 /// End-to-end with the real sidecar. Build it first:

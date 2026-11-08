@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use nodex_ir::{Language, Symbol, SymbolId, SymbolKind, TypeRef, TypeRelation};
+use nodex_ir::{Language, Span, Symbol, SymbolId, SymbolKind, TypeRef, TypeRelation};
 use tree_sitter::Node;
 
 use crate::frameworks::{self, Frameworks};
@@ -72,7 +72,7 @@ pub struct Collector<'a, 't> {
     imports: Vec<String>,
     function_ids: HashMap<usize, SymbolId>,
     /// Functions with overload signatures (`function f(a: string): void;`).
-    overloads: Vec<SymbolId>,
+    overloads: Vec<(SymbolId, Span)>,
     /// Name for the next anonymous function (assigned functions).
     pending_name: Option<String>,
     /// `EventEntry` label for the next function (framework callbacks and lifecycles).
@@ -174,11 +174,12 @@ impl<'a, 't> Collector<'a, 't> {
     }
 
     pub fn finish(mut self) -> Collected<'t> {
-        for id in std::mem::take(&mut self.overloads) {
-            if let Some(sym) = self.symbols.iter_mut().find(|s| s.id == id)
-                && !sym.flavors.iter().any(|f| f == "overloaded")
-            {
-                sym.flavors.push("overloaded".into());
+        for (id, span) in std::mem::take(&mut self.overloads) {
+            if let Some(sym) = self.symbols.iter_mut().find(|s| s.id == id) {
+                if !sym.flavors.iter().any(|f| f == "overloaded") {
+                    sym.flavors.push("overloaded".into());
+                }
+                sym.origins.push(span);
             }
         }
         Collected {
@@ -511,7 +512,7 @@ impl<'a, 't> Collector<'a, 't> {
             // Overload signatures merge into the implementation.
             "function_signature" => {
                 if let Some(name) = decl.child_by_field_name("name") {
-                    self.overloads.push(format!("{qual}.{}", src.norm(name)));
+                    self.overloads.push((format!("{qual}.{}", src.norm(name)), src.span(decl)));
                 }
             }
             "internal_module" | "module" => self.namespace(decl, parent, qual, flavors),
@@ -1270,6 +1271,9 @@ impl<'a, 't> Collector<'a, 't> {
         let value = decl.child_by_field_name("value");
         let mut flavors = flavors;
         flavors.push("type-only".into());
+        if value.is_some_and(|v| v.kind() == "object_type") {
+            flavors.push("object-contract".into());
+        }
         let discriminant = value.and_then(|v| discriminant(src, v));
         let kind = match &discriminant {
             Some(field) => {

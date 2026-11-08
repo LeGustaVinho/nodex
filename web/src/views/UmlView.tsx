@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openMenu } from "../components/ContextMenu";
+import { navigationMenuItems } from "../navigation";
 import type { UmlDiagram } from "../gen/UmlDiagram";
 import type { UmlElement } from "../gen/UmlElement";
 import { useUi } from "../store";
@@ -333,6 +334,7 @@ export function UmlView() {
             if (!el?.symbol) return;
             const sym = symbolOf(el);
             openMenu(e, [
+              ...navigationMenuItems(sym, index),
               ...umlMenuItems({ kind: "Symbol", id: el.symbol }, `UML of ${sym?.name ?? el.label}`),
               ...(sym ? [{ label: "Show in Knowledge", run: () => ui.showKnowledge(sym.id) }] : []),
               ...(sym?.has_flow ? [{ label: "Open Blueprint", run: () => ui.openFlow(sym.id) }] : []),

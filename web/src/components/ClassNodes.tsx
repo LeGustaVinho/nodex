@@ -1,6 +1,6 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
-import { CLASS_IN, CLASS_OUT, type ClassBoxData, type FieldsCardData, type MethodCardData } from "../graph/classBlueprint";
+import { CLASS_IN, CLASS_OUT, FIELD_OUT, type ClassBoxData, type FieldCardData, type MethodCardData } from "../graph/classBlueprint";
 import { visibilityOf } from "../graph/explore";
 import { useUi } from "../store";
 
@@ -50,29 +50,27 @@ function MethodImpl({ data, selected }: NodeProps) {
             <span>{calls} {calls === 1 ? "call" : "calls"}</span>
           </div>
           <Handle type="source" position={Position.Bottom} id={CLASS_OUT} isConnectable={false} />
+          <Handle className="class-wire-handle" type="source" position={Position.Right} id={FIELD_OUT} isConnectable={false} />
         </>
       )}
     </div>
   );
 }
 
-function FieldsCardImpl({ data }: NodeProps) {
-  const { fields } = data as unknown as FieldsCardData;
+function FieldCardImpl({ data, selected }: NodeProps) {
+  const { symbol } = data as unknown as FieldCardData;
   return (
-    <div className="class-fields">
-      <Handle type="target" position={Position.Top} id={CLASS_IN} isConnectable={false} />
-      <div className="class-fields-head">Fields &amp; properties</div>
-      {fields.map((f) => (
-        <div key={f.id} className="class-field" title={f.signature ?? f.qualified_name}>
-          <span>{f.name}</span>
-          <span className="muted">{f.type_text ?? f.kind.toLowerCase()}</span>
-          <span className="badge small">{visibilityOf(f) ?? "default"}</span>
-        </div>
-      ))}
+    <div className={`class-field ${selected ? "selected" : ""}`} title={symbol.signature ?? symbol.qualified_name}>
+      <Handle type="target" position={Position.Left} id={CLASS_IN} isConnectable={false} />
+      <div className="class-field-title">
+        <strong>{symbol.name}</strong>
+        <span className="badge small">{visibilityOf(symbol) ?? "default"}</span>
+      </div>
+      <span className="class-field-type muted">{symbol.kind}{symbol.type_text ? ` · ${symbol.type_text}` : ""}</span>
     </div>
   );
 }
 
 export const ClassBox = memo(ClassBoxImpl);
 export const MethodNode = memo(MethodImpl);
-export const FieldsCard = memo(FieldsCardImpl);
+export const FieldCard = memo(FieldCardImpl);

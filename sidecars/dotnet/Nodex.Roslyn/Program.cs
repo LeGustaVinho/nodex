@@ -49,7 +49,9 @@ public static class Program
                 {
                     case "open":
                         var root = parameters?["root"]?.GetValue<string>() ?? throw new ArgumentException("root is required");
-                        host = await ProjectHost.OpenAsync(root);
+                        var opened = await ProjectHost.OpenAsync(root);
+                        host?.Dispose();
+                        host = opened;
                         result = new { source = host.Source, messages = host.Messages, documents = host.DocumentCount };
                         break;
                     case "analyze":
@@ -57,7 +59,16 @@ public static class Program
                         break;
                     case "update":
                         var files = parameters?["files"]?.AsArray().Select(f => f!.GetValue<string>()).ToList() ?? [];
-                        Require(host).Update(files);
+                        var current = Require(host);
+                        if (files.Any(ProjectHost.IsBuildConfiguration))
+                        {
+                            host = await ProjectHost.OpenAsync(current.Root);
+                            current.Dispose();
+                        }
+                        else
+                        {
+                            current.Update(files);
+                        }
                         result = await Require(host).AnalyzeAsync();
                         break;
                     case "shutdown":

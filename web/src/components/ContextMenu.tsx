@@ -69,6 +69,7 @@ export function ContextMenuHost() {
             disabled={item.disabled}
             title={item.hint}
             onClick={() => {
+              if (useContextMenu.getState().menu !== menu) return;
               close();
               item.run?.();
             }}

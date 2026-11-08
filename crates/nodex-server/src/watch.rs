@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use notify::{RecursiveMode, Watcher};
+use notify::event::{AccessKind, AccessMode};
+use notify::{EventKind, RecursiveMode, Watcher};
 
 use crate::{AppState, ServerEvent, semantic_worker};
 
@@ -19,7 +20,9 @@ pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher>
     let root = state.project.lock().map(|p| p.root().to_path_buf()).unwrap_or_default();
     let (tx, rx) = mpsc::channel::<PathBuf>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(event) = res {
+        if let Ok(event) = res
+            && !matches!(event.kind, EventKind::Access(AccessKind::Read | AccessKind::Open(_) | AccessKind::Close(AccessMode::Read)))
+        {
             for p in event.paths {
                 let _ = tx.send(p);
             }
@@ -35,14 +38,16 @@ pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher>
                 while let Ok(p) = rx.recv_timeout(DEBOUNCE) {
                     batch.insert(p);
                 }
-                let (changed, changed_paths): (Vec<String>, Vec<PathBuf>) = match state.project.lock() {
-                    Ok(mut project) => batch
-                        .iter()
-                        .filter_map(|p| project.refresh_path(p).map(|rel| (rel, p.clone())))
-                        .unzip(),
+                let (changed, changed_paths, revision) = match state.project.lock() {
+                    Ok(mut project) => {
+                        let (changed, changed_paths): (Vec<_>, Vec<_>) = batch.iter()
+                            .filter_map(|p| project.refresh_path(p).map(|rel| (rel, p.clone())))
+                            .unzip();
+                        (changed, changed_paths, project.source_revision())
+                    }
                     Err(_) => break,
                 };
-                semantic_worker::notify(&state, &changed_paths);
+                semantic_worker::notify(&state, revision, &changed_paths);
                 state.run.files_changed(&state, &changed_paths);
                 if !changed.is_empty() {
                     tracing::info!(files = ?changed, "re-lowered");

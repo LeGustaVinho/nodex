@@ -10,13 +10,15 @@ import { loadDebug, showDebugFrame, useDebug } from "./debug";
 import type { StructureGraph } from "./gen/StructureGraph";
 import { useTrace } from "./trace";
 import { Inspector } from "./panels/Inspector";
+import { NavigationResults } from "./panels/NavigationResults";
+import { useNavigation } from "./navigation";
 import { Palette } from "./panels/Palette";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
 import { Splitter } from "./components/Splitter";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, indexOf, useStructure } from "./views/Views";
 import { ConfidenceToggles } from "./components/ConfidenceToggles";
-import { ContextMenuHost } from "./components/ContextMenu";
+import { ContextMenuHost, useContextMenu } from "./components/ContextMenu";
 import { ContextPicker } from "./panels/ContextPicker";
 import { contextLabel } from "./graph/context";
 import { classMembers } from "./graph/classBlueprint";
@@ -31,6 +33,11 @@ import { ActivityBar, Loading } from "./components/Loading";
 // Loaded on first use: Monaco, Mermaid and the knowledge views are large.
 const loadCodePanel = () => import("./panels/CodePanel");
 const CodePanel = lazy(() => loadCodePanel().then((m) => ({ default: m.CodePanel })));
+
+function InspectorSlot() {
+  const active = useNavigation((s) => !!s.request);
+  return active ? <NavigationResults /> : <Inspector />;
+}
 
 /** The code panel loads Monaco (megabytes): only once there is code to show, or when idle. */
 function CodeSlot() {
@@ -84,6 +91,8 @@ function useLiveUpdates() {
           }
           else if (event.type === "project-loading") {
             perf.openStarted();
+            useContextMenu.getState().close();
+            useNavigation.getState().close();
             useUi.getState().setProjectLoading(event.data.path);
           }
           else if (event.type === "project-progress") useUi.getState().setProjectProgress(event.data);
@@ -103,11 +112,13 @@ function useLiveUpdates() {
           } else if (event.type === "project-changed") {
             perf.step("project-changed");
             // Everything shown belonged to the old project.
+            useContextMenu.getState().close();
             trace.reset();
             useDebug.getState().reset();
             void queryClient.invalidateQueries({ queryKey: ["unity"] });
             void loadDebug();
             useUi.getState().resetForProject();
+            useNavigation.getState().close();
             // Drop the old project's data and refetch what is on screen. (`clear()` would leave
             // components that stay mounted, like the sidebar, attached to the removed queries.)
             void queryClient.resetQueries();
@@ -116,11 +127,11 @@ function useLiveUpdates() {
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys =
               event.type === "graph-changed"
-                ? ["structure", "knowledge", "project", "flow", "flows", "source", "uml", "uml-availability"]
+                ? ["structure", "knowledge", "project", "flow", "flows", "source", "uml", "uml-availability", "navigation"]
                 : event.data.graph
-                  ? ["structure", "knowledge", "project", "flow", "flows", "uml", "uml-availability"]
+                  ? ["structure", "knowledge", "project", "flow", "flows", "uml", "uml-availability", "navigation"]
                   : // Only the analysis status (shown from the project summary) changed.
-                    ["project"];
+                    ["project", "navigation"];
             for (const key of keys) {
               void queryClient.invalidateQueries({ queryKey: [key] });
             }
@@ -368,7 +379,7 @@ export function App() {
         <Splitter size="right-w" axis="x" target="parent" grow={-1} min={240} max={(app) => app.clientWidth * 0.6} label="Resize the right panel" className="edge-left" />
         <UnityCard />
         <DebugPanel />
-        <Inspector />
+        <InspectorSlot />
         <Splitter size="inspector-h" axis="y" target="prev" grow={1} min={60} max={(right) => right.clientHeight - 200} label="Resize the inspector and the code" />
         <CodeSlot />
       </section>

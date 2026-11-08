@@ -101,6 +101,9 @@ impl RustAnalyzer {
             source: format!("{} (SCIP)", self.version),
             refs: Vec::new(),
             locals: Vec::new(),
+            navigation: None,
+            implementation_contracts: Vec::new(),
+            configuration_files: Vec::new(),
             messages: Vec::new(),
         };
         for (n, crate_root) in self.crate_roots.iter().enumerate() {

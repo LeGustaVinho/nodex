@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { api } from "../api";
 import type { StructureGraph } from "../gen/StructureGraph";
 import * as perf from "../perf";
@@ -9,6 +9,7 @@ import { callGraph } from "../graph/callGraph";
 import { flowToGraph } from "../graph/flowGraph";
 import { StructureIndex, architectureGraph, isTypeKind, typesGraph } from "../graph/structureGraph";
 import { openMenu } from "../components/ContextMenu";
+import { blueprintNavigationTarget, navigationMenuItems, openNavigationMenu } from "../navigation";
 import { blueprintMenuItems, contextMenuItems } from "../uml/contextMenu";
 import { useShallow } from "zustand/react/shallow";
 import { useUi } from "../store";
@@ -101,6 +102,7 @@ export function TypesView() {
       onNodeContextMenu={(e, n) => {
         const symbol = index?.byId.get(n.id);
         if (symbol && !symbol.external) openMenu(e, [
+          ...navigationMenuItems(symbol, index),
           ...blueprintMenuItems(symbol),
           ...contextMenuItems({ kind: "symbol", id: symbol.id }),
         ]);
@@ -143,6 +145,7 @@ export function CallsView() {
       onNodeDoubleClick={(n) => {
         if (index?.byId.get(n.id)?.has_flow) openFlow(n.id);
       }}
+      onNodeContextMenu={(e, n) => openNavigationMenu(e, index?.byId.get(n.id), index)}
       emptyText="No calls found. Calls appear once semantic analysis is ready."
       loadingText="Loading the calls…"
       error={error}
@@ -163,6 +166,7 @@ export function BlueprintView() {
 }
 
 function FunctionBlueprintView() {
+  const { index } = useStructure();
   const { flowSymbol, expanded, showDataWires, detail, select, selection, openFlow } = useUi(
     useShallow((s) => ({
       flowSymbol: s.flowSymbol,
@@ -190,12 +194,15 @@ function FunctionBlueprintView() {
     const span = replayNode ? flow.data?.nodes.find((n) => n.id === replayNode)?.span : undefined;
     if (span) useUi.getState().focusCode(span);
   }, [replayNode, flow.data]);
-  // Show the function's code when a Blueprint opens from a link or the sidebar.
+  const openedFlow = useRef<string | null>(null);
+  // Focus the source on open, without replacing a later navigation destination on refresh.
   useEffect(() => {
-    const span = flow.data?.span;
+    if (!flowSymbol || flow.data?.symbol !== flowSymbol || openedFlow.current === flowSymbol) return;
+    openedFlow.current = flowSymbol;
+    const span = flow.data.span;
     const ui = useUi.getState();
     if (span && ui.codeFocus?.file !== span.file) ui.focusCode(span);
-  }, [flow.data?.span]);
+  }, [flowSymbol, flow.data]);
   if (!flowSymbol) {
     return <div className="empty">Pick a method in the sidebar or double-click one in the Types view to open its Blueprint.</div>;
   }
@@ -214,11 +221,12 @@ function FunctionBlueprintView() {
       fitFirst={3}
       loadingText="Loading the Blueprint…"
       selectedId={selectedId}
+      onNodeContextMenu={(e, n) => openNavigationMenu(e, index?.byId.get(blueprintNavigationTarget(n) ?? ""), index)}
       onNodeDoubleClick={(n) => {
         // Double-clicking a call (or a function value with a Blueprint) opens that Blueprint.
         if (n.type === "expr") {
           const symbol = (n.data as { expr: { symbol: string | null } }).expr.symbol;
-          if (symbol) openFlow(symbol);
+          if (symbol && index?.byId.get(symbol)?.has_flow) openFlow(symbol);
           return;
         }
         const target = flow.data?.nodes.find((x) => x.id === n.id)?.calls.find((c) => c.symbol);

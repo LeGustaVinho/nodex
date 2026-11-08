@@ -21,6 +21,8 @@ export interface GNode<D = unknown> {
   box?: { width: number; height: number; offsetX: number };
   /** Nodes placed relative to another node instead of by the layout engine. */
   attach?: { to: string; dx: number; dy: number };
+  /** Place this child in a column to the right of its siblings, ordered by incoming edges. */
+  layoutSide?: "right";
   /** Enclosing container node: the node is laid out and drawn inside it. */
   parent?: string;
   /** A container whose size comes from the layout of its children. */

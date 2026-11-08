@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use nodex_ir::semantic::{ByteRange, LocalTypeFact, RefKind, SemanticFacts, SemanticRef, SemanticTarget};
+use nodex_ir::semantic::{ByteRange, LocalTypeFact, NavigationFact, RefKind, SemanticFacts, SemanticRef, SemanticTarget};
 use nodex_ir::{
     CallTarget, Concept, Expr, FlowGraph, Language, PinKind, StructEdge, StructEdgeKind, Symbol, SymbolId, SymbolKind,
 };
@@ -65,14 +65,41 @@ impl Locator {
             .map(|e| e.id.clone())
     }
 
+    pub(crate) fn navigation_target(&self, target: &SemanticTarget) -> Option<SymbolId> {
+        let decl = target.decl.as_ref()?;
+        self.navigation_at(decl, &target.kind, &target.display)
+    }
+
+    pub(crate) fn navigation_at(&self, decl: &ByteRange, kind: &str, name: &str) -> Option<SymbolId> {
+        self.innermost(&decl.file, decl.start, |entry| match kind {
+            "type" => entry.kind.is_type(),
+            "method" | "function" => matches!(entry.kind, SymbolKind::Method | SymbolKind::Function),
+            "constructor" => entry.kind == SymbolKind::Constructor,
+            // Destructured bindings share the declarator's range in the syntax graph.
+            "variable" => entry.kind == SymbolKind::Field && entry.id.rsplit('.').next() == Some(name),
+            "field" => matches!(entry.kind, SymbolKind::Field | SymbolKind::EnumMember),
+            "property" => matches!(entry.kind, SymbolKind::Property | SymbolKind::Field),
+            "event" => entry.kind == SymbolKind::Event,
+            _ => false,
+        }).map(|entry| entry.id.clone())
+    }
+
     /// The function (or, failing that, any symbol) whose declaration contains `site`.
     fn owner(&self, site: &ByteRange) -> Option<&Entry> {
         self.innermost(&site.file, site.start, |e| e.has_flow)
             .or_else(|| self.innermost(&site.file, site.start, |_| true))
     }
 
+    pub(crate) fn owner_id(&self, site: &ByteRange) -> Option<&str> {
+        self.owner(site).map(|entry| entry.id.as_str())
+    }
+
     fn owning_type(&self, site: &ByteRange) -> Option<&Entry> {
         self.innermost(&site.file, site.start, |e| e.kind.is_type())
+    }
+
+    pub(crate) fn type_at(&self, site: &ByteRange) -> Option<&str> {
+        self.owning_type(site).map(|entry| entry.id.as_str())
     }
 
     fn kind_of(&self, id: &str) -> Option<SymbolKind> {
@@ -214,7 +241,68 @@ fn within(outer_start: u32, outer_end: u32, r: &ByteRange) -> bool {
 pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -> FlowGraph {
     let refs: Vec<&SemanticRef> = facts.refs.iter().collect();
     let locals: Vec<&LocalTypeFact> = facts.locals.iter().collect();
-    enrich_flow_with(flow, &refs, &locals, locator)
+    let mut flow = enrich_flow_with(flow, &refs, &locals, locator);
+    annotate_navigation(&mut flow, facts.navigation.iter().flatten(), locator);
+    flow
+}
+
+/// Member expressions keep the compiler's target when their reference token is unambiguous.
+pub(crate) fn annotate_navigation<'a>(
+    flow: &mut FlowGraph,
+    facts: impl Iterator<Item = &'a NavigationFact>,
+    locator: &Locator,
+) {
+    let mut references: Vec<_> = facts.filter(|fact| {
+        !fact.implementation && fact.site.file == flow.span.file &&
+            within(flow.span.start_byte, flow.span.end_byte, &fact.site) &&
+            matches!(fact.target.kind.as_str(), "field" | "property" | "event" | "variable")
+    }).collect();
+    if references.is_empty() {
+        return;
+    }
+    references.sort_unstable_by_key(|fact| fact.site.start);
+    for expr in flow.nodes.iter_mut().filter_map(|node| node.expr.as_mut()) {
+        annotate_member(expr, &references, locator);
+    }
+}
+
+fn annotate_member(expr: &mut Expr, references: &[&NavigationFact], locator: &Locator) {
+    for child in &mut expr.children {
+        annotate_member(child, references, locator);
+    }
+    if expr.symbol.is_some() || !matches!(expr.concept, Concept::Var | Concept::GetMember | Concept::Index) {
+        return;
+    }
+    let start = expr.span.start_byte;
+    let end = expr.span.end_byte;
+    let first = references.partition_point(|fact| fact.site.start < start);
+    let mut target = None;
+    for fact in references[first..].iter().take_while(|fact| fact.site.start < end) {
+        let site = &fact.site;
+        if site.end > end || !member_token(expr, site) {
+            continue;
+        }
+        let Some(id) = locator.navigation_target(&fact.target) else { return };
+        if target.as_ref().is_some_and(|previous| previous != &id) {
+            return;
+        }
+        target = Some(id);
+    }
+    expr.symbol = target;
+}
+
+fn member_token(expr: &Expr, site: &ByteRange) -> bool {
+    match expr.concept {
+        Concept::Var => site.start == expr.span.start_byte && site.end == expr.span.end_byte,
+        Concept::GetMember => expr.children.first().is_none_or(|receiver| receiver.span.end_byte <= site.start),
+        Concept::Index => {
+            let [receiver, argument, ..] = expr.children.as_slice() else { return false };
+            receiver.span.end_byte <= site.start &&
+                (site.end <= argument.span.start_byte ||
+                    (argument.concept == Concept::Literal && site.start == argument.span.start_byte && site.end == argument.span.end_byte))
+        }
+        _ => false,
+    }
 }
 
 /// [`enrich_flow`] over candidate facts (all of them, or those of the flow's file).
@@ -240,7 +328,11 @@ pub fn enrich_flow_with(flow: &FlowGraph, refs: &[&SemanticRef], locals: &[&Loca
         let node = &mut flow.nodes[idx];
         match r.kind {
             RefKind::Call | RefKind::Construct => {
-                if !node.calls.iter().any(|c| c.display == r.target.display) {
+                if !node.calls.iter().any(|call| match (&call.symbol, &symbol) {
+                    (Some(existing), Some(target)) => existing == target,
+                    (None, None) => call.display == r.target.display && call.external == r.target.external,
+                    _ => false,
+                }) {
                     node.calls.push(CallTarget {
                         symbol: symbol.clone(),
                         display: r.target.display.clone(),
@@ -317,7 +409,7 @@ pub fn enrich_flow_with(flow: &FlowGraph, refs: &[&SemanticRef], locals: &[&Loca
 fn annotate(expr: &mut Expr, site: &ByteRange, symbol: Option<&str>, target: &SemanticTarget) -> bool {
     if expr.span.start_byte == site.start && expr.span.end_byte == site.end && matches!(expr.concept, Concept::Call | Concept::Construct) {
         expr.symbol = symbol.map(str::to_owned);
-        expr.target = Some(target.display.clone());
+        expr.target = (target.kind != "unresolved").then(|| target.display.clone());
         if expr.flavors.iter().any(|f| f == "stage") {
             expr.flavors.retain(|f| f != "custom-stage");
             if !target.linq {

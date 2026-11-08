@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useCatalog } from "../catalog";
 import { useDebug } from "../debug";
 import type { Symbol } from "../gen/Symbol";
-import { classBlueprintGraph, flowNodePrefix, type ClassBoxData, type MethodCardData } from "../graph/classBlueprint";
+import { blueprintNavigationTarget, openNavigationMenu } from "../navigation";
+import { classBlueprintGraph, flowNodePrefix, type FieldCardData, type MethodCardData } from "../graph/classBlueprint";
 import type { BlueprintData, ExprData } from "../graph/flowGraph";
 import type { StructureIndex } from "../graph/structureGraph";
 import { ReplayBar } from "../panels/RunPanel";
@@ -33,10 +34,13 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
     const span = flows.data?.find((f) => f.symbol === replayFlow)?.nodes.find((n) => n.id === replayNode)?.span;
     if (span) useUi.getState().focusCode(span);
   }, [flows.data, replayFlow, replayNode]);
+  const openedClass = useRef<string | null>(null);
   useEffect(() => {
     const span = symbol.origins[0];
+    if (!span || openedClass.current === symbol.id) return;
+    openedClass.current = symbol.id;
     const ui = useUi.getState();
-    if (span && ui.codeFocus?.file !== span.file) ui.focusCode(span);
+    if (ui.codeFocus?.file !== span.file) ui.focusCode(span);
   }, [symbol]);
 
   const selectedId = replayFlow && replayNode
@@ -59,6 +63,7 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
         loadingText="Loading the class Blueprint…"
         error={flows.error}
         onRetry={() => void flows.refetch()}
+        onNodeContextMenu={(e, n) => openNavigationMenu(e, index.byId.get(blueprintNavigationTarget(n) ?? n.id), index)}
         onNodeClick={(n) => {
           if (n.type === "expr") {
             const d = n.data as unknown as ExprData;
@@ -66,8 +71,8 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
           } else if (n.type === "blueprint") {
             const { flow, node } = n.data as unknown as BlueprintData;
             select({ kind: "flow-node", flow, id: node.id }, node.span);
-          } else if (n.type === "methodCard" || n.type === "methodBox" || n.type === "classBox") {
-            const { symbol: item } = n.data as unknown as MethodCardData | ClassBoxData;
+          } else if (n.type === "methodCard" || n.type === "methodBox" || n.type === "classBox" || n.type === "fieldCard") {
+            const { symbol: item } = n.data as unknown as FieldCardData;
             select({ kind: "symbol", id: item.id }, item.origins[0] ?? null);
           }
         }}

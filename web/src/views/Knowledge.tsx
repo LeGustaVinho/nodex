@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { openMenu } from "../components/ContextMenu";
+import { navigationMenuItems } from "../navigation";
 import { Loading } from "../components/Loading";
 import type { Confidence } from "../gen/Confidence";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
@@ -179,6 +180,7 @@ export function HierarchyView() {
             const id = item.symbol?.id ?? item.id;
             if (item.symbol?.external) return;
             openMenu(e, [
+              ...navigationMenuItems(item.symbol, index),
               ...contextMenuItems({ kind: "symbol", id }),
               ...blueprintMenuItems(item.symbol),
               ...umlMenuItems({ kind: "Symbol", id }, `UML of ${item.symbol?.name ?? id.replace(/^(dir:|grp:ns:)/, "")}`),
@@ -301,6 +303,7 @@ export function KnowledgeView() {
             if (!item.symbol || item.symbol.external) return;
             const id = item.symbol.id;
             openMenu(e, [
+              ...navigationMenuItems(item.symbol, index),
               { label: "Center on it", run: () => center(id) },
               ...contextMenuItems({ kind: "symbol", id }),
               ...blueprintMenuItems(item.symbol),

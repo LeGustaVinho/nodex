@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use nodex_ir::knowledge::ProjectKnowledge;
 use nodex_ir::semantic::{SemanticFacts, SemanticState, SemanticStatus};
-use nodex_ir::{Diagnostic, FileIr, FlowGraph, Language, PackageRef, StructEdge, StructEdgeKind, StructureGraph};
+use nodex_ir::{Diagnostic, FileIr, FlowGraph, Language, PackageRef, StructEdge, StructEdgeKind, StructureGraph, SymbolKind};
 use nodex_lang_api::{LanguageFrontend, ProjectDescriptor, SourceFile};
 use rayon::prelude::*;
 use serde::Serialize;
@@ -50,13 +50,13 @@ pub struct ProjectSummary {
 struct FileEntry {
     language: Language,
     ir: FileIr,
+    stat: Option<cache::Stat>,
 }
 
 /// A file lowered while opening, with what the lowering cache needs to keep it.
 struct Lowered {
     rel: String,
     entry: FileEntry,
-    stat: Option<cache::Stat>,
     blob: Blob,
 }
 
@@ -74,12 +74,16 @@ pub struct Project {
     frontends: Vec<Arc<dyn LanguageFrontend>>,
     descriptors: Vec<ProjectDescriptor>,
     files: BTreeMap<String, Arc<FileEntry>>,
+    semantic_configs: HashMap<String, Option<cache::Stat>>,
     structure: Option<Arc<StructureGraph>>,
     knowledge: Option<Arc<ProjectKnowledge>>,
     semantic: BTreeMap<Language, SemanticEntry>,
     locator: Option<Arc<semantic::Locator>>,
+    navigation: Option<crate::navigation::NavigationIndex>,
     /// Bumped whenever the structure graph must be built again (files, semantic facts).
     version: u64,
+    /// Changes when tracked files change, independently of semantic provider results.
+    source_revision: u64,
     /// Where each flow graph lives: symbol → (file, index in its flows). Built on first use.
     flow_index: Option<HashMap<String, (String, usize)>>,
     /// Files the open read back from the lowering cache instead of lowering them.
@@ -90,7 +94,14 @@ struct SemanticEntry {
     status: SemanticStatus,
     facts: Option<Arc<SemanticFacts>>,
     /// Indexes into `facts.refs` and `facts.locals`, by file, for enriching one flow.
-    by_file: Arc<HashMap<String, (Vec<usize>, Vec<usize>)>>,
+    by_file: Arc<HashMap<String, SemanticFileFacts>>,
+}
+
+#[derive(Default)]
+struct SemanticFileFacts {
+    refs: Vec<usize>,
+    locals: Vec<usize>,
+    navigation: Vec<usize>,
 }
 
 /// How far opening a project got, for a progress bar: `phase` is `scanning` (files found so
@@ -118,6 +129,7 @@ pub struct Built {
     structure: Arc<StructureGraph>,
     knowledge: Arc<ProjectKnowledge>,
     locator: Arc<semantic::Locator>,
+    navigation: crate::navigation::NavigationIndex,
 }
 
 impl BuildInput {
@@ -140,6 +152,17 @@ impl BuildInput {
         let mut calls: Vec<knowledge::RawCallSite> = Vec::new();
         let timer = crate::perf::phase("structure.semantic");
         let mut known: std::collections::HashSet<String> = graph.symbols.iter().map(|s| s.id.clone()).collect();
+        let contracts: std::collections::HashSet<_> = self.semantic.iter()
+            .flat_map(|(_, facts)| &facts.implementation_contracts)
+            .filter_map(|site| locator.type_at(site))
+            .collect();
+        for symbol in &mut graph.symbols {
+            if symbol.kind == SymbolKind::TypeAlias && contracts.contains(symbol.id.as_str())
+                && !symbol.flavors.iter().any(|flavor| flavor == "object-contract")
+            {
+                symbol.flavors.push("object-contract".into());
+            }
+        }
         for (language, facts) in &self.semantic {
             let derived = semantic::edges(facts, &locator, *language);
             for (site, owner, target) in derived.calls {
@@ -202,7 +225,9 @@ impl BuildInput {
         timer.finish("");
         total.finish(format_args!("({} symbols, {} edges)", graph.symbols.len(), graph.edges.len()));
 
-        Built { version: self.version, structure: Arc::new(graph), knowledge: Arc::new(derived.project), locator }
+        let structure = Arc::new(graph);
+        let navigation = crate::navigation::NavigationIndex::new(structure.clone(), &locator, &self.semantic);
+        Built { version: self.version, structure, knowledge: Arc::new(derived.project), locator, navigation }
     }
 
 }
@@ -244,7 +269,10 @@ impl Project {
             knowledge: None,
             semantic: BTreeMap::new(),
             locator: None,
+            navigation: None,
             version: 0,
+            source_revision: 0,
+            semantic_configs: HashMap::new(),
             flow_index: None,
             from_cache: 0,
         };
@@ -291,7 +319,7 @@ impl Project {
             if fresh || project.from_cache != cached.len() {
                 let timer = crate::perf::phase("open.cache.save");
                 cached.save(lowered.iter().filter_map(|l| {
-                    let stat = l.stat?;
+                    let stat = l.entry.stat?;
                     let bytes = match &l.blob {
                         Blob::Cached => cached.bytes(&l.rel, stat)?,
                         Blob::Fresh(bytes) => bytes,
@@ -383,7 +411,10 @@ impl Project {
             knowledge: None,
             semantic: BTreeMap::new(),
             locator: None,
+            navigation: None,
             version: 0,
+            source_revision: 0,
+            semantic_configs: HashMap::new(),
             flow_index: None,
             from_cache: 0,
         }
@@ -449,37 +480,53 @@ impl Project {
         let language = frontend.id();
         // Stat before reading: a change made while reading leaves a newer time on disk, so
         // the next open lowers the file again.
-        let stat = cache.and_then(|_| cache::Stat::of(&meta));
+        let stat = cache::Stat::of(&meta);
         if let (Some(cache), Some(stat)) = (cache, stat)
             && let Some(ir) = cache.get(&rel, stat)
         {
-            return Some(Lowered { rel, entry: FileEntry { language, ir }, stat: Some(stat), blob: Blob::Cached });
+            return Some(Lowered { rel, entry: FileEntry { language, ir, stat: Some(stat) }, blob: Blob::Cached });
         }
         let bytes = std::fs::read(path).ok()?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let ir = frontend.lower_file(&SourceFile { rel_path: rel.clone(), text });
-        let blob = match stat.and_then(|_| cache::encode(&ir)) {
+        let blob = match cache.and(stat).and_then(|_| cache::encode(&ir)) {
             Some(bytes) => Blob::Fresh(bytes),
             None => Blob::None,
         };
-        Some(Lowered { rel, entry: FileEntry { language, ir }, stat, blob })
+        Some(Lowered { rel, entry: FileEntry { language, ir, stat }, blob })
     }
 
-    /// Re-lowers (or removes) the file at `path` after a change on disk. Returns the relative
-    /// path when the project changed.
+    /// Refreshes a source file or records a compiler configuration change on disk.
     pub fn refresh_path(&mut self, path: &Path) -> Option<String> {
         let rel = self.relative(path)?;
-        if Self::is_ignored(&rel) || self.frontend_for(path).is_none() {
+        if Self::is_ignored(&rel) {
             return None;
         }
-        if path.is_file() {
+        if self.frontend_for(path).is_none() {
+            let declared_config = self.semantic.values().filter_map(|entry| entry.facts.as_ref())
+                .any(|facts| facts.configuration_files.contains(&rel));
+            let known_config = compiler_configuration_language(path)
+                .is_some_and(|language| self.files.values().any(|file| file.language == language));
+            if !declared_config && !known_config {
+                return None;
+            }
+            let stat = std::fs::metadata(path).ok().filter(|meta| meta.is_file()).and_then(|meta| cache::Stat::of(&meta));
+            if self.semantic_configs.insert(rel.clone(), stat) == Some(stat) {
+                return None;
+            }
+        } else if path.is_file() {
             let (rel, entry) = self.lower_path(path)?;
-            if self.files.get(&rel).is_some_and(|old| old.ir == entry.ir) {
+            if self.files.get(&rel).is_some_and(|old| old.stat == entry.stat && old.ir == entry.ir) {
                 return None;
             }
             self.files.insert(rel.clone(), Arc::new(entry));
         } else if self.files.remove(&rel).is_none() {
             return None;
+        }
+        self.source_revision += 1;
+        for entry in self.semantic.values_mut().filter(|entry| entry.status.state == SemanticState::Ready) {
+            entry.status.state = SemanticState::Loading;
+            entry.status.detail = "updating semantic analysis…".into();
         }
         self.invalidate();
         Some(rel)
@@ -547,6 +594,10 @@ impl Project {
         self.version
     }
 
+    pub fn source_revision(&self) -> u64 {
+        self.source_revision
+    }
+
     /// A snapshot of what building the graphs needs (cheap: shared file entries).
     pub fn build_input(&self) -> BuildInput {
         BuildInput {
@@ -566,7 +617,22 @@ impl Project {
         self.structure = Some(built.structure);
         self.knowledge = Some(built.knowledge);
         self.locator = Some(built.locator);
+        self.navigation = Some(built.navigation);
         true
+    }
+
+    /// Captures the current navigation locations and tracked paths without reading source files.
+    pub fn navigation(&self, id: &str, kind: crate::navigation::NavigationKind) -> Option<crate::navigation::NavigationQuery> {
+        let navigation = self.navigation.as_ref()?;
+        let symbol = navigation.symbol(id).filter(|s| !s.external && !s.origins.is_empty())?;
+        let state = self.semantic.get(&symbol.language).map(|e| e.status.state);
+        let (coverage, hits) = navigation.hits(symbol, kind, state);
+        let paths = hits.iter().map(|hit| &hit.site.file).collect::<std::collections::HashSet<_>>()
+            .into_iter().filter_map(|file| {
+                let entry = self.files.get(file)?;
+                Some((file.clone(), (self.absolute(file)?, entry.stat)))
+            }).collect();
+        Some(crate::navigation::NavigationQuery { coverage, hits, paths })
     }
 
     /// Project-wide knowledge: routes, HTTP calls, DI, configuration, data models and per-symbol
@@ -590,7 +656,8 @@ impl Project {
         let (rel, i) = index.get(symbol)?;
         let entry = self.files.get(rel)?;
         let (language, raw) = (entry.language, entry.ir.flows.get(*i)?.clone());
-        let Some((facts, by_file)) = self.semantic.get(&language).and_then(|e| Some((e.facts.clone()?, e.by_file.clone()))) else {
+        let Some((facts, by_file, ready)) = self.semantic.get(&language)
+            .and_then(|e| Some((e.facts.clone()?, e.by_file.clone(), e.status.state == SemanticState::Ready))) else {
             let mut raw = raw;
             crate::operations::recognize_flow(&mut raw);
             return Some(raw);
@@ -599,10 +666,13 @@ impl Project {
             self.structure();
         }
         let locator = self.locator.clone()?;
-        let (refs, locals) = by_file.get(&raw.span.file).map(|(r, l)| (r.as_slice(), l.as_slice())).unwrap_or((&[], &[]));
-        let refs: Vec<_> = refs.iter().map(|&i| &facts.refs[i]).collect();
-        let locals: Vec<_> = locals.iter().map(|&i| &facts.locals[i]).collect();
+        let file = by_file.get(&raw.span.file);
+        let refs: Vec<_> = file.into_iter().flat_map(|f| &f.refs).map(|&i| &facts.refs[i]).collect();
+        let locals: Vec<_> = file.into_iter().flat_map(|f| &f.locals).map(|&i| &facts.locals[i]).collect();
         let mut flow = semantic::enrich_flow_with(&raw, &refs, &locals, &locator);
+        if ready && let (Some(file), Some(navigation)) = (file, &facts.navigation) {
+            semantic::annotate_navigation(&mut flow, file.navigation.iter().map(|&i| &navigation[i]), &locator);
+        }
         crate::operations::recognize_flow(&mut flow);
         Some(flow)
     }
@@ -656,12 +726,15 @@ impl Project {
             detail: facts.source.clone(),
             messages: facts.messages.clone(),
         };
-        let mut by_file: HashMap<String, (Vec<usize>, Vec<usize>)> = HashMap::new();
+        let mut by_file: HashMap<String, SemanticFileFacts> = HashMap::new();
         for (i, r) in facts.refs.iter().enumerate() {
-            by_file.entry(r.site.file.clone()).or_default().0.push(i);
+            by_file.entry(r.site.file.clone()).or_default().refs.push(i);
         }
         for (i, l) in facts.locals.iter().enumerate() {
-            by_file.entry(l.site.file.clone()).or_default().1.push(i);
+            by_file.entry(l.site.file.clone()).or_default().locals.push(i);
+        }
+        for (i, fact) in facts.navigation.iter().flatten().enumerate().filter(|(_, fact)| !fact.implementation) {
+            by_file.entry(fact.site.file.clone()).or_default().navigation.push(i);
         }
         self.semantic.insert(language, SemanticEntry { status, facts: Some(Arc::new(facts)), by_file: Arc::new(by_file) });
         self.invalidate();
@@ -671,6 +744,7 @@ impl Project {
         self.structure = None;
         self.knowledge = None;
         self.locator = None;
+        self.navigation = None;
         self.flow_index = None;
         self.version += 1;
     }
@@ -703,6 +777,15 @@ impl Project {
 fn is_unit_manifest(path: &Path) -> bool {
     let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     name.ends_with(".csproj") || name == "package.json" || name == "Cargo.toml"
+}
+
+fn compiler_configuration_language(path: &Path) -> Option<Language> {
+    let name = path.file_name().and_then(|f| f.to_str()).unwrap_or_default();
+    if name == "package.json" || ["tsconfig.", "jsconfig."].iter().any(|prefix| name.starts_with(prefix) && name.ends_with(".json")) {
+        return Some(Language::Typescript);
+    }
+    let extension = path.extension().and_then(|value| value.to_str())?.to_ascii_lowercase();
+    matches!(extension.as_str(), "csproj" | "sln" | "slnx" | "props" | "targets").then_some(Language::Csharp)
 }
 
 /// `path` relative to `root`, with `/`.

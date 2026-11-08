@@ -10,6 +10,7 @@ import { isTypeKind, type StructureIndex } from "./structureGraph";
 
 export const CLASS_IN = "class-in";
 export const CLASS_OUT = "class-out";
+export const FIELD_OUT = "field-out";
 export const flowNodePrefix = (flow: string) => `${flow}::`;
 
 const isAccessorOwner = (s: Symbol) => s.kind === "Property" || s.kind === "Event";
@@ -80,8 +81,8 @@ export interface MethodCardData {
   calls: number;
 }
 
-export interface FieldsCardData {
-  fields: Symbol[];
+export interface FieldCardData {
+  symbol: Symbol;
 }
 
 interface ClassBlueprintOptions {
@@ -125,20 +126,22 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
   const bases = [...new Set(index.graph.edges
     .filter((e) => e.from === typeId && (e.kind === "Inherits" || e.kind === "Implements"))
     .map((e) => index.byId.get(e.to)?.name ?? e.to))];
-  const fields = index.members(typeId).filter((s) => s.kind === "Field" || s.kind === "Event" ||
-    (s.kind === "Property" && !s.has_flow && !(index.children.get(s.id) ?? []).some((a) => a.has_flow)));
+  // Expression-bodied properties already have their own flow card. Properties with
+  // accessors have separate accessor symbols, so the declaration gets a card as well.
+  const fields = index.members(typeId).filter((s) => !s.has_flow && (s.kind === "Field" || isAccessorOwner(s)));
   const fieldsByName = new Map(fields.map((s) => [s.name, s]));
   const qualifiers = typeQualifiers(index, type);
-  const fieldsId = `fields:${typeId}`;
   const ordered = members.map((s) => s.id);
-  if (fields.length) ordered.push(fieldsId);
   graph.layoutLinks = ordered.slice(1).map((target, i) => ({ source: ordered[i], target }));
   nodes.push({
     id: typeId, type: "classBox", container: true, direction: "DOWN", headerHeight: 46, width: 380, height: 76, ports: [],
     data: { symbol: type, bases, members: members.map((s) => s.id) } satisfies ClassBoxData,
   });
-  if (fields.length) {
-    nodes.push({ id: fieldsId, parent: typeId, type: "fieldsCard", width: 320, height: 34 + fields.length * 24, ports: [], data: { fields } satisfies FieldsCardData });
+  for (const symbol of fields) {
+    nodes.push({
+      id: symbol.id, parent: typeId, type: "fieldCard", layoutSide: "right",
+      width: 260, height: 48, ports: [], data: { symbol } satisfies FieldCardData,
+    });
   }
 
   const entries = new Map<string, string>();
@@ -168,11 +171,11 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
   }
 
   const seen = new Set<string>();
-  const wire = (source: string, target: string, kind: "calls" | "changes") => {
+  const wire = (source: string, target: string, kind: "calls" | "changes", sourceHandle = CLASS_OUT) => {
     const id = JSON.stringify([kind, source, target]);
     if (seen.has(id)) return;
     seen.add(id);
-    edges.push({ id, source, target, sourceHandle: CLASS_OUT, targetHandle: CLASS_IN, kind, layout: false });
+    edges.push({ id, source, target, sourceHandle, targetHandle: CLASS_IN, kind, layout: false });
   };
   for (const { id } of members) {
     for (const node of byMember.get(id)?.nodes ?? []) {
@@ -182,9 +185,10 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
         const target = entries.get(symbol);
         if (target) wire(source, target, "calls");
       }
-      const field = writtenMember(node, type, fieldsByName, qualifiers);
-      if (field && fieldsByName.has(field)) {
-        wire(source, fieldsId, "changes");
+      const name = writtenMember(node, type, fieldsByName, qualifiers);
+      const field = name === undefined ? undefined : fieldsByName.get(name);
+      if (field) {
+        wire(source, field.id, "changes", renderedFlows.has(id) ? CLASS_OUT : FIELD_OUT);
       }
     }
   }

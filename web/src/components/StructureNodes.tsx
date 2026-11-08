@@ -2,6 +2,7 @@ import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
 import { flavorLabel, useCatalog } from "../catalog";
 import type { SymbolKind } from "../gen/SymbolKind";
+import { openNavigationMenu } from "../navigation";
 import { MAX_MEMBERS, type NamespaceData, type TypeCardData } from "../graph/structureGraph";
 import { useUi } from "../store";
 
@@ -85,6 +86,7 @@ function TypeCardImpl({ data, selected }: NodeProps) {
               <button
                 className={`member nodrag ${m.has_flow ? "has-flow" : ""}`}
                 title={[m.signature ?? m.name, m.doc].filter(Boolean).join("\n\n")}
+                onContextMenu={(e) => openNavigationMenu(e, m, symbol)}
                 onClick={(e) => {
                   e.stopPropagation();
                   select({ kind: "symbol", id: m.id }, m.origins[0] ?? null);

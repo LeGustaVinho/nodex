@@ -28,6 +28,7 @@ import type { RunStatus } from "./gen/RunStatus";
 import type { StepsPage } from "./gen/StepsPage";
 import type { StructureGraph } from "./gen/StructureGraph";
 import type { TraceFrame } from "./gen/TraceFrame";
+import type { NavigationKind, NavigationResult } from "./navigation";
 import * as perf from "./perf";
 
 declare global {
@@ -121,11 +122,17 @@ export type UnityPackageAction = "link" | "embed" | "update" | "remove";
 export const api = {
   project: () => json<ProjectSummary>("/api/project"),
   structure: async () => normalizeStructure(await bigJson<StructureGraph>("/api/structure")),
+  navigation: async (symbol: string, kind: NavigationKind, signal: AbortSignal): Promise<NavigationResult> =>
+    (await request(`/api/navigation?symbol=${encodeURIComponent(symbol)}&kind=${kind}`, { signal })).json(),
   knowledge: () => bigJson<ProjectKnowledge>("/api/knowledge"),
   catalog: () => json<Catalog>("/api/catalog"),
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
   flows: (symbols: readonly string[]) => json<FlowGraph[]>(`/api/flows?symbols=${symbols.map(encodeURIComponent).join(",")}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),
+  sourceFile: async (file: string, signal: AbortSignal) => {
+    const response = await request(`/api/source?file=${encodeURIComponent(file)}`, { signal });
+    return { text: await response.text(), revision: response.headers.get("x-nodex-source-revision") };
+  },
   layout: (key: string) => json<Positions>(`/api/layout?key=${encodeURIComponent(key)}`),
   listFolders: (path: string) => json<FolderListing>(`/api/fs/list?path=${encodeURIComponent(path)}`),
   recent: () => json<RecentProject[]>("/api/recent"),

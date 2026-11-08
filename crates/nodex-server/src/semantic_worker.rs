@@ -28,7 +28,7 @@ pub fn spawn(state: &Arc<AppState>) {
     };
     let generation = state.generation.load(std::sync::atomic::Ordering::SeqCst);
     for frontend in frontends {
-        let (tx, rx) = mpsc::channel::<Vec<PathBuf>>();
+        let (tx, rx) = mpsc::channel::<(u64, Vec<PathBuf>)>();
         if let Ok(mut senders) = state.semantic_tx.lock() {
             senders.push(tx);
         }
@@ -39,16 +39,21 @@ pub fn spawn(state: &Arc<AppState>) {
             // Another project was opened meanwhile: this worker's results belong to the old one.
             let current = || state.generation.load(std::sync::atomic::Ordering::SeqCst) == generation;
             let set = |s: SemanticState, detail: String| {
-                if !current() {
-                    return;
-                }
-                let graph = state.project.lock().is_ok_and(|mut p| p.set_semantic_status(language, s, detail));
+                let graph = {
+                    let Ok(mut project) = state.project.lock() else { return };
+                    if !current() { return }
+                    project.set_semantic_status(language, s, detail)
+                };
                 if graph {
                     crate::builds::prebuild(&state);
                 }
                 let _ = state.events.send(ServerEvent::SemanticChanged { graph });
             };
             set(SemanticState::Loading, "loading the project for semantic analysis…".into());
+            let mut revision = match state.project.lock() {
+                Ok(project) if current() => project.source_revision(),
+                _ => return,
+            };
             let mut provider = match frontend.semantic(&root) {
                 None => {
                     set(SemanticState::Unavailable, "no semantic provider for this language yet".into());
@@ -67,16 +72,24 @@ pub fn spawn(state: &Arc<AppState>) {
             analyzing.finish(format_args!("({language:?})"));
             loop {
                 match result {
-                    Ok(_) if !current() => return,
                     Ok(facts) => {
-                        tracing::info!(?language, refs = facts.refs.len(), "semantic facts ready");
-                        let applying = nodex_core::perf::phase("semantic.apply");
-                        if let Ok(mut p) = state.project.lock() {
-                            p.apply_semantic(language, facts);
+                        let applied = {
+                            let Ok(mut project) = state.project.lock() else { return };
+                            if !current() { return }
+                            if project.source_revision() == revision {
+                                tracing::info!(?language, refs = facts.refs.len(), "semantic facts ready");
+                                let applying = nodex_core::perf::phase("semantic.apply");
+                                project.apply_semantic(language, facts);
+                                applying.finish(format_args!("({language:?})"));
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        if applied {
+                            crate::builds::prebuild(&state);
+                            let _ = state.events.send(ServerEvent::SemanticChanged { graph: true });
                         }
-                        applying.finish(format_args!("({language:?})"));
-                        crate::builds::prebuild(&state);
-                        let _ = state.events.send(ServerEvent::SemanticChanged { graph: true });
                     }
                     Err(reason) => {
                         tracing::warn!(?language, %reason, "semantic analysis failed");
@@ -85,10 +98,12 @@ pub fn spawn(state: &Arc<AppState>) {
                     }
                 }
                 // Wait for file changes; merge bursts.
-                let Ok(mut changed) = rx.recv() else { return };
-                while let Ok(more) = rx.recv_timeout(DEBOUNCE) {
+                let Ok((mut next_revision, mut changed)) = rx.recv() else { return };
+                while let Ok((next, more)) = rx.recv_timeout(DEBOUNCE) {
+                    next_revision = next_revision.max(next);
                     changed.extend(more);
                 }
+                revision = next_revision;
                 changed.sort();
                 changed.dedup();
                 result = provider.update(&changed);
@@ -101,13 +116,13 @@ pub fn spawn(state: &Arc<AppState>) {
 }
 
 /// Forwards changed files (absolute paths) to every semantic worker.
-pub fn notify(state: &AppState, changed: &[PathBuf]) {
+pub fn notify(state: &AppState, revision: u64, changed: &[PathBuf]) {
     if changed.is_empty() {
         return;
     }
     if let Ok(senders) = state.semantic_tx.lock() {
         for tx in senders.iter() {
-            let _ = tx.send(changed.to_vec());
+            let _ = tx.send((revision, changed.to_vec()));
         }
     }
 }

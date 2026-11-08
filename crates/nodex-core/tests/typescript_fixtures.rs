@@ -31,6 +31,31 @@ fn has_opaque(e: &Expr) -> bool {
 }
 
 #[test]
+fn compiler_configuration_changes_invalidate_typescript_analysis() {
+    use nodex_ir::{Language, semantic::{SemanticFacts, SemanticState}};
+
+    let mut project = open("ts/Sample");
+    let facts = || SemanticFacts {
+        configuration_files: vec!["compiler-options.json".into()],
+        ..Default::default()
+    };
+    project.apply_semantic(Language::Typescript, facts());
+    let revision = project.source_revision();
+    let config = project.root().join("tsconfig.json");
+    assert!(config.is_file());
+
+    assert_eq!(project.refresh_path(&config).as_deref(), Some("tsconfig.json"));
+    assert_eq!(project.source_revision(), revision + 1);
+    assert_eq!(project.summary().semantic[0].state, SemanticState::Loading);
+    assert!(project.refresh_path(&config).is_none(), "duplicate notifications keep the same revision");
+    assert!(project.file_ir("tsconfig.json").is_none());
+    project.apply_semantic(Language::Typescript, facts());
+    assert_eq!(project.refresh_path(&project.root().join("compiler-options.json")).as_deref(), Some("compiler-options.json"));
+    assert_eq!(project.source_revision(), revision + 2);
+    assert_eq!(project.summary().semantic[0].state, SemanticState::Loading);
+}
+
+#[test]
 fn sample_flows_snapshot() {
     let project = open("ts/Sample");
     for file in ["src/main.ts", "src/services/orderService.ts", "src/services/repository.ts", "src/domain/order.ts", "src/legacy/format.cjs"] {
@@ -197,6 +222,7 @@ fn syntax_fixture_is_fully_mapped() {
     assert!(sym(&format!("{d}.Base.static")).has_flow);
     assert!(has(&format!("{d}.Square.onResize"), "bound"));
     assert!(has(&format!("{d}.overload"), "overloaded"));
+    assert_eq!(sym(&format!("{d}.overload")).origins.len(), 3, "two overload signatures and their implementation");
     assert!(has(&format!("{d}.counter"), "generator"));
     assert!(has(&format!("{d}.Shape"), "type-only"));
     assert_eq!(sym(&format!("{d}.Shape")).origins.len(), 2, "declaration merging");

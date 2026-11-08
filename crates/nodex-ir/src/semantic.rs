@@ -71,6 +71,17 @@ pub struct SemanticRef {
     pub target: SemanticTarget,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct NavigationFact {
+    pub site: ByteRange,
+    pub target: SemanticTarget,
+    #[serde(default)]
+    pub implementation: bool,
+    /// Kind of the implementing declaration when it differs from the contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implementation_kind: Option<String>,
+}
+
 /// The inferred type of a local variable (`var x = ...`, `foreach (var x in ...)`, `out var x`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct LocalTypeFact {
@@ -87,6 +98,15 @@ pub struct SemanticFacts {
     pub source: String,
     pub refs: Vec<SemanticRef>,
     pub locals: Vec<LocalTypeFact>,
+    /// Present when the provider collects project-wide symbol navigation facts.
+    #[serde(default)]
+    pub navigation: Option<Vec<NavigationFact>>,
+    /// Declaration names of type aliases the compiler recognizes as object contracts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub implementation_contracts: Vec<ByteRange>,
+    /// Project-relative configuration dependencies read by the provider.
+    #[serde(default)]
+    pub configuration_files: Vec<String>,
     /// Problems worth showing (failed project loads, unresolved references count, ...).
     #[serde(default)]
     pub messages: Vec<String>,

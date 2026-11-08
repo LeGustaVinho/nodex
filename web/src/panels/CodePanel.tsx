@@ -1,7 +1,7 @@
 import { toggleBreakpoint, useDebug } from "../debug";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { FlowNode } from "../gen/FlowNode";
 import type { Span } from "../gen/Span";
@@ -57,16 +57,19 @@ function umlOfSelection(editor: Editor, file: string) {
 }
 
 export function CodePanel() {
-  const { codeFocus, flowSymbol, view } = useUi();
+  const { codeFocus, codeFocusRevision, flowSymbol, view } = useUi();
+  const queryClient = useQueryClient();
   const { index } = useStructure();
   const active = flowSymbol ? index?.byId.get(flowSymbol) : undefined;
   const classId = view === "blueprint" && active && isTypeKind(active.kind) ? active.id : null;
   const codeFlow = view === "blueprint" && !classId ? flowSymbol : null;
   const file = codeFocus?.file ?? null;
-  const source = useQuery({ queryKey: ["source", file], queryFn: () => api.source(file!), enabled: !!file });
+  const source = useQuery({ queryKey: ["source", file], queryFn: ({ signal }) => api.sourceFile(file!, signal), enabled: !!file });
+  const moved = !!codeFocusRevision && !!source.data && source.data.revision !== codeFocusRevision;
+  const validating = !!codeFocusRevision && (source.isFetching || source.isError);
   const flow = useQuery({ queryKey: ["flow", codeFlow], queryFn: () => api.flow(codeFlow!), enabled: !!codeFlow });
   const { ids, query: classFlows } = useClassFlows(index, classId);
-  const editorRef = useRef<Editor | null>(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
   const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const debugDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const breakpoints = useDebug((s) => s.breakpoints);
@@ -83,13 +86,12 @@ export function CodePanel() {
 
   // Highlight and reveal the focused span.
   useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || !codeFocus || !source.data) return;
+    decorations.current?.clear();
+    if (!editor || !codeFocus || !source.data || moved || validating) return;
     const range = new monaco.Range(codeFocus.start_line, codeFocus.start_col, codeFocus.end_line, codeFocus.end_col);
     // Large declarations (namespaces, classes) only mark their first line; statements are marked whole.
     const large = codeFocus.end_line - codeFocus.start_line > 6;
     const marked = large ? new monaco.Range(codeFocus.start_line, 1, codeFocus.start_line, 1) : range;
-    decorations.current?.clear();
     decorations.current = editor.createDecorationsCollection([
       { range: marked, options: { className: "code-focus", isWholeLine: large, overviewRuler: { color: "#f5b041", position: 4 } } },
     ]);
@@ -97,11 +99,14 @@ export function CodePanel() {
     editor.setSelection(new monaco.Selection(codeFocus.start_line, codeFocus.start_col, codeFocus.start_line, codeFocus.start_col));
     editor.revealRangeNearTopIfOutsideViewport(large ? marked : range);
     suppressCursor.current = false;
-  }, [codeFocus, source.data]);
+  }, [codeFocus, moved, validating, source.data, editor]);
+
+  useEffect(() => {
+    if (moved && !source.isFetching) void queryClient.invalidateQueries({ queryKey: ["navigation"] });
+  }, [moved, source.isFetching, queryClient]);
 
   // Breakpoints in the margin and the line the program is paused at.
   useEffect(() => {
-    const editor = editorRef.current;
     if (!editor || !file) return;
     const frame = stopped?.frames.find((f) => f.id === frameId) ?? stopped?.frames.find((f) => f.file);
     const list: monaco.editor.IModelDeltaDecoration[] = breakpoints
@@ -112,10 +117,10 @@ export function CodePanel() {
     }
     debugDecorations.current?.clear();
     debugDecorations.current = editor.createDecorationsCollection(list);
-  }, [breakpoints, stopped, frameId, file, source.data]);
+  }, [breakpoints, stopped, frameId, file, source.data, editor]);
 
   const onMount: OnMount = (editor) => {
-    editorRef.current = editor;
+    setEditor(editor);
     editor.addAction({
       id: "nodex.uml.selection",
       label: "UML diagram of the selection",
@@ -180,10 +185,11 @@ export function CodePanel() {
       <div className="code-title" title={file}>
         {file}
         {view === "blueprint" && <span className="muted"> · click code to find its node</span>}
+        {moved && !source.isFetching && <span role="status" className="muted"> · File changed. Choose a refreshed result or run the navigation action again.</span>}
         <button
           className="code-uml"
           title="UML diagram of the selected code, or of this file (Ctrl+Shift+U; also in the editor's right-click menu)"
-          onClick={() => editorRef.current && umlOfSelection(editorRef.current, file)}
+          onClick={() => editor && umlOfSelection(editor, file)}
         >
           UML
         </button>
@@ -194,7 +200,7 @@ export function CodePanel() {
         theme="nodex-dark"
         path={file}
         language={LANGUAGE_BY_EXT[ext] ?? "plaintext"}
-        value={source.data ?? ""}
+        value={source.data?.text ?? ""}
         onMount={onMount}
         loading={<Loading label="Loading the code editor…" />}
         options={{

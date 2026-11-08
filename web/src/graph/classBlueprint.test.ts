@@ -3,7 +3,7 @@ import type { FlowGraph } from "../gen/FlowGraph";
 import type { Expr } from "../gen/Expr";
 import type { FlowNode } from "../gen/FlowNode";
 import type { Symbol } from "../gen/Symbol";
-import { classBlueprintGraph, classMembers } from "./classBlueprint";
+import { CLASS_IN, CLASS_OUT, FIELD_OUT, classBlueprintGraph, classMembers } from "./classBlueprint";
 import { expansionKey } from "./flowGraph";
 import { StructureIndex } from "./structureGraph";
 
@@ -20,6 +20,7 @@ const index = new StructureIndex({
     symbol("count", "Field", "Order", 2),
     symbol("Status", "Property", "Order", 3),
     symbol("Status.get", "Method", "Status", 4, true),
+    symbol("Computed", "Property", "Order", 12, true),
   ],
   edges: [],
 });
@@ -38,12 +39,15 @@ const fieldWrite = node("n2", "SetMember", { expr: increment(expr("GetMember", "
 const localWrite = node("n3", "Assign", { writes: ["count"], expr: increment(expr("Var", "count")) });
 const implicitWrite = node("n4", "Assign", { writes: ["count"], flavors: ["implicit-this"], expr: increment(expr("Var", "count")) });
 const otherWrite = node("n5", "SetMember", { expr: increment(expr("GetMember", ".count", [expr("Var", "other")])) });
+const propertyWrite = node("n6", "SetMember", {
+  expr: expr("Assign", "=", [expr("GetMember", ".Status", [expr("Var", "this")]), expr("Literal", "Ready")]),
+});
 const flow = (symbol: string, nodes: FlowNode[]): FlowGraph => ({
   symbol, name: symbol, language: "csharp", span, nodes,
   edges: [{ from: "entry", to: "n1", from_pin: "out", to_pin: "in", kind: "Exec", access: null }],
 });
 const flows = [
-  flow("Submit", [node("entry", "Entry"), body, fieldWrite, localWrite, implicitWrite, otherWrite]),
+  flow("Submit", [node("entry", "Entry"), body, fieldWrite, localWrite, implicitWrite, otherWrite, propertyWrite]),
   flow("Audit", [node("entry", "Entry"), { ...body, calls: [], writes: [] }]),
 ];
 const makeGraph = (open: string[], expanded: Record<string, boolean> = {}) =>
@@ -51,12 +55,22 @@ const makeGraph = (open: string[], expanded: Record<string, boolean> = {}) =>
 
 describe("class Blueprint", () => {
   it("orders methods and accessors by their source lines", () => {
-    expect(classMembers(index, "Order").map((s) => s.id)).toEqual(["Status.get", "Submit", "Audit"]);
+    expect(classMembers(index, "Order").map((s) => s.id)).toEqual(["Status.get", "Submit", "Audit", "Computed"]);
     expect(makeGraph([]).layoutLinks).toEqual([
       { source: "Status.get", target: "Submit" },
       { source: "Submit", target: "Audit" },
-      { source: "Audit", target: "fields:Order" },
+      { source: "Audit", target: "Computed" },
     ]);
+  });
+
+  it("gives fields and properties separate nodes while keeping accessor and computed flows", () => {
+    const graph = makeGraph([]);
+    expect(graph.nodes.filter((n) => n.type === "fieldCard")).toEqual([
+      expect.objectContaining({ id: "count", parent: "Order", layoutSide: "right", data: { symbol: expect.objectContaining({ kind: "Field" }) } }),
+      expect.objectContaining({ id: "Status", parent: "Order", layoutSide: "right", data: { symbol: expect.objectContaining({ kind: "Property" }) } }),
+    ]);
+    expect(graph.nodes.find((n) => n.id === "Status.get")?.type).toBe("methodCard");
+    expect(graph.nodes.find((n) => n.id === "Computed")?.type).toBe("methodCard");
   });
 
   it("prefixes canvas IDs, parents and expression attachments while keeping the original runtime IDs", () => {
@@ -73,16 +87,17 @@ describe("class Blueprint", () => {
     const closed = makeGraph([]);
     expect(closed.edges).toEqual([
       expect.objectContaining({ kind: "calls", source: "Submit", target: "Audit" }),
-      expect.objectContaining({ kind: "changes", source: "Submit", target: "fields:Order" }),
+      expect.objectContaining({ kind: "changes", source: "Submit", target: "count", sourceHandle: FIELD_OUT, targetHandle: CLASS_IN }),
+      expect.objectContaining({ kind: "changes", source: "Submit", target: "Status" }),
     ]);
     expect(makeGraph(["Submit"]).edges.find((e) => e.kind === "calls")).toMatchObject({ source: "Submit::n1", target: "Audit" });
     const open = makeGraph(["Submit", "Audit"]);
     expect(open.edges.find((e) => e.kind === "calls")).toMatchObject({ source: "Submit::n1", target: "Audit::entry" });
     expect(open.edges.filter((e) => e.kind === "changes")).toEqual([
-      expect.objectContaining({ source: "Submit::n2", target: "fields:Order" }),
-      expect.objectContaining({ source: "Submit::n4", target: "fields:Order" }),
+      expect.objectContaining({ source: "Submit::n2", target: "count", sourceHandle: CLASS_OUT, targetHandle: CLASS_IN }),
+      expect.objectContaining({ source: "Submit::n4", target: "count" }),
+      expect.objectContaining({ source: "Submit::n6", target: "Status" }),
     ]);
-    expect(open.nodes.find((n) => n.id === "fields:Order")?.data).toEqual({ fields: [expect.objectContaining({ id: "count" })] });
   });
 
   it("links writes qualified by the owning type but excludes a local with the same name", () => {
