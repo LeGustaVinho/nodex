@@ -15,7 +15,11 @@ const PORT: u16 = 7420;
 const TOKEN: &str = "test-token";
 
 fn app() -> axum::Router {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/csharp/Sample");
+    app_with_fixture("csharp/Sample")
+}
+
+fn app_with_fixture(fixture: &str) -> axum::Router {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures").join(fixture);
     let frontends: Vec<Arc<dyn LanguageFrontend>> = vec![Arc::new(nodex_lang_csharp::CSharpFrontend)];
     let project = Project::open(&root, frontends).unwrap();
     router(AppState::new(project, TOKEN.into(), PORT, vec!["http://localhost:5173".into()]))
@@ -84,4 +88,24 @@ async fn serves_flow_and_structure() {
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let flow: nodex_ir::FlowGraph = serde_json::from_slice(&body).unwrap();
     assert!(flow.nodes.iter().any(|n| n.concept == nodex_ir::Concept::LoopForEach));
+}
+
+#[tokio::test]
+async fn serves_a_batch_of_flows_and_skips_symbols_without_bodies() {
+    let req = request(
+        "/api/flows?symbols=Shop.Services.OrderService.PlaceOrderAsync(Order%2C%20int),Shop.Services.OrderService,Shop.Services.OrderService.Audit(Order%2C%20string)",
+        "127.0.0.1:7420",
+    )
+    .header("x-nodex-token", TOKEN)
+    .body(Body::empty())
+    .unwrap();
+    let res = app_with_fixture("knowledge/fullstack").oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let flows: Vec<nodex_ir::FlowGraph> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(flows.iter().map(|f| f.symbol.as_str()).collect::<Vec<_>>(), [
+        "Shop.Services.OrderService.PlaceOrderAsync(Order, int)",
+        "Shop.Services.OrderService.Audit(Order, string)",
+    ]);
+    assert!(flows[0].nodes.iter().any(|n| n.writes.iter().any(|w| w == "_placedCount")));
 }

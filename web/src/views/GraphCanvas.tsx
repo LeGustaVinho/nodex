@@ -21,6 +21,7 @@ import { api, type Positions as SavedPositions } from "../api";
 import { typeColor } from "../catalog";
 import { BlueprintNode } from "../components/BlueprintNode";
 import { CallNode } from "../components/CallNode";
+import { ClassBox, FieldsCard, MethodNode } from "../components/ClassNodes";
 import { ExprNode } from "../components/ExprNode";
 import { OwnershipEdge } from "../components/OwnershipEdge";
 import { HierarchyGroup, HierarchyNode } from "../components/HierarchyNodes";
@@ -60,6 +61,10 @@ const nodeTypes: NodeTypes = {
   callNode: CallNode,
   hnode: HierarchyNode,
   hgroup: HierarchyGroup,
+  classBox: ClassBox,
+  methodBox: MethodNode,
+  methodCard: MethodNode,
+  fieldsCard: FieldsCard,
 };
 
 const edgeTypes: EdgeTypes = { ownership: OwnershipEdge };
@@ -120,6 +125,8 @@ function kindStyle(e: GEdge): Partial<Edge> {
       return { type: "smoothstep", style: { stroke: "#4fa36b", strokeWidth: 1.2, strokeDasharray: "2 4" }, markerEnd: { type: MarkerType.Arrow, color: "#4fa36b" }, label: "creates" };
     case "calls":
       return { style: { stroke: "#4fa36b", strokeWidth: 1.8 }, markerEnd: { type: MarkerType.ArrowClosed, color: "#4fa36b" } };
+    case "changes":
+      return { style: { stroke: "#58a6ff", strokeWidth: 1.8, strokeDasharray: "6 4" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#58a6ff" }, label: "changes" };
     case "raises":
       return { style: { stroke: "#c2185b", strokeWidth: 1.6, strokeDasharray: "6 4" }, markerEnd: { type: MarkerType.ArrowClosed, color: "#c2185b" }, label: "raises" };
     case "subscribes":
@@ -161,6 +168,8 @@ interface Props {
   onRetry?: () => void;
   /** Fit only the first N nodes initially (keeps long flows readable). */
   fitFirst?: number;
+  /** Whether a layout starts fitted to the selected node when there is one. */
+  fitSelection?: boolean;
   /** Remember positions the user drags nodes to (off for views whose shape changes often). */
   savePositions?: boolean;
   /** Fit the whole graph after every layout, not only the first (views that grow in place). */
@@ -182,7 +191,7 @@ interface Props {
 }
 
 function Canvas(props: Props) {
-  const { graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, loadingText, error, onRetry, fitFirst, savePositions = true, refit = false } = props;
+  const { graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, loadingText, error, onRetry, fitFirst, fitSelection = true, savePositions = true, refit = false } = props;
   const { explore, anchorId, nodeTip, edgeTip, exportName } = props;
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -274,7 +283,7 @@ function Canvas(props: Props) {
           fittedKey.current = layoutKey;
           // Opened at a node (a debugger stop, a search hit): start there. Wide Blueprints: start
           // readable at the entry instead of shrinking everything.
-          if (selectedId && graph.nodes.some((n) => n.id === selectedId)) pendingFit.current = [{ id: selectedId }];
+          if (fitSelection && selectedId && graph.nodes.some((n) => n.id === selectedId)) pendingFit.current = [{ id: selectedId }];
           else pendingFit.current = fitFirst ? graph.nodes.slice(0, fitFirst).map((n) => ({ id: n.id })) : [];
         }
         });

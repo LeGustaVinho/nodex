@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import type { FlowNode } from "../gen/FlowNode";
 import type { Span } from "../gen/Span";
+import { isTypeKind } from "../graph/structureGraph";
 import { monaco } from "../monaco";
 import { useUi } from "../store";
 import { useStructure } from "../views/Views";
@@ -55,11 +56,18 @@ function umlOfSelection(editor: Editor, file: string) {
 }
 
 export function CodePanel() {
-  const { codeFocus, flowSymbol, view } = useUi();
+  const { codeFocus, flowSymbol, view, selection } = useUi();
   const { index } = useStructure();
+  const active = flowSymbol ? index?.byId.get(flowSymbol) : undefined;
+  const selectedFlow = selection?.kind === "symbol" ? selection.id
+    : selection?.kind === "flow-node" || selection?.kind === "expr" ? selection.flow : null;
+  const member = selectedFlow ? index?.byId.get(selectedFlow) : undefined;
+  const codeFlow = active && isTypeKind(active.kind)
+    ? member?.has_flow && index?.owningType(member.id)?.id === active.id ? member.id : null
+    : flowSymbol;
   const file = codeFocus?.file ?? null;
   const source = useQuery({ queryKey: ["source", file], queryFn: () => api.source(file!), enabled: !!file });
-  const flow = useQuery({ queryKey: ["flow", flowSymbol], queryFn: () => api.flow(flowSymbol!), enabled: !!flowSymbol });
+  const flow = useQuery({ queryKey: ["flow", codeFlow], queryFn: () => api.flow(codeFlow!), enabled: !!codeFlow });
   const editorRef = useRef<Editor | null>(null);
   const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const debugDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);

@@ -5,7 +5,8 @@ import type { UmlKind } from "./gen/UmlKind";
 import type { UmlOptions } from "./gen/UmlOptions";
 import type { UmlScope } from "./gen/UmlScope";
 import type { StructEdgeKind } from "./gen/StructEdgeKind";
-import type { DetailLevel } from "./graph/flowGraph";
+import { expansionKey, type DetailLevel } from "./graph/flowGraph";
+import { contextKey, toUmlScope, type ContextItem } from "./graph/context";
 
 /** Which edges the explorer views draw: all, or only those of the selected node. */
 export type EdgeMode = "all" | "selection" | "in" | "out";
@@ -106,6 +107,18 @@ interface UiState {
   codeFocus: Span | null;
   /** Statement nodes whose expression trees are expanded. */
   expanded: Record<string, boolean>;
+  classOpen: Record<string, boolean>;
+  toggleClassMember: (id: string, shown: boolean) => void;
+  setClassOpen: (ids: readonly string[], open: boolean) => void;
+  context: ContextItem[];
+  contextKey: string | null;
+  contextPickerOpen: boolean;
+  setContextPickerOpen: (open: boolean) => void;
+  loadContext: (root: string) => void;
+  setContext: (items: ContextItem[]) => void;
+  addToContext: (item: ContextItem) => void;
+  removeFromContext: (item: ContextItem) => void;
+  clearContext: () => void;
   showDataWires: boolean;
   showUses: boolean;
   /** How much of each statement the Blueprint draws; remembered per project. */
@@ -158,8 +171,9 @@ interface UiState {
   /** UML view: which diagram, of what, how. */
   umlKind: UmlKind;
   umlScope: UmlScope;
+  umlExplicitScope: boolean;
   umlOpts: Partial<UmlOptions>;
-  /** Shows a UML diagram; keeps the current kind or scope when not given. */
+  /** Shows a UML diagram, using the project context unless a specific scope is chosen. */
   showUml: (scope?: UmlScope, kind?: UmlKind) => void;
   setUmlOpts: (opts: Partial<UmlOptions>) => void;
   setView: (v: View) => void;
@@ -193,7 +207,7 @@ interface UiState {
   select: (s: Selection, span?: Span | null) => void;
   focusCode: (span: Span | null) => void;
   /** Opens or closes a statement's details; `shown` is whether they are shown now. */
-  toggleExpanded: (nodeId: string, shown: boolean) => void;
+  toggleExpanded: (flow: string, nodeId: string, shown: boolean) => void;
   setDetail: (level: DetailLevel) => void;
   /** Reads the remembered detail level of the project at `root`. */
   loadDetail: (root: string) => void;
@@ -250,6 +264,46 @@ export const useUi = create<UiState>((set, get) => {
   selection: null,
   codeFocus: null,
   expanded: {},
+  classOpen: {},
+  toggleClassMember: (id, shown) => set((s) => ({ classOpen: { ...s.classOpen, [id]: !shown } })),
+  setClassOpen: (ids, open) => set((s) => ({ classOpen: { ...s.classOpen, ...Object.fromEntries(ids.map((id) => [id, open])) } })),
+  context: [],
+  contextKey: null,
+  contextPickerOpen: false,
+  setContextPickerOpen: (contextPickerOpen) => set({ contextPickerOpen }),
+  loadContext: (root) => {
+    const key = `nodex.context:${root}`;
+    if (get().contextKey === key) return;
+    let items: ContextItem[] = [];
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+      if (Array.isArray(saved)) items = saved.filter((i) => i &&
+        ((i.kind === "folder" && typeof i.path === "string") || (i.kind === "symbol" && typeof i.id === "string")));
+    } catch {
+      // Storage is optional.
+    }
+    set({ contextKey: key });
+    get().setContext(items);
+  },
+  setContext: (context) => set((s) => {
+    try {
+      if (s.contextKey) window.localStorage.setItem(s.contextKey, JSON.stringify(context));
+    } catch {
+      // The context still applies for this visit.
+    }
+    const umlScope = s.umlExplicitScope ? s.umlScope : toUmlScope(context);
+    if (s.view === "uml") writeHash("uml", null, { kind: s.umlKind, scope: umlScope });
+    return {
+      context, umlScope, treeAnchor: null,
+      umlOpts: s.umlExplicitScope ? s.umlOpts : { ...s.umlOpts, focus: null },
+    };
+  }),
+  addToContext: (item) => {
+    const s = get();
+    if (!s.context.some((i) => contextKey(i) === contextKey(item))) s.setContext([...s.context, item]);
+  },
+  removeFromContext: (item) => get().setContext(get().context.filter((i) => contextKey(i) !== contextKey(item))),
+  clearContext: () => get().setContext([]),
   showDataWires: true,
   showUses: true,
   detail: "statements",
@@ -269,10 +323,16 @@ export const useUi = create<UiState>((set, get) => {
       selection: null,
       codeFocus: null,
       expanded: {},
+      classOpen: {},
+      context: [],
+      contextKey: null,
+      contextPickerOpen: false,
       detailKey: null,
       projectLoading: null,
       projectProgress: null,
       umlScope: { kind: "Project" },
+      umlExplicitScope: false,
+      umlOpts: {},
       treeExpanded: {},
       treeAnchor: null,
       knowledgeFocus: null,
@@ -296,14 +356,16 @@ export const useUi = create<UiState>((set, get) => {
   knowledgeDepth: 2,
   umlKind: startUml?.kind ?? "Class",
   umlScope: startUml?.scope ?? { kind: "Project" },
+  umlExplicitScope: !!startUml,
   umlOpts: {},
   showUml: (scope, kind) =>
     set((s) => {
-      const next = { kind: kind ?? s.umlKind, scope: scope ?? s.umlScope };
+      const umlExplicitScope = !!scope || (!!kind && s.view === "uml" && s.umlExplicitScope);
+      const next = { kind: kind ?? s.umlKind, scope: scope ?? (umlExplicitScope ? s.umlScope : toUmlScope(s.context)) };
       writeHash("uml", null, next);
       // The function a diagram starts from belongs to the old scope.
-      const umlOpts = scope && JSON.stringify(scope) !== JSON.stringify(s.umlScope) ? { ...s.umlOpts, focus: null } : s.umlOpts;
-      return { view: "uml", umlKind: next.kind, umlScope: next.scope, umlOpts };
+      const umlOpts = JSON.stringify(next.scope) !== JSON.stringify(s.umlScope) ? { ...s.umlOpts, focus: null } : s.umlOpts;
+      return { view: "uml", umlKind: next.kind, umlScope: next.scope, umlExplicitScope, umlOpts };
     }),
   setUmlOpts: (opts) => set((s) => ({ umlOpts: { ...s.umlOpts, ...opts } })),
   showKnowledge: (knowledgeFocus, label) => {
@@ -353,7 +415,7 @@ export const useUi = create<UiState>((set, get) => {
     }),
   openFlow: (flowSymbol) => {
     writeHash("blueprint", flowSymbol);
-    set({ flowSymbol, view: "blueprint", expanded: {} });
+    set({ flowSymbol, view: "blueprint", expanded: {}, classOpen: {} });
   },
   setNamespace: (namespace) => set({ namespace }),
   showCalls: (callFocus) => {
@@ -363,7 +425,7 @@ export const useUi = create<UiState>((set, get) => {
   setCallDepth: (callDepth) => set({ callDepth }),
   select: (selection, span) => set(span === undefined ? { selection } : { selection, codeFocus: span }),
   focusCode: (codeFocus) => set({ codeFocus }),
-  toggleExpanded: (id, shown) => set((s) => ({ expanded: { ...s.expanded, [id]: !shown } })),
+  toggleExpanded: (flow, id, shown) => set((s) => ({ expanded: { ...s.expanded, [expansionKey(flow, id)]: !shown } })),
   setDetail: (detail) =>
     set((s) => {
       try {

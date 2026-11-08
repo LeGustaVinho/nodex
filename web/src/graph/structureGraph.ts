@@ -94,10 +94,22 @@ function prefix(name: string, depth: number): string {
 }
 
 /** Architecture view: namespaces, external namespaces and packages, with import edges. */
-export function architectureGraph(index: StructureIndex): GGraph & { grouped: number } {
+export function architectureGraph(index: StructureIndex, scope?: ReadonlySet<string>): GGraph & { grouped: number } {
   const scopes: { s: Symbol; types: number; functions: number }[] = [];
+  const imports = index.graph.edges.filter((e) => e.kind === "Imports");
+  const covered = new Set<string>();
+  if (scope) {
+    for (const id of scope) {
+      for (let s = index.byId.get(id); s; s = s.parent ? index.byId.get(s.parent) : undefined) {
+        if (covered.has(s.id)) break;
+        covered.add(s.id);
+      }
+    }
+  }
+  const imported = new Set(imports.filter((e) => covered.has(e.from) && index.byId.get(e.to)?.external).map((e) => e.to));
   for (const s of index.graph.symbols) {
     if (!isScopeKind(s.kind) && s.kind !== "Package") continue;
+    if (scope && !covered.has(s.id) && !imported.has(s.id)) continue;
     // Namespaces nested in a module (TypeScript `namespace X {}`) stay inside their module.
     if (s.kind === "Namespace" && s.parent && index.byId.get(s.parent)?.kind === "Module") continue;
     const types = isScopeKind(s.kind) ? index.typesIn(s.qualified_name).length : 0;
@@ -112,7 +124,6 @@ export function architectureGraph(index: StructureIndex): GGraph & { grouped: nu
     height: symbol.external && !group ? 48 : 64,
     ports: [],
   });
-  const imports = index.graph.edges.filter((e) => e.kind === "Imports");
 
   if (scopes.length <= ARCHITECTURE_CAP) {
     const included = new Set(scopes.map((x) => x.s.id));
@@ -193,7 +204,7 @@ export function typeCardHeight(memberCount: number): number {
 export { MAX_MEMBERS };
 
 /** Types view: type cards with inheritance, implementation and (optionally) usage edges. */
-export function typesGraph(index: StructureIndex, namespace: string | null, showUses: boolean): GGraph {
+export function typesGraph(index: StructureIndex, namespace: string | null, showUses: boolean, scope?: ReadonlySet<string>): GGraph {
   const nodes: GNode[] = [];
   const edges: GEdge[] = [];
   const included = new Set<string>();
@@ -210,7 +221,7 @@ export function typesGraph(index: StructureIndex, namespace: string | null, show
       ports: [],
     });
   };
-  for (const t of index.typesIn(namespace)) addType(t);
+  for (const t of index.typesIn(namespace)) if (!scope || scope.has(t.id)) addType(t);
 
   const seen = new Set<string>();
   for (const e of index.graph.edges) {
@@ -222,7 +233,7 @@ export function typesGraph(index: StructureIndex, namespace: string | null, show
     if (!kind) continue;
     const from = index.owningType(e.from);
     const to = index.byId.get(e.to);
-    if (!from || !to || from.id === to.id || !included.has(from.id)) continue;
+    if (!from || !to || from.id === to.id || !included.has(from.id) || (scope && !scope.has(from.id))) continue;
     if (!included.has(to.id)) {
       // Pull in external bases so inheritance stays visible; skip external "uses".
       if (kind === "inherits" || kind === "implements") addType(to);

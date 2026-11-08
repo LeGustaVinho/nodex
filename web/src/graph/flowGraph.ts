@@ -68,6 +68,8 @@ export interface FlowGraphOptions {
   operations?: Record<string, OperationInfo>;
 }
 
+export const expansionKey = (flow: string, nodeId: string) => `${flow}|${nodeId}`;
+
 export function blueprintHeight(node: FlowNode, expanded: boolean, argPins = 0): number {
   const detailsPin = expanded && argPins === 0 ? 1 : 0;
   const rows = Math.max(node.inputs.length + detailsPin + argPins, node.outputs.length, 1);
@@ -112,7 +114,8 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
   for (const node of flow.nodes) {
     // A statement whose whole expression is a constant or a variable has nothing to open.
     const trivial = compact && node.expr !== null && (node.expr.concept === "Literal" || node.expr.concept === "Var");
-    const isExpanded = node.expr !== null && !trivial && (compact ? expanded[node.id] !== false : !!expanded[node.id]);
+    const shownDetails = expanded[expansionKey(flow.symbol, node.id)];
+    const isExpanded = node.expr !== null && !trivial && (compact ? shownDetails !== false : !!shownDetails);
     const ctx: TreeCtx = {
       flow,
       ownerId: node.id,

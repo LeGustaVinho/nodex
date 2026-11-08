@@ -67,8 +67,23 @@ impl Scoped {
             }
             UmlScope::Symbol { id } => out.symbol(index, id)?,
             UmlScope::Symbols { ids } => {
+                let mixed_folders = ids.len() > 1 && ids.iter().any(|id| id.starts_with("dir:"));
+                let mut union = BTreeSet::new();
                 for id in ids {
                     out.symbol(index, id)?;
+                    if mixed_folders {
+                        // A directory limits only its own contribution to a union.
+                        let folder = out.folder.take();
+                        for s in out.symbols.iter().filter_map(|id| index.get(id)) {
+                            out.files.extend(s.origins.iter()
+                                .filter(|o| in_folder(&o.file, folder.as_deref().unwrap_or("")))
+                                .map(|o| o.file.clone()));
+                        }
+                        union.append(&mut out.symbols);
+                    }
+                }
+                if mixed_folders {
+                    out.symbols = union;
                 }
                 out.title = format!("{} symbols", ids.len());
             }
@@ -89,7 +104,7 @@ impl Scoped {
         self.title = if path.is_empty() { "Project".into() } else { format!("Folder {path}") };
         self.broad = true;
         self.folder = Some(path.to_owned());
-        let inside = |s: &Symbol| s.origins.iter().any(|o| path.is_empty() || o.file.starts_with(&format!("{path}/")));
+        let inside = |s: &Symbol| s.origins.iter().any(|o| in_folder(&o.file, path));
         self.symbols.extend(index.graph.symbols.iter().filter(|s| !s.external && inside(s)).map(|s| s.id.clone()));
     }
 
@@ -131,4 +146,8 @@ impl Scoped {
     pub fn narrow(&self) -> bool {
         !self.broad
     }
+}
+
+fn in_folder(file: &str, folder: &str) -> bool {
+    folder.is_empty() || file.strip_prefix(folder).is_some_and(|rest| rest.starts_with('/'))
 }

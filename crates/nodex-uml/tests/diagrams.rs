@@ -186,6 +186,18 @@ fn component_diagrams_connect_front_end_back_end_and_infrastructure() {
 }
 
 #[test]
+fn mixed_component_scope_keeps_files_from_every_selected_item() {
+    let scope = UmlScope::Symbols {
+        ids: vec!["dir:frontend-react".into(), "dir:backend-nest".into(), "Shop.Controllers.OrdersController".into()],
+    };
+    let d = diagram("knowledge/fullstack", UmlKind::Component, scope, UmlOptions::default());
+    let names: Vec<_> = d.elements.iter().filter(|e| e.kind == "component").map(|e| e.label.as_str()).collect();
+    for expected in ["frontend-react", "backend-nest", "backend-dotnet"] {
+        assert!(names.contains(&expected), "{expected} is missing from {names:?}");
+    }
+}
+
+#[test]
 fn rust_workspace_components_follow_cargo_path_dependencies() {
     let d = diagram("knowledge/rust", UmlKind::Component, UmlScope::Project, UmlOptions::default());
     save("rust_component", &d);

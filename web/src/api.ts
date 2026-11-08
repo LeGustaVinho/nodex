@@ -124,6 +124,7 @@ export const api = {
   knowledge: () => bigJson<ProjectKnowledge>("/api/knowledge"),
   catalog: () => json<Catalog>("/api/catalog"),
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
+  flows: (symbols: readonly string[]) => json<FlowGraph[]>(`/api/flows?symbols=${symbols.map(encodeURIComponent).join(",")}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),
   layout: (key: string) => json<Positions>(`/api/layout?key=${encodeURIComponent(key)}`),
   listFolders: (path: string) => json<FolderListing>(`/api/fs/list?path=${encodeURIComponent(path)}`),

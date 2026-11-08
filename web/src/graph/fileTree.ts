@@ -11,7 +11,7 @@ export interface FileNode {
 }
 
 /** Builds the folder tree of project-relative file paths: folders first, then files, by name. */
-export function fileTree(paths: string[]): FileNode[] {
+export function fileTree(paths: string[], compact = true): FileNode[] {
   const root: FileNode = { name: "", path: "", folder: true, children: [], files: 0 };
   for (const p of paths) {
     const parts = p.split("/").filter(Boolean);
@@ -32,7 +32,7 @@ export function fileTree(paths: string[]): FileNode[] {
   const tidy = (n: FileNode): FileNode => {
     let node = n;
     // `a` → `b` with nothing else in `a`: one row `a/b`.
-    while (node.folder && node.children.length === 1 && node.children[0].folder) {
+    while (compact && node.folder && node.children.length === 1 && node.children[0].folder) {
       const only = node.children[0];
       node = { ...only, name: node.name ? `${node.name}/${only.name}` : only.name };
     }

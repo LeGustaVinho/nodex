@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::{Query, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -43,6 +43,21 @@ pub async fn flow(State(state): State<Arc<AppState>>, Query(q): Query<FlowQuery>
     crate::builds::graphs(&state).await.map_err(internal)?;
     let flow = state.project.lock().map_err(poisoned)?.flow(&q.symbol).ok_or_else(|| not_found("flow"))?;
     Ok(Json(flow).into_response())
+}
+
+pub async fn flows(State(state): State<Arc<AppState>>, RawQuery(query): RawQuery) -> ApiResult {
+    // Split the raw list before decoding: symbol IDs can contain commas in parameter lists.
+    let symbols = query.as_deref()
+        .and_then(|q| q.split('&').find_map(|part| part.strip_prefix("symbols=")))
+        .ok_or((StatusCode::BAD_REQUEST, "missing symbols".to_owned()))?;
+    crate::builds::graphs(&state).await.map_err(internal)?;
+    let mut project = state.project.lock().map_err(poisoned)?;
+    let flows: Vec<_> = symbols.split(',').filter(|id| !id.is_empty()).filter_map(|id| {
+        let param = format!("symbol={id}");
+        let (_, symbol) = form_urlencoded::parse(param.as_bytes()).next()?;
+        project.flow(&symbol)
+    }).collect();
+    Ok(Json(flows).into_response())
 }
 
 #[derive(Deserialize)]

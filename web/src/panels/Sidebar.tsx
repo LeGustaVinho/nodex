@@ -3,6 +3,7 @@ import { Fragment, type ReactNode, useLayoutEffect, useMemo, useRef, useState } 
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { openMenu } from "../components/ContextMenu";
+import { blueprintMenuItems, contextMenuItems } from "../uml/contextMenu";
 import { Splitter } from "../components/Splitter";
 import type { Symbol } from "../gen/Symbol";
 import { type FileNode, fileTree } from "../graph/fileTree";
@@ -147,7 +148,10 @@ export function Sidebar() {
   const problems = project.data?.files.filter((f) => f.diagnostics.length > 0) ?? [];
 
   const fileMenu = (e: React.MouseEvent, node: FileNode) =>
-    openMenu(e, umlMenuItems(node.folder ? { kind: "Folder", path: node.path } : { kind: "File", path: node.path }, `UML of ${node.name}`));
+    openMenu(e, [
+      ...(node.folder ? contextMenuItems({ kind: "folder", path: node.path }) : []),
+      ...umlMenuItems(node.folder ? { kind: "Folder", path: node.path } : { kind: "File", path: node.path }, `UML of ${node.name}`),
+    ]);
   const fileRows: VirtualRow[] = [];
   const pushFile = (node: FileNode, depth: number) => {
     if (q && !node.path.toLowerCase().includes(q)) return;
@@ -272,7 +276,11 @@ function TreeRow(props: { symbol: Symbol; depth: number; caret?: string; onCaret
     <div
       className={`row ${active ? "active" : ""}`}
       style={{ paddingLeft: 6 + depth * 14 }}
-      onContextMenu={(e) => openMenu(e, umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`))}
+      onContextMenu={(e) => openMenu(e, [
+        ...(!symbol.external ? contextMenuItems({ kind: "symbol", id: symbol.id }) : []),
+        ...blueprintMenuItems(symbol),
+        ...umlMenuItems({ kind: "Symbol", id: symbol.id }, `UML of ${symbol.name}`),
+      ])}
     >
       <span
         className="caret"

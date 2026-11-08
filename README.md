@@ -92,11 +92,13 @@ Above the functions, Nodex reads what a compiler alone doesn't show. That covers
 **Understand the structure**
 - **Overview**: entry points (program, HTTP routes, commands, jobs, message consumers, UI), hotspots by cyclomatic complexity, data models, tests, unresolved relations and state machines, each as a full list you can filter.
 - **Hierarchy**: folders, namespaces, types and members as boxes that open in place, with their relations rolled up.
+- **Project context** limits Overview, Hierarchy, Knowledge, UML, Architecture and Types to a selection of folders and symbols. Knowledge also shows related symbols outside the selection, dimmed.
 - **Explore**: select a node to light up its relations (or show only those, in or out), filter by relation, confidence and third-party code, pick a layout (layers from the focus, force-directed, concentric…), group nodes in class, file or namespace boxes, and hover anything for its evidence.
 - **Architecture**, **Types** and **Calls**: namespaces and packages, inheritance and use, callers and callees (including events and their handlers).
 
-**Read a function**
+**Read a function or class**
 - **Blueprint**: the statements of one function as nodes, with exec wires, data wires for variables and plain-language labels.
+- **Class Blueprint** shows fields and methods in one box. Open each method in place to follow calls to other methods of the class and writes to its fields.
 - **Inspector**: explains the concept behind each node and what each language calls it. For a symbol: its evidence, full-stack and error flows, data fields, impact radius and tests.
 - **Two-way sync**: click the code to find its node, click a node to see its code.
 

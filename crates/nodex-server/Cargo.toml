@@ -24,6 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 axum.workspace = true
+form_urlencoded = "1"
 rust-embed.workspace = true
 mime_guess.workspace = true
 clap.workspace = true

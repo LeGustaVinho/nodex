@@ -40,8 +40,8 @@ export function revealInHierarchy(h: Hierarchy, index: StructureIndex, id: strin
 
 
 /** Opens `id` and every box inside it (as many as the Hierarchy can draw). */
-export function openSubtree(h: Hierarchy, id: string, expanded: ReadonlySet<string>, hidden?: ReadonlySet<string>) {
-  const { open, capped } = h.subtree(id, expanded, HIERARCHY_CAP, hidden);
+export function openSubtree(h: Hierarchy, id: string, expanded: ReadonlySet<string>, hidden?: ReadonlySet<string>, roots?: string[]) {
+  const { open, capped } = h.subtree(id, expanded, HIERARCHY_CAP, hidden, roots);
   useUi.getState().expandTree(open, id);
   if (capped) useToasts.getState().push("info", `Some boxes stay closed: the view shows at most ${HIERARCHY_CAP} items.`);
 }

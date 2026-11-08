@@ -37,6 +37,7 @@ function marks(d: HierarchyNodeData): string {
   if (d.entry) m.push("is-entry");
   if (d.test) m.push("is-test");
   if (d.vendor) m.push("is-vendor");
+  if (d.outside) m.push("is-outside");
   if (d.item.symbol?.external) m.push("is-external");
   return m.join(" ");
 }

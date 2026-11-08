@@ -8,6 +8,9 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The **Context** picker limits six explorer views to one or more folders and symbols. Nodex remembers the selection for each project and dims Knowledge neighbors outside it.
+- **Open as Blueprint** on a type shows its fields and method cards in one box. Expand methods in place to follow calls and field writes.
+
 - Every panel can be resized: drag the edge of the sidebar, the right panel, the line between the Inspector and the code, the top of the Problems list or the top of the console. Double-click an edge to go back to the default size. Nodex keeps the sizes for the next time.
 - Hierarchy and Knowledge explore like CodeGraph's explorer. Select a node to light up its relations, or show only its relations, incoming or outgoing (key E). A filters panel turns each relation and confidence on or off and hides third-party code. Hovering a node or a wire shows its evidence. Each view has a bar with breadcrumbs, Back, counts, spacing, fit (F) and PNG export.
 - Knowledge layouts: layers from the focus (callers on the left, callees on the right), force-directed, concentric, circle and grid. Nodes can be grouped in class, file or namespace boxes.

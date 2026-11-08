@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { Symbol } from "../gen/Symbol";
 import { LAYOUTS } from "../graph/explore";
 import { rankSymbols } from "../graph/search";
+import { isTypeKind } from "../graph/structureGraph";
 import { type OverviewList, type View, useUi } from "../store";
 import { exportCanvas, fitCanvas } from "../views/GraphCanvas";
 import { UML_KINDS } from "../uml/uml";
@@ -64,6 +65,7 @@ export function Palette() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (useUi.getState().contextPickerOpen) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpen(!useUi.getState().paletteOpen);
@@ -124,6 +126,17 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     if (root) list.push({ title: "Reload the project", hint: "Read every file again", run: () => void api.openProject(root) });
     // UML diagrams of the project, and of the selected symbol when there is one.
     const sel = useUi.getState().selection;
+    list.push({ title: "Clear the context", hint: "Show the whole project", run: s.clearContext });
+    if (sel?.kind === "symbol" || sel?.kind === "container") {
+      const id = sel.id;
+      const symbol = index?.byId.get(id);
+      if (sel.kind === "container" || (symbol && !symbol.external)) {
+        list.push({ title: "Use the selection as context", hint: symbol?.name ?? id, run: () => s.setContext([{ kind: "symbol", id }]) });
+      }
+      if (symbol && !symbol.external && isTypeKind(symbol.kind)) {
+        list.push({ title: "Blueprint of the selected class", hint: symbol.name, run: () => s.openFlow(id) });
+      }
+    }
     for (const k of UML_KINDS.filter((k) => k.ready)) {
       list.push({ title: `UML: ${k.label} of the project`, hint: k.question, run: () => useUi.getState().showUml({ kind: "Project" }, k.id) });
       if (sel?.kind === "symbol") {
@@ -133,7 +146,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     }
     const q = query.trim().toLowerCase();
     return q ? list.filter((c) => c.title.toLowerCase().includes(q) || c.hint.toLowerCase().includes(q)) : list;
-  }, [query, project.data?.root]);
+  }, [query, project.data?.root, index, ui.selection]);
   const symbols: Symbol[] = useMemo(() => (index ? rankSymbols(index.graph.symbols, query) : []), [index, query]);
   const total = symbols.length + commands.length;
 

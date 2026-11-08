@@ -38,7 +38,9 @@ import { type StructureIndex, isTypeKind } from "../graph/structureGraph";
 import { useUi } from "../store";
 import { useToasts } from "../toast";
 import { umlMenuItems } from "../uml/menu";
-import { ConfidenceBadge, relationColor, useUnity } from "../views/Explorer";
+import { contextMenuItems } from "../uml/contextMenu";
+import { ConfidenceBadge, relationColor, useContextSet, useUnity } from "../views/Explorer";
+import { useStructure } from "../views/Views";
 import { openSubtree, revealInHierarchy, useHierarchy, useKnowledge } from "../views/hierarchyAccess";
 
 type Tab = "overview" | "evidence" | "flows" | "data" | "actions";
@@ -161,12 +163,13 @@ export function SymbolInspector({ symbol, index }: { symbol: Symbol; index: Stru
         </div>
       )}
       <div className="button-row">
-        {symbol.has_flow && (
+        {!symbol.external && (symbol.has_flow || isTypeKind(symbol.kind)) && (
           <button className="primary" onClick={() => ui.openFlow(symbol.id)}>
-            Open Blueprint
+            {isTypeKind(symbol.kind) ? "Open as Blueprint" : "Open Blueprint"}
           </button>
         )}
         {symbol.has_flow && <button onClick={() => ui.showCalls(symbol.id)}>Show calls</button>}
+        {!symbol.external && <button onClick={(e) => openMenu(e, contextMenuItems({ kind: "symbol", id: symbol.id }))}>Context ▾</button>}
         {!symbol.external && (
           <button onClick={() => ui.showKnowledge(symbol.id, shortName(index, symbol.id))} title="HTTP calls, DI, tests, throws and writes around it">
             Knowledge
@@ -779,6 +782,9 @@ function ActionsTab({ symbol, index, url }: { symbol: Symbol; index: StructureIn
 /** A folder or namespace box: what it holds, and opening it. */
 export function ContainerInspector({ id }: { id: string }) {
   const h = useHierarchy();
+  const { index } = useStructure();
+  const { scope } = useContextSet(index);
+  const roots = useMemo(() => scope ? h?.scopedRoots(scope) : undefined, [h, scope]);
   const ui = useUi();
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
   const unity = project.data?.flavors.includes("unity") ?? false;
@@ -804,12 +810,13 @@ export function ContainerInspector({ id }: { id: string }) {
       </div>
       {item.title !== item.label && <div className="insp-sub">{item.title}</div>}
       <div className="button-row">
+        <button onClick={(e) => openMenu(e, contextMenuItems({ kind: "symbol", id }))}>Context ▾</button>
         {ui.view === "hierarchy" ? (
           <>
             <button className="primary" onClick={() => ui.toggleTree(id)}>
               {open ? "Close" : "Open"}
             </button>
-            <button onClick={() => openSubtree(h, id, expanded, hidden)} title="Open every box inside it">
+            <button onClick={() => openSubtree(h, id, expanded, hidden, roots)} title="Open every box inside it">
               Open everything inside
             </button>
           </>

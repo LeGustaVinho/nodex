@@ -13,6 +13,7 @@ import type { Confidence } from "../gen/Confidence";
 import type { StructEdge } from "../gen/StructEdge";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
 import type { SymbolInfo } from "../gen/SymbolInfo";
+import { contextLabel, contextSymbols } from "../graph/context";
 import { LAYOUTS, coordsOf, degrees, isVendorPath } from "../graph/explore";
 import { type HierarchyNodeData, RELATION_GROUPS, RELATION_LABEL, type RolledEdge } from "../graph/hierarchy";
 import type { GEdge, GGraph, GNode } from "../graph/model";
@@ -53,6 +54,12 @@ export function relationColor(kind: StructEdgeKind): string {
 
 // ---------------------------------------------------------------------------- data
 
+export function useContextSet(index: StructureIndex | undefined) {
+  const items = useUi((s) => s.context);
+  const scope = useMemo(() => index ? contextSymbols(index, items) : null, [index, items]);
+  return { items, scope, label: contextLabel(items, (id) => index?.byId.get(id)?.name) };
+}
+
 /** Per-symbol knowledge (entry point, test, complexity), by symbol id. */
 export function useSymbolInfo(): Map<string, SymbolInfo> {
   const k = useQuery({ queryKey: ["knowledge"], queryFn: api.knowledge });
@@ -66,11 +73,12 @@ export function useUnity(): boolean {
 }
 
 /** How many relations of each kind and confidence the project has. */
-export function relationCounts(index: StructureIndex) {
+export function relationCounts(index: StructureIndex, scope?: ReadonlySet<string>) {
   const kinds = new Map<StructEdgeKind, number>();
   const confidences: Record<Confidence, number> = { Exact: 0, Inferred: 0, Unresolved: 0 };
   for (const e of index.graph.edges) {
     if (e.kind === "Contains") continue;
+    if (scope && !scope.has(e.from) && !scope.has(e.to)) continue;
     kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + 1);
     confidences[e.confidence ?? "Exact"]++;
   }
@@ -103,6 +111,7 @@ export function NodeTip({ node, index, dblHint }: { node: GNode; index: Structur
         {d.entry && <span className="badge small entry">entry · {d.entry}</span>}
         {d.test && <span className="badge small">test</span>}
         {d.vendor && <span className="badge small">third-party</span>}
+        {d.outside && <span className="badge small">outside the context</span>}
         {s?.external && <span className="badge small">external</span>}
       </div>
       <div className="tip-title">{d.item.title}</div>
@@ -461,7 +470,7 @@ export function Legend({ kinds, graph }: { kinds: ReadonlySet<StructEdgeKind>; g
   }, [graph]);
   const marks = useMemo(() => {
     const d = (graph?.nodes ?? []).map((n) => n.data as HierarchyNodeData);
-    return { entry: d.some((x) => x.entry), vendor: d.some((x) => x.vendor), external: d.some((x) => x.item.symbol?.external) };
+    return { entry: d.some((x) => x.entry), vendor: d.some((x) => x.vendor), external: d.some((x) => x.item.symbol?.external), outside: d.some((x) => x.outside) };
   }, [graph]);
   if (!open) {
     return (
@@ -498,6 +507,11 @@ export function Legend({ kinds, graph }: { kinds: ReadonlySet<StructEdgeKind>; g
       {marks.external && (
         <span className="legend-item">
           <span className="legend-box external" /> outside the project
+        </span>
+      )}
+      {marks.outside && (
+        <span className="legend-item">
+          <span className="legend-box vendor" /> outside the context
         </span>
       )}
       <span className="legend-sep" />

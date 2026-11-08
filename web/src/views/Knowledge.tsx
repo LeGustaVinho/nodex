@@ -6,6 +6,7 @@ import { openMenu } from "../components/ContextMenu";
 import { Loading } from "../components/Loading";
 import type { Confidence } from "../gen/Confidence";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
+import { contextFiles, toUmlScope } from "../graph/context";
 import { SPACING_FACTOR, coordsOf, isVendorPath, isVendorSymbol, resolveLayout, shortName, unresolvedEdges } from "../graph/explore";
 import { HIERARCHY_CAP, type HierarchyNodeData, RELATION_LABEL, hierarchyGraph } from "../graph/hierarchy";
 import { KNOWLEDGE_CAP, groupGraph, knowledgeGraph } from "../graph/knowledgeGraph";
@@ -15,6 +16,7 @@ import * as perf from "../perf";
 import { type OverviewList, useUi } from "../store";
 import { useToasts } from "../toast";
 import { umlMenuItems } from "../uml/menu";
+import { blueprintMenuItems, contextMenuItems } from "../uml/contextMenu";
 import { UML_KINDS } from "../uml/uml";
 import {
   CONFIDENCE_HINT,
@@ -30,6 +32,7 @@ import {
   relationColor,
   relationCounts,
   selectionEdgeCounts,
+  useContextSet,
   useExplorerKeys,
   useSymbolInfo,
   useUnity,
@@ -50,6 +53,8 @@ function shownEdgeCount(graph: GGraph | undefined, anchor: string | null, mode: 
 export function HierarchyView() {
   const { index, error, refetch } = useStructure();
   const h = useHierarchy();
+  const { scope, label: contextLabel } = useContextSet(index);
+  const roots = useMemo(() => scope ? h?.scopedRoots(scope) : undefined, [h, scope]);
   const info = useSymbolInfo();
   const unity = useUnity();
   const ui = useUi(
@@ -81,6 +86,8 @@ export function HierarchyView() {
             hierarchyGraph(h, index, expanded, kinds, {
               confidences: new Set(ui.confidences as Confidence[]),
               hidden,
+              scope: scope ?? undefined,
+              roots,
               links: ui.treeLinks,
               spacing: SPACING_FACTOR[ui.spacing],
             }),
@@ -88,7 +95,7 @@ export function HierarchyView() {
             (id) => vendor.has(id),
           )
         : undefined,
-    [h, index, expanded, kinds, ui.confidences, hidden, ui.treeLinks, ui.spacing, info, vendor],
+    [h, index, expanded, kinds, ui.confidences, hidden, scope, roots, ui.treeLinks, ui.spacing, info, vendor],
   );
   // A hidden selection is shown on its nearest visible ancestor.
   const selectedItem = ui.selection?.kind === "symbol" || ui.selection?.kind === "container" ? ui.selection.id : null;
@@ -115,15 +122,18 @@ export function HierarchyView() {
   );
   const expandLevel = () => {
     if (!h) return;
-    const { open, capped } = h.nextLevel(expanded, HIERARCHY_CAP, hidden);
+    const { open, capped } = h.nextLevel(expanded, HIERARCHY_CAP, hidden, roots);
     if (open.length) ui.expandTree(open);
     if (capped) useToasts.getState().push("info", `Some boxes stay closed: the view shows at most ${HIERARCHY_CAP} items.`);
   };
   useExplorerKeys();
 
+  const inRoots = (id: string) => !roots || roots.some((r) => r === id || h?.isAncestor(r, id));
   const crumbs = [
-    { id: null, label: "Hierarchy", title: "Close every box" },
-    ...(selectedItem && h ? [...h.ancestors(selectedItem).reverse(), selectedItem].map((id) => ({ id, label: h.get(id)?.label ?? id, title: h.get(id)?.title })) : []),
+    { id: null, label: contextLabel, title: "Close every box" },
+    ...(selectedItem && h && inRoots(selectedItem) ? [...h.ancestors(selectedItem).reverse(), selectedItem]
+      .filter(inRoots)
+      .map((id) => ({ id, label: h.get(id)?.label ?? id, title: h.get(id)?.title })) : []),
   ];
   const label = (id: string) => h?.get(id)?.label ?? id;
 
@@ -166,11 +176,12 @@ export function HierarchyView() {
             const id = item.symbol?.id ?? item.id;
             if (item.symbol?.external) return;
             openMenu(e, [
+              ...contextMenuItems({ kind: "symbol", id }),
+              ...blueprintMenuItems(item.symbol),
               ...umlMenuItems({ kind: "Symbol", id }, `UML of ${item.symbol?.name ?? id.replace(/^(dir:|grp:ns:)/, "")}`),
               ...(item.symbol ? [{ label: "Show in Knowledge", run: () => useUi.getState().showKnowledge(item.symbol!.id, item.label) }] : []),
-              ...(item.symbol?.has_flow ? [{ label: "Open Blueprint", run: () => ui.openFlow(item.symbol!.id) }] : []),
               ...(h && h.shownChildren(item.id, hidden).length > 0
-                ? [{ label: "Open everything inside", run: () => openSubtree(h, item.id, expanded, hidden) }]
+                ? [{ label: "Open everything inside", run: () => openSubtree(h, item.id, expanded, hidden, roots) }]
                 : []),
             ]);
           }}
@@ -191,6 +202,7 @@ export function HierarchyView() {
 /** Relations around one symbol, or every knowledge relation of the project. */
 export function KnowledgeView() {
   const { index, error, refetch } = useStructure();
+  const { scope, items, label: contextLabel } = useContextSet(index);
   const h = useHierarchy();
   const info = useSymbolInfo();
   const unity = useUnity();
@@ -223,6 +235,7 @@ export function KnowledgeView() {
     };
     const base = knowledgeGraph(index, focus, {
       kinds,
+      scope: scope ?? undefined,
       confidences: new Set(ui.confidences as Confidence[]),
       depth: ui.knowledgeDepth,
       hidden: ui.includeVendor ? undefined : vendor,
@@ -231,7 +244,7 @@ export function KnowledgeView() {
     const nested = grouped.nodes.some((n) => n.parent);
     const laid = { ...grouped, layout: resolveLayout(ui.layoutMode, focus, nested), focus, spacing: SPACING_FACTOR[ui.spacing] };
     return decorate(laid, info, vendor);
-  }, [index, focus, kinds, ui.confidences, ui.knowledgeDepth, ui.includeVendor, ui.groupBy, ui.layoutMode, ui.spacing, info, unity]);
+  }, [index, focus, kinds, scope, ui.confidences, ui.knowledgeDepth, ui.includeVendor, ui.groupBy, ui.layoutMode, ui.spacing, info, unity]);
   const selectedId = ui.selection?.kind === "symbol" ? ui.selection.id : focus;
   const [cleared, setCleared] = useState<string | null>(null);
   const anchor = selectedId && selectedId !== cleared ? selectedId : null;
@@ -242,7 +255,7 @@ export function KnowledgeView() {
     ? "Nothing related with the relations shown. Turn on more relations or confidences in the filters."
     : "No knowledge relations yet: routes reached over HTTP, dependency injection, tests, throws and data writes appear here.";
   const crumbs = [
-    { id: null, label: "Whole project", title: "Every knowledge relation of the project" },
+    { id: null, label: contextLabel, title: "Knowledge relations in the context" },
     ...ui.knowledgeHistory.slice(-4).map((h) => ({ id: h.id, label: h.label, title: index?.byId.get(h.id)?.qualified_name })),
   ];
   const label = (id: string) => (index ? shortName(index, id) : id);
@@ -262,7 +275,7 @@ export function KnowledgeView() {
       </ExplorerBar>
       <div className="explorer-stage">
         <GraphCanvas
-          key={`knowledge:${focus ?? "*"}`}
+          key={`knowledge:${focus ?? JSON.stringify(items)}`}
           graph={graph}
           layoutKey={`knowledge:${focus ?? "*"}`}
           selectedId={selectedId}
@@ -286,8 +299,9 @@ export function KnowledgeView() {
             const id = item.symbol.id;
             openMenu(e, [
               { label: "Center on it", run: () => center(id) },
+              ...contextMenuItems({ kind: "symbol", id }),
+              ...blueprintMenuItems(item.symbol),
               ...(h && index ? [{ label: "Show in Hierarchy", run: () => revealInHierarchy(h, index, id) }] : []),
-              ...(item.symbol.has_flow ? [{ label: "Open Blueprint", run: () => useUi.getState().openFlow(id) }] : []),
               ...umlMenuItems({ kind: "Symbol", id }, `UML of ${item.symbol.name}`),
             ]);
           }}
@@ -333,11 +347,13 @@ interface Row {
 /** Overview: what the project is, at a glance, and every list in full. */
 export function OverviewView() {
   const { index } = useStructure();
+  const { items, scope, label: contextLabel } = useContextSet(index);
   const h = useHierarchy();
   const knowledge = useKnowledge();
   const unity = useUnity();
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
-  const diagrams = useQuery({ queryKey: ["uml-availability", JSON.stringify({ kind: "Project" })], queryFn: () => api.umlAvailability({ kind: "Project" }), retry: false });
+  const umlScope = toUmlScope(items);
+  const diagrams = useQuery({ queryKey: ["uml-availability", JSON.stringify(umlScope)], queryFn: () => api.umlAvailability(umlScope), retry: false });
   const { select, openFlow, focusCode, overviewList, setOverviewList, includeVendor } = useUi(
     useShallow((s) => ({ select: s.select, openFlow: s.openFlow, focusCode: s.focusCode, overviewList: s.overviewList, setOverviewList: s.setOverviewList, includeVendor: s.includeVendor })),
   );
@@ -350,8 +366,9 @@ export function OverviewView() {
       const s = index.byId.get(id);
       return !includeVendor && !!s && !s.external && isVendorSymbol(s, unity);
     };
-    const counts = relationCounts(index);
-    const symbols = (k?.symbols ?? []).filter((s) => !vendor(s.symbol));
+    const hidden = (id: string) => (scope && !scope.has(id)) || vendor(id);
+    const counts = relationCounts(index, scope ?? undefined);
+    const symbols = (k?.symbols ?? []).filter((s) => !hidden(s.symbol));
     const isCase = (id: string) => {
       const kind = index.byId.get(id)?.kind ?? "Class";
       return !isTypeKind(kind) && kind !== "Module" && kind !== "Namespace";
@@ -360,15 +377,16 @@ export function OverviewView() {
       counts,
       relations: [...counts.kinds.values()].reduce((a, b) => a + b, 0),
       byKind: [...counts.kinds.entries()].sort((a, b) => b[1] - a[1]),
-      declarations: index.graph.symbols.filter((s) => !s.external).length,
+      declarations: index.graph.symbols.filter((s) => !s.external && (!scope || scope.has(s.id))).length,
       entries: symbols.filter((s) => s.entry && !s.test),
       tests: symbols.filter((s) => s.test && isCase(s.symbol)),
       hotspots: symbols.filter((s) => s.complexity > 1).sort((a, b) => b.complexity - a.complexity),
-      routes: (k?.routes ?? []).filter((r) => !vendor(r.handler)),
-      models: (k?.models ?? []).filter((m) => !vendor(m.symbol)),
-      unresolved: unresolvedEdges(index).filter((e) => !vendor(e.from)),
+      routes: (k?.routes ?? []).filter((r) => !hidden(r.handler)),
+      models: (k?.models ?? []).filter((m) => !hidden(m.symbol)),
+      unresolved: unresolvedEdges(index).filter((e) => !hidden(e.from)),
     };
-  }, [index, k, includeVendor, unity]);
+  }, [index, k, includeVendor, unity, scope]);
+  const files = useMemo(() => contextFiles(project.data?.files ?? [], items, index), [project.data, items, index]);
   if (!index || !data) return <Loading label="Loading the project overview…" />;
   perf.firstView("overview");
 
@@ -378,7 +396,6 @@ export function OverviewView() {
     if (h && s && !s.external) revealInHierarchy(h, index, id);
     else select({ kind: "symbol", id }, s?.origins[0] ?? null);
   };
-  const files = project.data?.files ?? [];
   const languages = [...files.reduce((m, f) => m.set(f.language, (m.get(f.language) ?? 0) + 1), new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1]);
   const maxKind = data.byKind[0]?.[1] ?? 1;
   const maxLang = languages[0]?.[1] ?? 1;
@@ -466,6 +483,12 @@ export function OverviewView() {
     }
   };
 
+  const contextLine = (
+    <div className="ov-context">
+      Context: {contextLabel}
+      {items.length > 0 && <> · <button className="link-btn" onClick={() => useUi.getState().clearContext()}>clear</button></>}
+    </div>
+  );
   const nav = (
     <nav className="ov-nav">
       {LISTS.map((l) => (
@@ -483,6 +506,7 @@ export function OverviewView() {
     const rows = q ? all.filter((r) => r.text.toLowerCase().includes(q)) : all;
     return (
       <div className="overview">
+        {contextLine}
         {nav}
         <div className="ov-list">
           <div className="ov-list-head">
@@ -507,6 +531,7 @@ export function OverviewView() {
   const conf = data.counts.confidences;
   return (
     <div className="overview">
+      {contextLine}
       {nav}
       <div className="kpis">
         <Kpi label="files" value={files.length} />
@@ -610,7 +635,7 @@ export function OverviewView() {
             const a = diagrams.data?.kinds.find((x) => x.kind === kind.id);
             const suggested = diagrams.data?.suggested === kind.id;
             return (
-              <button key={kind.id} className="ov-row" disabled={!a?.available} onClick={() => useUi.getState().showUml({ kind: "Project" }, kind.id)} title={kind.question}>
+              <button key={kind.id} className="ov-row" disabled={!a?.available} onClick={() => useUi.getState().showUml(undefined, kind.id)} title={kind.question}>
                 <span className={`badge small ${suggested ? "suggested" : ""}`}>{suggested ? "suggested" : "UML"}</span>
                 <span className="ov-main">{kind.label}</span>
                 <span className="ov-sub">{a?.reason ?? kind.question}</span>

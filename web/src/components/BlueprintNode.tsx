@@ -4,6 +4,7 @@ import { SHAPE_ICON, conceptColor, conceptInfo, flavorLabel, operationInfo, type
 import { pointerBadge } from "../graph/pointers";
 import type { Pin } from "../gen/Pin";
 import type { BlueprintData } from "../graph/flowGraph";
+import { CLASS_IN, CLASS_OUT } from "../graph/classBlueprint";
 import { useUi } from "../store";
 import { useTrace } from "../trace";
 import { hasBreakpoint, toggleBreakpoint, useDebug } from "../debug";
@@ -41,7 +42,7 @@ function PinView({ pin, side, value }: { pin: Pin; side: "in" | "out"; value?: s
 
 const EXPR_PIN: Pin = { id: "expr", kind: "Data", label: "details", ty: null };
 
-function BlueprintNodeImpl({ data, selected }: NodeProps) {
+function BlueprintNodeImpl({ id, data, selected }: NodeProps) {
   const { node, expanded, language, flow, argPins, hiddenInputs, canExpand } = data as unknown as BlueprintData;
   const catalog = useCatalog();
   // Live execution overlay.
@@ -95,6 +96,12 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
       className={`bp shape-${info.shape} ${selected ? "selected" : ""} ${pausedHere ? "paused-here" : ""} ${breakpoint ? "has-breakpoint" : ""} ${unreachable ? "unreachable" : ""} ${active && !replaying ? "active" : ""} ${isReplayNode ? "replay-current" : ""} ${count && !replaying ? "visited" : ""} ${replaying && !isReplayNode ? "dimmed" : ""} ${throws && !replaying ? "threw" : ""}`}
       style={{ "--accent": color } as React.CSSProperties}
     >
+      {id !== node.id && (
+        <>
+          <Handle className="class-wire-handle" type="target" position={Position.Left} id={CLASS_IN} isConnectable={false} />
+          <Handle className="class-wire-handle" type="source" position={Position.Right} id={CLASS_OUT} isConnectable={false} />
+        </>
+      )}
       <div className="bp-head">
         {breakable && (
           <button
@@ -128,7 +135,7 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
             title={expanded ? "Hide expression details" : "Show expression details"}
             onClick={(e) => {
               e.stopPropagation();
-              toggle(node.id, expanded);
+              toggle(flow, node.id, expanded);
             }}
           >
             {expanded ? "−" : "+"}

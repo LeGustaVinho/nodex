@@ -166,6 +166,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/uml", get(uml::diagram))
         .route("/api/uml/availability", get(uml::availability))
         .route("/api/flow", get(api::flow))
+        .route("/api/flows", get(api::flows))
         .route("/api/source", get(api::source))
         .route("/api/layout", get(api::get_layout).put(api::put_layout))
         .route("/api/debug/breakpoints", get(api::get_breakpoints).put(api::put_breakpoints))

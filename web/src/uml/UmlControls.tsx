@@ -1,5 +1,6 @@
 import type { Granularity } from "../gen/Granularity";
 import type { MemberFilter } from "../gen/MemberFilter";
+import { contextLabel } from "../graph/context";
 import { useUi } from "../store";
 import { useStructure } from "../views/Views";
 import { UML_KINDS, scopeLabel } from "./uml";
@@ -34,9 +35,9 @@ export function UmlControls() {
         })}
       </div>
       <span className="chip" title="What the diagram is about">
-        {scopeLabel(ui.umlScope, (id) => index?.byId.get(id)?.name)}
-        {ui.umlScope.kind !== "Project" && (
-          <button className="chip-x" onClick={() => ui.showUml({ kind: "Project" })} title="The whole project">
+        {ui.umlExplicitScope ? scopeLabel(ui.umlScope, (id) => index?.byId.get(id)?.name) : contextLabel(ui.context, (id) => index?.byId.get(id)?.name)}
+        {ui.umlExplicitScope && (
+          <button className="chip-x" onClick={() => ui.showUml()} title="Use the project context" aria-label="Use the project context">
             ×
           </button>
         )}

@@ -102,6 +102,16 @@ describe("hierarchy", () => {
     expect(g.nodes.find((n) => n.id === "ns:App.Services")).toMatchObject({ type: "hnode", parent: "grp:ns:App" });
     expect(g.edges).toEqual([expect.objectContaining({ source: "ns:App.Services", target: "ns:App.Domain", kind: "calls", weight: 1 })]);
   });
+
+  it("promotes covered types and members to roots when their parents are outside the scope", () => {
+    const order = "App.Domain.Order";
+    const find = "App.Services.OrderService.Find()";
+    const scope = new Set([order, "App.Domain.Order.Total()", find]);
+    const g = hierarchyGraph(h, index, new Set([order]), kindsOf(["types"]), { scope });
+    expect(h.scopedRoots(scope)).toEqual([order, find]);
+    expect(g.nodes.map((n) => [n.id, n.parent])).toEqual([[order, undefined], ["App.Domain.Order.Total()", order], [find, undefined]]);
+    expect(g.edges).toEqual([expect.objectContaining({ source: find, target: order })]);
+  });
 });
 
 describe("rankSymbols", () => {
@@ -123,6 +133,16 @@ describe("knowledgeGraph", () => {
     const g = knowledgeGraph(index, null, all);
     expect(g.edges.map((e) => e.kind).sort()).toEqual(["httpcalls", "throws"]);
     expect(g.edges.find((e) => e.kind === "httpcalls")?.confidence).toBe("Inferred");
+  });
+
+  it("keeps relations touching the context and marks the other end, except in focused mode", () => {
+    const frontend = "web/src/api/orders.fetchOrders";
+    const find = "App.Services.OrderService.Find()";
+    const opts = { ...all, scope: new Set([frontend]) };
+    const g = knowledgeGraph(index, null, opts);
+    expect(g.edges).toEqual([expect.objectContaining({ source: frontend, target: find })]);
+    expect(g.nodes.find((n) => n.id === find)?.data).toMatchObject({ outside: true });
+    expect(knowledgeGraph(index, find, opts)).toEqual(knowledgeGraph(index, find, all));
   });
 
   it("follows relations around a focus, filtered by confidence and depth", () => {

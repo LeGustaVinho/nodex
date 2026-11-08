@@ -17,6 +17,7 @@ export const KNOWLEDGE_KINDS: ReadonlySet<StructEdgeKind> = new Set(["HttpCalls"
 export const KNOWLEDGE_CAP = 160;
 
 export interface KnowledgeOptions {
+  scope?: ReadonlySet<string>;
   kinds: ReadonlySet<StructEdgeKind>;
   confidences: ReadonlySet<Confidence>;
   depth: number;
@@ -39,7 +40,8 @@ export function knowledgeGraph(index: StructureIndex, focus: string | null, opts
   let truncated = false;
   const keyOf = (e: StructEdge) => `${e.from}->${e.to}:${e.kind}`;
 
-  if (focus && index.byId.has(focus)) {
+  const hasFocus = !!focus && index.byId.has(focus);
+  if (hasFocus) {
     const out = new Map<string, StructEdge[]>();
     const into = new Map<string, StructEdge[]>();
     for (const e of index.graph.edges) {
@@ -81,6 +83,7 @@ export function knowledgeGraph(index: StructureIndex, focus: string | null, opts
   } else {
     for (const e of index.graph.edges) {
       if (!KNOWLEDGE_KINDS.has(e.kind) || !allowed(e)) continue;
+      if (opts.scope && !opts.scope.has(e.from) && !opts.scope.has(e.to)) continue;
       if (nodes.size >= KNOWLEDGE_CAP && !(nodes.has(e.from) && nodes.has(e.to))) {
         truncated = true;
         continue;
@@ -102,7 +105,8 @@ export function knowledgeGraph(index: StructureIndex, focus: string | null, opts
       symbol: s ?? null,
       children: [],
     };
-    return { id, type: "hnode", data: { item, childCount: 0, expanded: false } satisfies HierarchyNodeData, width: LEAF_WIDTH, height: LEAF_HEIGHT, ports: [] };
+    const outside = !hasFocus && !!opts.scope && !opts.scope.has(id);
+    return { id, type: "hnode", data: { item, childCount: 0, expanded: false, outside } satisfies HierarchyNodeData, width: LEAF_WIDTH, height: LEAF_HEIGHT, ports: [] };
   });
   const edges: GEdge[] = [...chosen.values()].map((e) => ({
     id: keyOf(e),

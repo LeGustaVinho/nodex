@@ -54,9 +54,10 @@ export function layoutSignature(g: GGraph): string {
     const ports = n.ports.map((p) => `${p.id}${p.side[0]}`).join(",");
     const box = n.box ? `${n.box.width}x${n.box.height}+${n.box.offsetX}` : "";
     const attach = n.attach ? `${n.attach.to}@${n.attach.dx},${n.attach.dy}` : "";
-    parts.push(`${n.id}|${n.width}x${n.height}|${box}|${n.parent ?? ""}|${n.container ? 1 : 0}|${attach}|${ports}`);
+    parts.push(`${n.id}|${n.width}x${n.height}|${box}|${n.parent ?? ""}|${n.container ? 1 : 0}|${n.direction ?? ""}|${n.headerHeight ?? ""}|${attach}|${ports}`);
   }
   for (const e of g.edges) if (e.layout) parts.push(`${e.source}:${e.sourceHandle ?? ""}>${e.target}:${e.targetHandle ?? ""}`);
+  for (const e of g.layoutLinks ?? []) parts.push(`link:${e.source}>${e.target}`);
   return hash(parts.join("\n"));
 }
 
@@ -98,7 +99,15 @@ async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions
       return {
         id: n.id,
         children: children.map(toElk),
-        layoutOptions: { "elk.padding": CONTAINER_PADDING, "elk.nodeSize.minimum": `(${n.width}, ${n.height})`, "elk.nodeSize.constraints": "MINIMUM_SIZE" },
+        layoutOptions: {
+          "elk.padding": n.headerHeight ? `[top=${n.headerHeight},left=12,bottom=12,right=12]` : CONTAINER_PADDING,
+          "elk.nodeSize.minimum": `(${n.width}, ${n.height})`,
+          "elk.nodeSize.constraints": "MINIMUM_SIZE",
+          ...(n.direction ? { "elk.direction": n.direction } : {}),
+          // A compound layered layout has one direction. A container with another direction
+          // gets its own layered pass.
+          ...(n.direction && n.direction !== g.direction ? { "elk.hierarchyHandling": "SEPARATE_CHILDREN" } : {}),
+        },
       };
     }
     // ELK orders FIXED_ORDER ports clockwise: east top→bottom, then west bottom→top.
@@ -134,6 +143,7 @@ async function computeLayout(g: GGraph, signal?: AbortSignal): Promise<Positions
       const t = e.targetHandle ? portKey(e.target, e.targetHandle) : e.target;
       return { id: e.id, sources: [portIds.has(s) ? s : e.source], targets: [portIds.has(t) ? t : e.target] };
     });
+  g.layoutLinks?.forEach(({ source, target }, i) => edges.push({ id: `layout-link:${i}`, sources: [source], targets: [target] }));
 
   // A cancellable layout gets a worker of its own, so stopping it leaves other layouts running.
   const elk = signal ? newElk() : (shared ??= newElk());

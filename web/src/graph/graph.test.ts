@@ -7,7 +7,7 @@ import type { Symbol } from "../gen/Symbol";
 import { pointerBadge } from "./pointers";
 import { breadcrumbs, folderName } from "../paths";
 import { callGraph } from "./callGraph";
-import { type BlueprintData, type ExprData, flowToGraph } from "./flowGraph";
+import { type BlueprintData, type ExprData, expansionKey, flowToGraph } from "./flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "./structureGraph";
 
 const span = { file: "A.cs", start_byte: 0, end_byte: 1, start_line: 1, start_col: 1, end_line: 1, end_col: 2 };
@@ -165,7 +165,7 @@ describe("flowToGraph detail levels", () => {
   });
 
   it("a statement can still be closed in the compact levels", () => {
-    const g = flowToGraph(opsFlow, { b: false }, true, { level: "operations", operations });
+    const g = flowToGraph(opsFlow, { [expansionKey(opsFlow.symbol, "b")]: false }, true, { level: "operations", operations });
     expect(g.nodes.some((n) => n.id.startsWith("b/e/"))).toBe(false);
     expect(g.edges.some((x) => x.target === "b" && x.targetHandle === "use:a")).toBe(true);
   });
@@ -196,7 +196,7 @@ describe("flowToGraph", () => {
   });
 
   it("expands expression trees into pure nodes wired into the statement", () => {
-    const g = flowToGraph(flow, { b: true }, true);
+    const g = flowToGraph(flow, { [expansionKey(flow.symbol, "b")]: true }, true);
     const exprNodes = g.nodes.filter((n) => n.type === "expr");
     expect(exprNodes.map((n) => n.id)).toEqual(["b/e/0", "b/e/0.0", "b/e/0.1"]);
     expect(g.edges.some((e) => e.source === "b/e/0" && e.target === "b" && e.targetHandle === "expr")).toBe(true);
@@ -236,6 +236,14 @@ describe("structure graphs", () => {
     expect(g.edges).toHaveLength(1);
   });
 
+  it("architecture keeps the scopes of covered symbols and their external imports", () => {
+    const withOther = new StructureIndex({ ...structure, symbols: [...structure.symbols, sym("ns:Other", "Module", null)] });
+    const graph = architectureGraph(withOther, new Set(["App.Circle.Area()"]));
+    expect(graph.nodes.map((n) => n.id)).toEqual(["ns:App", "ns:System"]);
+    expect(graph.edges).toHaveLength(1);
+    expect(architectureGraph(withOther, new Set(["ns:Other"])).nodes.map((n) => n.id)).toEqual(["ns:Other"]);
+  });
+
   it("architecture groups a project with thousands of modules by folder", () => {
     // 20 folders of 30 file modules each (600 > ARCHITECTURE_CAP), every module importing the next folder's first.
     const symbols: Symbol[] = [];
@@ -266,6 +274,12 @@ describe("structure graphs", () => {
 
   it("types view can hide usage edges", () => {
     expect(typesGraph(index, "App", false).edges.some((e) => e.kind === "uses")).toBe(false);
+  });
+
+  it("types keeps covered types and pulls in their bases", () => {
+    const g = typesGraph(index, null, false, new Set(["App.Shape"]));
+    expect(g.nodes.map((n) => n.id)).toEqual(["App.Shape", "ext:MonoBehaviour"]);
+    expect(g.edges).toEqual([expect.objectContaining({ source: "App.Shape", target: "ext:MonoBehaviour" })]);
   });
 });
 

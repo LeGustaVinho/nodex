@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DETAIL_LEVELS } from "./graph/flowGraph";
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { ApiError, api, connectEvents, isDesktop, token } from "./api";
 import { ConsolePanel, RunButton } from "./panels/RunPanel";
 import { OpenDialog } from "./panels/OpenDialog";
@@ -16,6 +16,10 @@ import { Splitter } from "./components/Splitter";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 import { ConfidenceToggles } from "./components/ConfidenceToggles";
 import { ContextMenuHost } from "./components/ContextMenu";
+import { ContextPicker } from "./panels/ContextPicker";
+import { contextLabel } from "./graph/context";
+import { classMembers } from "./graph/classBlueprint";
+import { isTypeKind } from "./graph/structureGraph";
 import { ConnectionOverlay, Toasts } from "./components/Toasts";
 import { EnvironmentDialog } from "./panels/EnvironmentDialog";
 import { SettingsDialog, useSettingsMenu } from "./panels/SettingsDialog";
@@ -115,9 +119,9 @@ function useLiveUpdates() {
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys =
               event.type === "graph-changed"
-                ? ["structure", "knowledge", "project", "flow", "source", "uml", "uml-availability"]
+                ? ["structure", "knowledge", "project", "flow", "flows", "source", "uml", "uml-availability"]
                 : event.data.graph
-                  ? ["structure", "knowledge", "project", "flow", "uml", "uml-availability"]
+                  ? ["structure", "knowledge", "project", "flow", "flows", "uml", "uml-availability"]
                   : // Only the analysis status (shown from the project summary) changed.
                     ["project"];
             for (const key of keys) {
@@ -136,11 +140,17 @@ function TopBar() {
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
   const { index } = useStructure();
   const flowSymbol = ui.flowSymbol ? index?.byId.get(ui.flowSymbol) : undefined;
+  const classMode = ui.view === "blueprint" && !!flowSymbol && isTypeKind(flowSymbol.kind);
+  const classIds = useMemo(() => index && flowSymbol && classMode
+    ? classMembers(index, flowSymbol.id).map((m) => m.id) : [], [index, flowSymbol, classMode]);
   const root = project.data?.root;
   const [opening, setOpening] = useState(false);
   useEffect(() => {
-    if (root) useUi.getState().loadDetail(root);
-  }, [root]);
+    if (root) {
+      useUi.getState().loadDetail(root);
+      useUi.getState().loadContext(root);
+    }
+  }, [root, ui.contextKey]);
   return (
     <header className="topbar">
       <div className="brand">
@@ -163,7 +173,14 @@ function TopBar() {
           </button>
         ))}
       </nav>
-      <div className="context">
+      <span className="chip project-context-chip">
+        <button className="chip-x" onClick={() => ui.setContextPickerOpen(true)} title="Choose project folders and symbols">
+          Context · {contextLabel(ui.context, (id) => index?.byId.get(id)?.name)}
+        </button>
+        {!!ui.context.length && <button className="chip-x" aria-label="Clear context" onClick={ui.clearContext}>×</button>}
+      </span>
+      {ui.contextPickerOpen && <ContextPicker />}
+      <div className={`context${classMode ? " class-context" : ""}`}>
         {/* Hierarchy and Knowledge keep their controls in their own stage bar. */}
         {ui.view === "uml" && <ConfidenceToggles />}
         {ui.view === "types" && (
@@ -196,9 +213,22 @@ function TopBar() {
         {ui.view === "blueprint" && flowSymbol && (
           <>
             <span className="crumb" title={flowSymbol.signature ?? ""}>
-              {flowSymbol.qualified_name}
+              {classMode ? flowSymbol.name : flowSymbol.qualified_name}
             </span>
-            <div className="segmented" role="group" aria-label="Detail">
+            {classIds.length > 0 && (
+              <div className="segmented" role="group" aria-label="Class methods">
+                <button onClick={() => ui.setClassOpen(classIds, true)}>Open all</button>
+                <button onClick={() => ui.setClassOpen(classIds, false)}>Close all</button>
+              </div>
+            )}
+            {classMode ? (
+              <label className="toggle">
+                Detail
+                <select aria-label="Detail" value={ui.detail} onChange={(e) => ui.setDetail(e.target.value as typeof ui.detail)}>
+                  {DETAIL_LEVELS.map((l) => <option key={l.id} value={l.id} title={l.explain}>{l.label}</option>)}
+                </select>
+              </label>
+            ) : <div className="segmented" role="group" aria-label="Detail">
               {DETAIL_LEVELS.map((l) => (
                 <button
                   key={l.id}
@@ -210,7 +240,7 @@ function TopBar() {
                   {l.label}
                 </button>
               ))}
-            </div>
+            </div>}
             <label className="toggle" title="Wires from where a variable is created to where it is used">
               <input type="checkbox" checked={ui.showDataWires} onChange={(e) => ui.setShowDataWires(e.target.checked)} /> data wires
             </label>

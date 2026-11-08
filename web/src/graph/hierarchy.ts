@@ -164,11 +164,29 @@ export class Hierarchy {
     return false;
   }
 
+  /** Fully covered boxes whose parents are outside the context. */
+  scopedRoots(covered: ReadonlySet<string>): string[] {
+    const roots: string[] = [];
+    const visit = (id: string): boolean => {
+      const item = this.items.get(id)!;
+      const start = roots.length;
+      const children = item.children.map(visit);
+      const full = (item.symbol ? covered.has(id) : children.length > 0) && children.every(Boolean);
+      if (full) {
+        roots.length = start;
+        roots.push(id);
+      }
+      return full;
+    };
+    this.roots.forEach(visit);
+    return roots;
+  }
+
   /**
    * Items drawn when `expanded` containers are open, parents before children (at most `cap`).
    * Hidden items (third-party code) are left out with everything inside them.
    */
-  visible(expanded: ReadonlySet<string>, cap = Infinity, hidden?: ReadonlySet<string>): { ids: string[]; truncated: boolean } {
+  visible(expanded: ReadonlySet<string>, cap = Infinity, hidden?: ReadonlySet<string>, roots = this.roots): { ids: string[]; truncated: boolean } {
     const ids: string[] = [];
     let truncated = false;
     const walk = (list: string[]) => {
@@ -183,7 +201,7 @@ export class Hierarchy {
         if (expanded.has(id) && item.children.length) walk(item.children);
       }
     };
-    walk(this.roots);
+    walk(roots);
     return { ids, truncated };
   }
 
@@ -197,8 +215,8 @@ export class Hierarchy {
    * Containers to open for one more level everywhere: the closed boxes on screen, as many as fit
    * under `cap` items in all. `capped` tells whether some had to stay closed.
    */
-  nextLevel(expanded: ReadonlySet<string>, cap: number, hidden?: ReadonlySet<string>): { open: string[]; capped: boolean } {
-    const { ids } = this.visible(expanded, Infinity, hidden);
+  nextLevel(expanded: ReadonlySet<string>, cap: number, hidden?: ReadonlySet<string>, roots = this.roots): { open: string[]; capped: boolean } {
+    const { ids } = this.visible(expanded, Infinity, hidden, roots);
     let budget = cap - ids.length;
     const open: string[] = [];
     let capped = false;
@@ -217,8 +235,8 @@ export class Hierarchy {
   }
 
   /** Every container inside `id` (and `id`), breadth first, as many as fit under `cap` items. */
-  subtree(id: string, expanded: ReadonlySet<string>, cap: number, hidden?: ReadonlySet<string>): { open: string[]; capped: boolean } {
-    let budget = cap - this.visible(expanded, Infinity, hidden).ids.length;
+  subtree(id: string, expanded: ReadonlySet<string>, cap: number, hidden?: ReadonlySet<string>, roots = this.roots): { open: string[]; capped: boolean } {
+    let budget = cap - this.visible(expanded, Infinity, hidden, roots).ids.length;
     const open: string[] = [];
     let capped = false;
     let frontier = [id];
@@ -293,6 +311,7 @@ export function rollup(
   kinds: ReadonlySet<StructEdgeKind>,
   confidences?: ReadonlySet<Confidence>,
   hidden?: ReadonlySet<string>,
+  scope?: ReadonlySet<string>,
 ): RolledEdge[] {
   const memo = new Map<string, string | null>();
   const nearest = (id: string): string | null => {
@@ -306,6 +325,7 @@ export function rollup(
   const out = new Map<string, RolledEdge>();
   for (const e of edges) {
     if (e.kind === "Contains" || !kinds.has(e.kind)) continue;
+    if (scope && !scope.has(e.from) && !scope.has(e.to)) continue;
     if (confidences && !confidences.has(e.confidence ?? "Exact")) continue;
     const a = nearest(e.from);
     const b = nearest(e.to);
@@ -350,6 +370,7 @@ export interface HierarchyNodeData {
   test?: boolean;
   /** Third-party code (drawn faded, dashed). */
   vendor?: boolean;
+  outside?: boolean;
   /** Relations drawn to and from the node (a thicker border for busier nodes). */
   degree?: number;
 }
@@ -360,6 +381,8 @@ export interface HierarchyOptions {
   confidences?: ReadonlySet<Confidence>;
   /** Items left out (third-party code). */
   hidden?: ReadonlySet<string>;
+  scope?: ReadonlySet<string>;
+  roots?: string[];
   /** Draw the rolled-up relations (default true). */
   links?: boolean;
   /** Multiplies the layout's gaps. */
@@ -379,7 +402,7 @@ export function hierarchyGraph(
   kinds: ReadonlySet<StructEdgeKind>,
   opts: HierarchyOptions = {},
 ): GGraph & { truncated: boolean } {
-  const { ids, truncated } = h.visible(expanded, HIERARCHY_CAP, opts.hidden);
+  const { ids, truncated } = h.visible(expanded, HIERARCHY_CAP, opts.hidden, opts.roots ?? (opts.scope ? h.scopedRoots(opts.scope) : undefined));
   const visible = new Set(ids);
   const nodes: GNode[] = ids.map((id) => {
     const item = h.get(id)!;
@@ -396,7 +419,7 @@ export function hierarchyGraph(
       container: open,
     };
   });
-  const rolled = opts.links === false ? [] : rollup(h, index.graph.edges, visible, kinds, opts.confidences, opts.hidden);
+  const rolled = opts.links === false ? [] : rollup(h, index.graph.edges, visible, kinds, opts.confidences, opts.hidden, opts.scope);
   const edges: GEdge[] = rolled.map((r) => ({
     id: `${r.source}->${r.target}`,
     source: r.source,

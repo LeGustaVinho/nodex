@@ -7,11 +7,16 @@ import { useTrace } from "../trace";
 import { useCatalog } from "../catalog";
 import { callGraph } from "../graph/callGraph";
 import { flowToGraph } from "../graph/flowGraph";
-import { StructureIndex, architectureGraph, typesGraph } from "../graph/structureGraph";
+import { StructureIndex, architectureGraph, isTypeKind, typesGraph } from "../graph/structureGraph";
+import { openMenu } from "../components/ContextMenu";
+import { blueprintMenuItems, contextMenuItems } from "../uml/contextMenu";
 import { useShallow } from "zustand/react/shallow";
 import { useUi } from "../store";
 import { ReplayBar } from "../panels/RunPanel";
 import { GraphCanvas } from "./GraphCanvas";
+import { useContextSet } from "./Explorer";
+import { ClassBlueprintView } from "./ClassBlueprint";
+import { Loading } from "../components/Loading";
 
 /** One index per structure graph, shared by every component that shows it. */
 const indexes = new WeakMap<StructureGraph, StructureIndex>();
@@ -33,14 +38,15 @@ export function useStructure() {
 
 export function ArchitectureView() {
   const { index, error, refetch } = useStructure();
+  const { scope, items } = useContextSet(index);
   const { setNamespace, setView, select, selection } = useUi(
     useShallow((s) => ({ setNamespace: s.setNamespace, setView: s.setView, select: s.select, selection: s.selection })),
   );
-  const graph = useMemo(() => (index ? perf.timed("architectureGraph", () => architectureGraph(index)) : undefined), [index]);
+  const graph = useMemo(() => (index ? perf.timed("architectureGraph", () => architectureGraph(index, scope ?? undefined)) : undefined), [index, scope]);
   return (
     <>
       <GraphCanvas
-        key="architecture"
+        key={JSON.stringify(items)}
         graph={graph}
         layoutKey="architecture"
         selectedId={selection?.kind === "symbol" ? selection.id : null}
@@ -72,20 +78,32 @@ export function ArchitectureView() {
 
 export function TypesView() {
   const { index, error, refetch } = useStructure();
+  const { scope, items } = useContextSet(index);
   const { namespace, showUses, select, selection } = useUi(
     useShallow((s) => ({ namespace: s.namespace, showUses: s.showUses, select: s.select, selection: s.selection })),
   );
-  const graph = useMemo(() => (index ? typesGraph(index, namespace, showUses) : undefined), [index, namespace, showUses]);
+  const graph = useMemo(() => (index ? typesGraph(index, namespace, showUses, scope ?? undefined) : undefined), [index, namespace, showUses, scope]);
   const selectedType = selection?.kind === "symbol" ? (index?.owningType(selection.id)?.id ?? selection.id) : null;
   return (
     <GraphCanvas
-      key={`types:${namespace ?? "*"}`}
+      key={`types:${namespace ?? "*"}:${JSON.stringify(items)}`}
       graph={graph}
       layoutKey={`types:${namespace ?? "*"}`}
       selectedId={selectedType}
       onNodeClick={(n) => {
         const s = index?.byId.get(n.id);
         select({ kind: "symbol", id: n.id }, s?.origins[0] ?? null);
+      }}
+      onNodeDoubleClick={(n) => {
+        const symbol = index?.byId.get(n.id);
+        if (symbol && !symbol.external && isTypeKind(symbol.kind)) useUi.getState().openFlow(symbol.id);
+      }}
+      onNodeContextMenu={(e, n) => {
+        const symbol = index?.byId.get(n.id);
+        if (symbol && !symbol.external) openMenu(e, [
+          ...blueprintMenuItems(symbol),
+          ...contextMenuItems({ kind: "symbol", id: symbol.id }),
+        ]);
       }}
       emptyText="No types in this namespace."
       loadingText="Loading the types…"
@@ -134,6 +152,17 @@ export function CallsView() {
 }
 
 export function BlueprintView() {
+  const flow = useUi((s) => s.flowSymbol);
+  const { index, isLoading } = useStructure();
+  const symbol = flow ? index?.byId.get(flow) : undefined;
+  if (flow && isLoading) return <Loading label="Loading the Blueprint…" />;
+  if (index && symbol && isTypeKind(symbol.kind)) {
+    return <ClassBlueprintView key={symbol.id} index={index} symbol={symbol} />;
+  }
+  return <FunctionBlueprintView />;
+}
+
+function FunctionBlueprintView() {
   const { flowSymbol, expanded, showDataWires, detail, select, selection, openFlow } = useUi(
     useShallow((s) => ({
       flowSymbol: s.flowSymbol,

@@ -25,6 +25,9 @@ export interface GNode<D = unknown> {
   parent?: string;
   /** A container whose size comes from the layout of its children. */
   container?: boolean;
+  /** Direction and header space for the layout inside a container. */
+  direction?: "RIGHT" | "DOWN";
+  headerHeight?: number;
 }
 
 export interface GEdge<D = unknown> {
@@ -48,6 +51,8 @@ export interface GGraph {
   nodes: GNode[];
   edges: GEdge[];
   direction: "RIGHT" | "DOWN";
+  /** Invisible links that put sibling nodes in successive layers. */
+  layoutLinks?: { source: string; target: string }[];
   /** Width/height ratio ELK aims for when it packs unconnected parts side by side. */
   aspectRatio?: number;
   /** How to arrange the nodes (default: ELK's layered algorithm). */
