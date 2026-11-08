@@ -112,6 +112,22 @@ describe("hierarchy", () => {
     expect(g.nodes.map((n) => [n.id, n.parent])).toEqual([[order, undefined], ["App.Domain.Order.Total()", order], [find, undefined]]);
     expect(g.edges).toEqual([expect.objectContaining({ source: find, target: order })]);
   });
+
+  it("keeps partial declarations in scope without exposing their other children", () => {
+    const type = "App.Services.OrderService";
+    const ship = "App.Services.OrderService.Ship()";
+    const scope = new Set([type, ship]);
+    const scoped = h.scoped(scope);
+    expect(scoped.roots).toEqual([type]);
+    expect(h.shownChildren(type, scoped.hidden)).toEqual([ship]);
+    expect(h.nextLevel(new Set(), 2, scoped.hidden, scoped.roots).open).toEqual([type]);
+    expect(h.subtree(type, new Set(), 2, scoped.hidden, scoped.roots).open).toEqual([type]);
+    const open = hierarchyGraph(h, index, new Set([type]), kindsOf(["calls"]), { scope });
+    expect(open.nodes.map((n) => [n.id, n.parent])).toEqual([[type, undefined], [ship, type]]);
+
+    const declaration = hierarchyGraph(h, index, new Set([type]), kindsOf(["calls"]), { scope: new Set([type]) });
+    expect(declaration.nodes).toEqual([expect.objectContaining({ id: type, type: "hnode", data: expect.objectContaining({ childCount: 0 }) })]);
+  });
 });
 
 describe("rankSymbols", () => {

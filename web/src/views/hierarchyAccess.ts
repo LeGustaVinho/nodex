@@ -4,6 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { api } from "../api";
+import { contextSymbols } from "../graph/context";
 import { HIERARCHY_CAP, Hierarchy } from "../graph/hierarchy";
 import type { StructureIndex } from "../graph/structureGraph";
 import { useUi } from "../store";
@@ -31,11 +32,18 @@ export function useHierarchy(): Hierarchy | undefined {
 }
 
 /** Opens the ancestors of `id` in the Hierarchy view, shows the view and selects the symbol. */
-export function revealInHierarchy(h: Hierarchy, index: StructureIndex, id: string) {
+export function revealInHierarchy(h: Hierarchy, index: StructureIndex, id: string, open = false) {
   const ui = useUi.getState();
-  ui.expandTree(h.ancestors(id));
+  const symbol = index.byId.get(id);
+  ui.select(symbol ? { kind: "symbol", id } : { kind: "container", id }, symbol?.origins[0] ?? null);
+  const covered = contextSymbols(index, ui.context);
+  if (covered && (symbol ? !covered.has(id) : h.scoped(covered).hidden.has(id))) {
+    useToasts.getState().push("info", "This item is outside the current context. Add it to the context to reveal it in Hierarchy.");
+    return;
+  }
+  const ancestors = h.ancestors(id);
+  ui.expandTree(open ? [...ancestors, id] : ancestors, id);
   ui.setView("hierarchy");
-  ui.select({ kind: "symbol", id }, index.byId.get(id)?.origins[0] ?? null);
 }
 
 

@@ -1,5 +1,6 @@
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { FlowNode } from "../gen/FlowNode";
+import type { Expr } from "../gen/Expr";
 import type { OperationInfo } from "../gen/OperationInfo";
 import type { Symbol } from "../gen/Symbol";
 import type { SymbolInfo } from "../gen/SymbolInfo";
@@ -13,14 +14,29 @@ export const flowNodePrefix = (flow: string) => `${flow}::`;
 
 const isAccessorOwner = (s: Symbol) => s.kind === "Property" || s.kind === "Event";
 
-function writtenMember(node: FlowNode, receiverName: "this" | "self"): string | undefined {
+function qualifiedReceiver(expr: Expr): { name: string; root: string } | undefined {
+  if (expr.concept === "Var") return { name: expr.label, root: expr.label };
+  if (expr.concept === "GetMember" && expr.label.startsWith(".") && expr.children[0]) {
+    const left = qualifiedReceiver(expr.children[0]);
+    if (left) return { name: left.name + expr.label, root: left.root };
+  }
+}
+
+function writtenMember(node: FlowNode, owner: Symbol, fields: ReadonlyMap<string, Symbol>): string | undefined {
   const expr = node.expr;
   if (!expr || (expr.concept !== "Assign" && !expr.flavors.some((f) => f === "prefix" || f === "postfix"))) return;
   const target = expr.children[0];
   if (target?.concept === "Var" && node.flavors.includes("implicit-this")) return target.label;
   if (target?.concept === "GetMember" && target.label.startsWith(".")) {
     const receiver = target.children[0];
-    if (receiver?.concept === "Var" && receiver.label === receiverName) return target.label.slice(1);
+    if (!receiver) return;
+    const name = target.label.slice(1);
+    if (receiver.concept === "Var" && receiver.label === (owner.language === "rust" ? "self" : "this")) return name;
+    if (!fields.get(name)?.flavors.includes("static")) return;
+    const qualifier = qualifiedReceiver(receiver);
+    // A local receiver already has a data pin, even when it shadows the type name.
+    if (qualifier && (qualifier.name === owner.name || qualifier.name === owner.qualified_name) &&
+        !node.inputs.some((p) => p.id === `use:${qualifier.root}`)) return name;
   }
 }
 
@@ -90,7 +106,7 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
     .map((e) => index.byId.get(e.to)?.name ?? e.to))];
   const fields = index.members(typeId).filter((s) => s.kind === "Field" || s.kind === "Event" ||
     (s.kind === "Property" && !s.has_flow && !(index.children.get(s.id) ?? []).some((a) => a.has_flow)));
-  const fieldNames = new Set(fields.map((s) => s.name));
+  const fieldsByName = new Map(fields.map((s) => [s.name, s]));
   const fieldsId = `fields:${typeId}`;
   const ordered = members.map((s) => s.id);
   if (fields.length) ordered.push(fieldsId);
@@ -136,7 +152,7 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
     seen.add(id);
     edges.push({ id, source, target, sourceHandle: CLASS_OUT, targetHandle: CLASS_IN, kind, layout: false });
   };
-  for (const { id, language } of members) {
+  for (const { id } of members) {
     for (const node of byMember.get(id)?.nodes ?? []) {
       const source = renderedFlows.has(id) ? flowNodePrefix(id) + node.id : id;
       for (const { symbol } of node.calls) {
@@ -144,8 +160,8 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
         const target = entries.get(symbol);
         if (target) wire(source, target, "calls");
       }
-      const field = writtenMember(node, language === "rust" ? "self" : "this");
-      if (field && fieldNames.has(field)) {
+      const field = writtenMember(node, type, fieldsByName);
+      if (field && fieldsByName.has(field)) {
         wire(source, fieldsId, "changes");
       }
     }

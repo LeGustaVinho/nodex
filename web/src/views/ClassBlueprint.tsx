@@ -18,7 +18,13 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
   const catalog = useCatalog();
   const symbolInfo = useSymbolInfo();
   const ids = useMemo(() => classMembers(index, symbol.id).map((m) => m.id), [index, symbol.id]);
-  const open = useMemo(() => new Set(ids.filter((id) => classOpen[id] ?? ids.length <= 4)), [ids, classOpen]);
+  const replay = useTrace((s) => s.replay);
+  const debugFrame = useDebug((s) => s.stopped?.frames.find((f) => f.id === s.frame));
+  const atDebugFrame = !!debugFrame?.flow && selection?.kind === "flow-node" &&
+    selection.flow === debugFrame.flow && selection.id === debugFrame.node;
+  const replayFlow = !atDebugFrame && replay && ids.includes(replay.flow) ? replay.flow : null;
+  const replayNode = replayFlow && replay ? replay.page.steps[replay.index]?.node : undefined;
+  const open = useMemo(() => new Set(ids.filter((id) => id === replayFlow || (classOpen[id] ?? ids.length <= 4))), [ids, classOpen, replayFlow]);
   const flows = useQuery({
     queryKey: ["flows", symbol.id, ids],
     queryFn: () => api.flows(ids),
@@ -27,12 +33,6 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
   const graph = useMemo(() => (flows.data || !ids.length)
     ? classBlueprintGraph(index, symbol.id, flows.data ?? [], { open, expanded, detail, showDataWires, operations: catalog?.operations, symbolInfo })
     : undefined, [index, symbol.id, ids.length, flows.data, open, expanded, detail, showDataWires, catalog, symbolInfo]);
-  const replay = useTrace((s) => s.replay);
-  const debugFrame = useDebug((s) => s.stopped?.frames.find((f) => f.id === s.frame));
-  const atDebugFrame = !!debugFrame?.flow && selection?.kind === "flow-node" &&
-    selection.flow === debugFrame.flow && selection.id === debugFrame.node;
-  const replayFlow = !atDebugFrame && replay && open.has(replay.flow) ? replay.flow : null;
-  const replayNode = replayFlow && replay ? replay.page.steps[replay.index]?.node : undefined;
   const selectionFlow = selection && (selection.kind === "flow-node" || selection.kind === "expr") ? selection.flow : null;
   const activeMember = selection?.kind === "symbol" ? selection.id : selectionFlow;
   useEffect(() => {
@@ -60,7 +60,7 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
         layoutKey={`class-flow:${symbol.id}:${detail}`}
         savePositions={false}
         refit
-        fitSelection={atDebugFrame}
+        fitSelection={atDebugFrame || !!replayNode}
         selectedId={selectedId}
         loadingText="Loading the class Blueprint…"
         error={flows.error}

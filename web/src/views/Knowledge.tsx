@@ -54,7 +54,6 @@ export function HierarchyView() {
   const { index, error, refetch } = useStructure();
   const h = useHierarchy();
   const { scope, label: contextLabel } = useContextSet(index);
-  const roots = useMemo(() => scope ? h?.scopedRoots(scope) : undefined, [h, scope]);
   const info = useSymbolInfo();
   const unity = useUnity();
   const ui = useUi(
@@ -78,7 +77,10 @@ export function HierarchyView() {
   const expanded = useMemo(() => new Set(Object.keys(ui.treeExpanded).filter((k) => ui.treeExpanded[k])), [ui.treeExpanded]);
   const kinds = useMemo(() => new Set(ui.relationKinds), [ui.relationKinds]);
   const vendor = useMemo(() => h?.vendorItems((p) => isVendorPath(p, unity)) ?? new Set<string>(), [h, unity]);
-  const hidden = ui.includeVendor ? undefined : vendor;
+  const hiddenVendor = ui.includeVendor ? undefined : vendor;
+  const scoped = useMemo(() => scope ? h?.scoped(scope, hiddenVendor) : undefined, [h, scope, hiddenVendor]);
+  const hidden = scoped?.hidden ?? hiddenVendor;
+  const roots = scoped?.roots;
   const graph = useMemo(
     () =>
       h && index
@@ -87,7 +89,7 @@ export function HierarchyView() {
               confidences: new Set(ui.confidences as Confidence[]),
               hidden,
               scope: scope ?? undefined,
-              roots,
+              scoped,
               links: ui.treeLinks,
               spacing: SPACING_FACTOR[ui.spacing],
             }),
@@ -95,17 +97,17 @@ export function HierarchyView() {
             (id) => vendor.has(id),
           )
         : undefined,
-    [h, index, expanded, kinds, ui.confidences, hidden, scope, roots, ui.treeLinks, ui.spacing, info, vendor],
+    [h, index, expanded, kinds, ui.confidences, hidden, scope, scoped, ui.treeLinks, ui.spacing, info, vendor],
   );
   // A hidden selection is shown on its nearest visible ancestor.
   const selectedItem = ui.selection?.kind === "symbol" || ui.selection?.kind === "container" ? ui.selection.id : null;
   const selectedId = useMemo(() => {
-    if (!selectedItem || !graph || !h) return null;
+    if (!selectedItem || !graph || !h || scoped?.hidden.has(selectedItem)) return null;
     const shown = new Set(graph.nodes.map((n) => n.id));
     let cur: string | null = selectedItem;
     while (cur && !shown.has(cur)) cur = h.parentOf(cur);
     return cur;
-  }, [selectedItem, graph, h]);
+  }, [selectedItem, graph, h, scoped]);
   // A click on the empty canvas turns the highlight off until the next selection.
   const [cleared, setCleared] = useState<string | null>(null);
   const anchor = selectedId && selectedId !== cleared ? selectedId : null;
@@ -128,11 +130,12 @@ export function HierarchyView() {
   };
   useExplorerKeys();
 
-  const inRoots = (id: string) => !roots || roots.some((r) => r === id || h?.isAncestor(r, id));
+  const ancestors = selectedItem && h ? h.ancestors(selectedItem) : [];
+  const scopeBoundary = ancestors.findIndex((id) => scoped?.hidden.has(id));
+  const trail = scopeBoundary < 0 ? ancestors : ancestors.slice(0, scopeBoundary);
   const crumbs = [
     { id: null, label: contextLabel, title: "Close every box" },
-    ...(selectedItem && h && inRoots(selectedItem) ? [...h.ancestors(selectedItem).reverse(), selectedItem]
-      .filter(inRoots)
+    ...(selectedItem && h && !scoped?.hidden.has(selectedItem) ? [...trail.reverse(), selectedItem]
       .map((id) => ({ id, label: h.get(id)?.label ?? id, title: h.get(id)?.title })) : []),
   ];
   const label = (id: string) => h?.get(id)?.label ?? id;

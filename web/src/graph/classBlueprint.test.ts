@@ -84,4 +84,22 @@ describe("class Blueprint", () => {
     ]);
     expect(open.nodes.find((n) => n.id === "fields:Order")?.data).toEqual({ fields: [expect.objectContaining({ id: "count" })] });
   });
+
+  it("links writes qualified by the owning type but excludes a local with the same name", () => {
+    const staticIndex = new StructureIndex({ ...index.graph, symbols: index.graph.symbols.map((s) =>
+      s.id === "count" ? { ...s, flavors: ["static"] } : s.id === "Order" ? { ...s, qualified_name: "Shop.Order" } : s,
+    ) });
+    const short = increment(expr("GetMember", ".count", [expr("Var", "Order")]));
+    const qualified = increment(expr("GetMember", ".count", [expr("GetMember", ".Order", [expr("Var", "Shop")])]));
+    const statements = [
+      node("n1", "SetMember", { expr: short }),
+      node("n2", "SetMember", { expr: short, inputs: [{ id: "use:Order", kind: "Data", label: "Order", ty: null }] }),
+      node("n3", "SetMember", { expr: qualified }),
+      node("n4", "SetMember", { expr: increment(expr("GetMember", ".count", [expr("Var", "Other")])) }),
+    ];
+    const graph = classBlueprintGraph(staticIndex, "Order", [flow("Submit", [node("entry", "Entry"), ...statements])], {
+      open: new Set(["Submit"]), expanded: {}, showDataWires: true,
+    });
+    expect(graph.edges.filter((e) => e.kind === "changes").map((e) => e.source)).toEqual(["Submit::n1", "Submit::n3"]);
+  });
 });

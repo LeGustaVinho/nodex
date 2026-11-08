@@ -28,6 +28,11 @@ export interface HItem {
   children: string[];
 }
 
+interface HierarchyScope {
+  roots: string[];
+  hidden: ReadonlySet<string>;
+}
+
 const rank = (item: HItem): number => {
   if (item.kind === "folder" || item.kind === "namespace" || item.kind === "Namespace" || item.kind === "Package") return 0;
   if (item.kind === "Module") return 1;
@@ -155,31 +160,41 @@ export class Hierarchy {
     return out;
   }
 
-  isAncestor(ancestor: string, id: string): boolean {
+  isAncestor(ancestor: string, id: string, hidden?: ReadonlySet<string>): boolean {
     let cur = this.parentOf(id);
-    while (cur) {
+    while (cur && !hidden?.has(cur)) {
       if (cur === ancestor) return true;
       cur = this.parentOf(cur);
     }
     return false;
   }
 
-  /** Fully covered boxes whose parents are outside the context. */
-  scopedRoots(covered: ReadonlySet<string>): string[] {
-    const roots: string[] = [];
-    const visit = (id: string): boolean => {
+  /** Keep covered declarations even when only some of their children are covered. */
+  scoped(covered: ReadonlySet<string>, hidden?: ReadonlySet<string>): HierarchyScope {
+    const excluded = new Set<string>();
+    const fullyCovered = (id: string): boolean => {
       const item = this.items.get(id)!;
-      const start = roots.length;
-      const children = item.children.map(visit);
+      const children = item.children.map(fullyCovered);
       const full = (item.symbol ? covered.has(id) : children.length > 0) && children.every(Boolean);
-      if (full) {
-        roots.length = start;
-        roots.push(id);
-      }
+      if (item.symbol ? !covered.has(id) : !full) excluded.add(id);
       return full;
     };
-    this.roots.forEach(visit);
-    return roots;
+    this.roots.forEach(fullyCovered);
+    const roots: string[] = [];
+    const collect = (ids: string[], parentCovered: boolean) => {
+      for (const id of ids) {
+        const included = !excluded.has(id);
+        if (included && !parentCovered) roots.push(id);
+        collect(this.items.get(id)!.children, included);
+      }
+    };
+    collect(this.roots, false);
+    for (const id of hidden ?? []) excluded.add(id);
+    return { roots, hidden: excluded };
+  }
+
+  scopedRoots(covered: ReadonlySet<string>): string[] {
+    return this.scoped(covered).roots;
   }
 
   /**
@@ -318,7 +333,10 @@ export function rollup(
     const known = memo.get(id);
     if (known !== undefined) return known;
     let cur: string | null = h.get(id) && !hidden?.has(id) ? id : null;
-    while (cur && !visible.has(cur)) cur = h.parentOf(cur);
+    while (cur && !visible.has(cur)) {
+      cur = h.parentOf(cur);
+      if (cur && hidden?.has(cur)) cur = null;
+    }
     memo.set(id, cur);
     return cur;
   };
@@ -329,7 +347,7 @@ export function rollup(
     if (confidences && !confidences.has(e.confidence ?? "Exact")) continue;
     const a = nearest(e.from);
     const b = nearest(e.to);
-    if (!a || !b || a === b || h.isAncestor(a, b) || h.isAncestor(b, a)) continue;
+    if (!a || !b || a === b || h.isAncestor(a, b, hidden) || h.isAncestor(b, a, hidden)) continue;
     const key = `${a}\u0000${b}`;
     const confidence = e.confidence ?? "Exact";
     let r = out.get(key);
@@ -382,7 +400,7 @@ export interface HierarchyOptions {
   /** Items left out (third-party code). */
   hidden?: ReadonlySet<string>;
   scope?: ReadonlySet<string>;
-  roots?: string[];
+  scoped?: HierarchyScope;
   /** Draw the rolled-up relations (default true). */
   links?: boolean;
   /** Multiplies the layout's gaps. */
@@ -402,7 +420,9 @@ export function hierarchyGraph(
   kinds: ReadonlySet<StructEdgeKind>,
   opts: HierarchyOptions = {},
 ): GGraph & { truncated: boolean } {
-  const { ids, truncated } = h.visible(expanded, HIERARCHY_CAP, opts.hidden, opts.roots ?? (opts.scope ? h.scopedRoots(opts.scope) : undefined));
+  const scoped = opts.scoped ?? (opts.scope ? h.scoped(opts.scope, opts.hidden) : undefined);
+  const hidden = scoped?.hidden ?? opts.hidden;
+  const { ids, truncated } = h.visible(expanded, HIERARCHY_CAP, hidden, scoped?.roots);
   const visible = new Set(ids);
   const nodes: GNode[] = ids.map((id) => {
     const item = h.get(id)!;
@@ -411,7 +431,7 @@ export function hierarchyGraph(
     return {
       id,
       type: open ? "hgroup" : "hnode",
-      data: { item, childCount: h.shownChildren(id, opts.hidden).length, expanded: open } satisfies HierarchyNodeData,
+      data: { item, childCount: h.shownChildren(id, hidden).length, expanded: open } satisfies HierarchyNodeData,
       width: LEAF_WIDTH,
       height: LEAF_HEIGHT,
       ports: [],
@@ -419,7 +439,7 @@ export function hierarchyGraph(
       container: open,
     };
   });
-  const rolled = opts.links === false ? [] : rollup(h, index.graph.edges, visible, kinds, opts.confidences, opts.hidden, opts.scope);
+  const rolled = opts.links === false ? [] : rollup(h, index.graph.edges, visible, kinds, opts.confidences, hidden, opts.scope);
   const edges: GEdge[] = rolled.map((r) => ({
     id: `${r.source}->${r.target}`,
     source: r.source,

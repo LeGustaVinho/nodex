@@ -784,12 +784,13 @@ export function ContainerInspector({ id }: { id: string }) {
   const h = useHierarchy();
   const { index } = useStructure();
   const { scope } = useContextSet(index);
-  const roots = useMemo(() => scope ? h?.scopedRoots(scope) : undefined, [h, scope]);
   const ui = useUi();
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
   const unity = project.data?.flavors.includes("unity") ?? false;
   const item = h?.get(id);
-  const hidden = useMemo(() => (h && !ui.includeVendor ? h.vendorItems((p) => isVendorPath(p, unity)) : undefined), [h, ui.includeVendor, unity]);
+  const vendor = useMemo(() => (h && !ui.includeVendor ? h.vendorItems((p) => isVendorPath(p, unity)) : undefined), [h, ui.includeVendor, unity]);
+  const scoped = useMemo(() => scope ? h?.scoped(scope, vendor) : undefined, [h, scope, vendor]);
+  const hidden = scoped?.hidden ?? vendor;
   if (!h || !item) return <div className="inspector">…</div>;
   const kids = h.shownChildren(id, hidden).map((k) => h.get(k)!);
   const byKind = new Map<string, number>();
@@ -811,22 +812,19 @@ export function ContainerInspector({ id }: { id: string }) {
       {item.title !== item.label && <div className="insp-sub">{item.title}</div>}
       <div className="button-row">
         <button onClick={(e) => openMenu(e, contextMenuItems({ kind: "symbol", id }))}>Context ▾</button>
-        {ui.view === "hierarchy" ? (
+        {ui.view === "hierarchy" && !scoped?.hidden.has(id) ? (
           <>
             <button className="primary" onClick={() => ui.toggleTree(id)}>
               {open ? "Close" : "Open"}
             </button>
-            <button onClick={() => openSubtree(h, id, expanded, hidden, roots)} title="Open every box inside it">
+            <button onClick={() => openSubtree(h, id, expanded, hidden, scoped?.roots)} title="Open every box inside it">
               Open everything inside
             </button>
           </>
         ) : (
           <button
             className="primary"
-            onClick={() => {
-              ui.expandTree([...h.ancestors(id), id], id);
-              ui.setView("hierarchy");
-            }}
+            onClick={() => index && revealInHierarchy(h, index, id, true)}
           >
             Show in Hierarchy
           </button>
