@@ -149,7 +149,9 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
     if (!initialized || !pendingFit.current) return;
     const focus = pendingFit.current;
     pendingFit.current = null;
-    void fitView({ padding: 0.1, maxZoom: 1.1, minZoom: focus.length ? 0.6 : 0.2, nodes: focus.length ? focus : undefined });
+    // Wait for React Flow to measure nodes added by this layout (opening a box adds some).
+    const fit = () => void fitView({ padding: 0.1, maxZoom: 1.1, minZoom: focus.length ? 0.6 : 0.2, nodes: focus.length ? focus : undefined });
+    requestAnimationFrame(() => requestAnimationFrame(fit));
   }, [initialized, nodes, fitView]);
 
   useEffect(() => {

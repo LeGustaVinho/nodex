@@ -31,9 +31,30 @@ impl Ctx<'_> {
 /// implementation. Exact: the registration says so.
 pub fn di_edges(ctx: &Ctx, files: &[&FileIr]) -> Vec<StructEdge> {
     let mut out = Vec::new();
+    // Injection points by token: `@Inject("TOKEN") gateway: PaymentGateway`.
+    let mut injected: HashMap<&str, Vec<&nodex_ir::knowledge::DiFact>> = HashMap::new();
+    for d in files.iter().flat_map(|f| f.knowledge.di.iter()).filter(|d| d.lifetime == "inject") {
+        if let Some(t) = &d.token {
+            injected.entry(t.as_str()).or_default().push(d);
+        }
+    }
     for file in files {
-        for d in &file.knowledge.di {
+        for d in file.knowledge.di.iter().filter(|d| d.lifetime != "inject") {
             let Some(implementation) = &d.implementation else { continue };
+            // A token registration provides the types injected under that token.
+            if let Some(token) = &d.token {
+                for point in injected.get(token.as_str()).into_iter().flatten() {
+                    let (Some(service), Some(imp)) = (ctx.resolve(&point.service, &point.owner), ctx.resolve(implementation, &d.owner)) else { continue };
+                    if service != imp {
+                        out.push(
+                            StructEdge::new(service, imp, StructEdgeKind::ResolvesDi)
+                                .with_evidence(format!("provided for token \"{token}\" ({}) in {}", d.framework, ctx.name(&d.owner)))
+                                .with_site(d.span.clone()),
+                        );
+                    }
+                }
+                continue;
+            }
             let (Some(service), Some(imp)) = (ctx.resolve(&d.service, &d.owner), ctx.resolve(implementation, &d.owner)) else { continue };
             if service == imp {
                 continue;
@@ -167,6 +188,25 @@ pub fn test_edges(ctx: &Ctx, infos: &BTreeMap<SymbolId, SymbolInfo>) -> Vec<Stru
     }
     for id in infos.iter().filter(|(_, i)| i.test).map(|(id, _)| id) {
         let Some(sym) = ctx.symbols.get(id.as_str()) else { continue };
+        if sym.kind == SymbolKind::Module {
+            // `__tests__/auth.test` → the module `.../auth`.
+            let last = sym.qualified_name.rsplit('/').next().unwrap_or(&sym.qualified_name);
+            let Some(stem) = [".test", ".spec", ".e2e-spec", ".e2e"].iter().find_map(|s| last.strip_suffix(s)) else { continue };
+            let suffix = format!("/{stem}");
+            let targets: Vec<&&Symbol> = ctx
+                .symbols
+                .values()
+                .filter(|s| s.kind == SymbolKind::Module && s.id != *id && s.qualified_name.ends_with(&suffix) && !is_test(&s.id))
+                .collect();
+            if let [target] = targets.as_slice() {
+                out.entry((id.clone(), target.id.clone())).or_insert_with(|| {
+                    StructEdge::new(id.clone(), target.id.clone(), StructEdgeKind::Tests)
+                        .with_confidence(Confidence::Inferred)
+                        .with_evidence(format!("{last} is named after it"))
+                });
+            }
+            continue;
+        }
         if !sym.kind.is_type() {
             continue;
         }
@@ -177,6 +217,48 @@ pub fn test_edges(ctx: &Ctx, infos: &BTreeMap<SymbolId, SymbolInfo>) -> Vec<Stru
                 StructEdge::new(id.clone(), target, StructEdgeKind::Tests)
                     .with_confidence(Confidence::Inferred)
                     .with_evidence(format!("{} is named after it", sym.name))
+            });
+        }
+    }
+    out.into_values().collect()
+}
+
+/// Front-end requests linked to the back-end routes that serve them: one matching route is
+/// inferred; several are unresolved (an edge to each candidate). Requests to other hosts, and
+/// URLs that are only a variable, are left out.
+pub fn http_edges(files: &[&FileIr], routes: &[nodex_ir::knowledge::ResolvedRoute]) -> Vec<StructEdge> {
+    use super::routes::{normalize_route, url_matches};
+    let mut out: BTreeMap<(String, String), StructEdge> = BTreeMap::new();
+    for h in files.iter().flat_map(|f| f.knowledge.http_calls.iter()) {
+        if h.url.starts_with("p:") {
+            continue;
+        }
+        if let Some((_, rest)) = h.url.split_once("://") {
+            let host = rest.split(['/', ':']).next().unwrap_or("");
+            if !matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0") {
+                continue;
+            }
+        }
+        let url = normalize_route(&h.url);
+        if url.trim_start_matches("{}").trim_matches('/').is_empty() {
+            continue;
+        }
+        let candidates: Vec<&nodex_ir::knowledge::ResolvedRoute> = routes
+            .iter()
+            .filter(|r| r.method != "PAGE" && (r.method == h.method || r.method == "ANY") && url_matches(&url, &r.normalized))
+            .collect();
+        let confidence = if candidates.len() == 1 { Confidence::Inferred } else { Confidence::Unresolved };
+        for r in &candidates {
+            let evidence = if candidates.len() == 1 {
+                format!("{} {} matches {} {} ({})", h.method, h.url, r.method, r.path, r.framework)
+            } else {
+                format!("{} {} matches {} routes, including {} {} ({})", h.method, h.url, candidates.len(), r.method, r.path, r.framework)
+            };
+            out.entry((h.owner.clone(), r.handler.clone())).or_insert_with(|| {
+                StructEdge::new(h.owner.clone(), r.handler.clone(), StructEdgeKind::HttpCalls)
+                    .with_confidence(confidence)
+                    .with_evidence(evidence)
+                    .with_site(h.span.clone())
             });
         }
     }

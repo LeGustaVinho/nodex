@@ -170,7 +170,10 @@ export function OverviewView() {
   };
   const entries = (k?.symbols ?? []).filter((s) => s.entry && !s.test);
   // Test cases only: classes of tests are marked too.
-  const tests = (k?.symbols ?? []).filter((s) => s.test && !isTypeKind(index.byId.get(s.symbol)?.kind ?? "Class")).length;
+  const tests = (k?.symbols ?? []).filter((s) => {
+    const kind = index.byId.get(s.symbol)?.kind ?? "Class";
+    return s.test && !isTypeKind(kind) && kind !== "Module" && kind !== "Namespace";
+  }).length;
   const hotspots = [...(k?.symbols ?? [])].filter((s) => s.complexity > 1).sort((a, b) => b.complexity - a.complexity).slice(0, 10);
   const maxKind = stats.byKind[0]?.[1] ?? 1;
 

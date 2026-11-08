@@ -140,6 +140,8 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     for s in &graph.symbols {
         let kind = if s.flavors.iter().any(|f| f == "unity:message") {
             Some((EntryKind::Framework, "Unity message"))
+        } else if s.flavors.iter().any(|f| f == "react:component") {
+            Some((EntryKind::Framework, "React component"))
         } else if s.flavors.iter().any(|f| f == "top-level") && s.has_flow && s.language == Language::Csharp {
             Some((EntryKind::Main, "program entry (top-level statements)"))
         } else {
@@ -181,6 +183,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     all_edges.extend(dispatch.iter().cloned());
     let ctx = global::Ctx { symbols: &symbols, children: &children, types: &types, edges: &all_edges };
     let tests = global::test_edges(&ctx, &infos);
+    let http = global::http_edges(files, &out.project.routes);
     for t in &tests {
         if let Some(i) = infos.get_mut(&t.from) {
             i.test = true;
@@ -215,7 +218,7 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     let inferred: std::collections::HashSet<(String, String)> = dispatch.iter().map(|d| (d.from.clone(), d.to.clone())).collect();
     let caught = global::caught_by_edges(&ctx, &sites, &handlers, &infos, &inferred);
 
-    for e in di.into_iter().chain(dispatch).chain(mutates).chain(tests).chain(caught) {
+    for e in di.into_iter().chain(dispatch).chain(mutates).chain(tests).chain(http).chain(caught) {
         edges.entry((e.from.clone(), e.to.clone(), e.kind)).or_insert(e);
     }
 

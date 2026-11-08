@@ -312,6 +312,7 @@ impl<'a, 't> Walker<'a, 't> {
                     service,
                     implementation,
                     lifetime: lifetime.into(),
+                    token: None,
                     framework: "aspnet".into(),
                     span: src.span(node),
                 });

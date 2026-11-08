@@ -196,3 +196,61 @@ fn exceptions_are_caught_by_callers_or_global_handlers() {
     let global = caught.iter().find(|e| e.from == place && e.to == program).expect("uncaught at a route: app.UseExceptionHandler");
     assert_eq!(global.confidence, Some(Confidence::Inferred));
 }
+
+#[test]
+fn nestjs_routes_di_tokens_and_global_prefix() {
+    let mut project = open("knowledge/fullstack");
+    let graph = project.structure();
+    let k = project.knowledge();
+    let controller = "backend-nest/src/invoices/invoices.controller.InvoicesController";
+    let find = k.routes.iter().find(|r| r.handler == format!("{controller}.findOne")).expect("@Get(\":id\") under @Controller(\"invoices\")");
+    assert_eq!((find.method.as_str(), find.path.as_str(), find.normalized.as_str()), ("GET", "/api/invoices/:id", "/api/invoices/{}"), "setGlobalPrefix(\"api\")");
+    let pay = k.routes.iter().find(|r| r.handler == format!("{controller}.pay")).expect("@Post");
+    assert_eq!(pay.method, "POST");
+    let info = |id: &str| k.symbols.iter().find(|s| s.symbol == id).unwrap_or_else(|| panic!("info {id}"));
+    assert!(info(&pay.handler).capabilities.iter().any(|c| c == "AUTH_REQUIRED"), "@UseGuards");
+    assert_eq!(info("backend-nest/src/main.bootstrap").entry.as_ref().map(|e| e.kind), Some(EntryKind::ServerStart));
+    assert!(info("backend-nest/src/invoices/invoices.service.InvoicesService.pay").capabilities.iter().any(|c| c == "DB_WRITE"), "prisma update");
+    // `{ provide: "PAYMENT_GATEWAY", useClass: StripeGateway }` + `@Inject("PAYMENT_GATEWAY") gateway: PaymentGateway`.
+    let di = edge(&graph, "backend-nest/src/payments/payment.PaymentGateway", "backend-nest/src/payments/payment.StripeGateway", StructEdgeKind::ResolvesDi)
+        .expect("token registration");
+    assert!(di.evidence.as_deref().is_some_and(|e| e.contains("PAYMENT_GATEWAY")));
+}
+
+#[test]
+fn front_end_requests_link_to_back_end_routes() {
+    let mut project = open("knowledge/fullstack");
+    let graph = project.structure();
+    let get = edge(&graph, "frontend-react/src/api/orders.getOrders", &id_of(&graph, "OrdersController", "GetOrders"), StructEdgeKind::HttpCalls)
+        .expect("fetch(\"/api/orders\") reaches [HttpGet] GetOrders in C#");
+    assert_eq!(get.confidence, Some(Confidence::Inferred), "a URL match is not proven by a compiler");
+    assert!(get.site.as_ref().is_some_and(|s| s.file == "frontend-react/src/api/orders.ts"));
+    let cancel = edge(&graph, "frontend-react/src/api/orders.cancelOrder", &id_of(&graph, "OrdersController", "Cancel"), StructEdgeKind::HttpCalls)
+        .expect("axios.post(`/api/orders/${id}/cancel`) reaches [HttpPost(\"{id}/cancel\")]");
+    assert!(cancel.evidence.as_deref().is_some_and(|e| e.contains("/api/Orders/{id}/cancel")));
+    // `${API_BASE}/profile` matches no route; the Stripe request goes to another host.
+    assert!(!graph.edges.iter().any(|e| e.kind == StructEdgeKind::HttpCalls && (e.from.ends_with("getProfile") || e.from.ends_with("charge"))));
+    let k = project.knowledge();
+    assert!(k.http_calls.iter().any(|h| h.client == "axios" && h.method == "POST"));
+    assert!(k.config.iter().any(|c| c.key == "VITE_API_URL" && c.source == "env"));
+}
+
+#[test]
+fn javascript_tests_and_express_routes() {
+    let mut project = open("knowledge/fullstack");
+    let graph = project.structure();
+    let k = project.knowledge();
+    let case = k.symbols.iter().find(|s| s.symbol.contains("auth.test") && s.entry.as_ref().is_some_and(|e| e.kind == EntryKind::Test)).expect("it(...) callback");
+    assert!(case.test);
+    assert_eq!(case.entry.as_ref().map(|e| e.label.as_str()), Some("test: returns a token on login"));
+    let module = edge(&graph, "ns:frontend-react/src/__tests__/auth.test", "ns:frontend-react/src/utils/auth", StructEdgeKind::Tests).expect("auth.test → auth");
+    assert_eq!(module.confidence, Some(Confidence::Inferred));
+
+    let mut express = open("ts/Frameworks");
+    express.structure();
+    let k = express.knowledge();
+    let users = k.routes.iter().find(|r| r.normalized == "/users/{}").expect("app.get(\"/users/:id\", ...)");
+    assert_eq!((users.method.as_str(), users.framework.as_str()), ("GET", "express"));
+    assert_eq!(users.handler, "src/node/server.(module).GET /users/:id", "the callback's own Blueprint handles it");
+    assert!(k.http_calls.iter().any(|h| h.url == "/api/heroes" && h.client == "http"), "Angular HttpClient");
+}

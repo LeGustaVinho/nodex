@@ -90,8 +90,12 @@ pub struct DiFact {
     pub service: String,
     /// Implementation type as written, when it differs from the service.
     pub implementation: Option<String>,
-    /// `scoped`, `singleton`, `transient`, `hosted`, `context`, `client`, `value`, `factory`.
+    /// `scoped`, `singleton`, `transient`, `hosted`, `context`, `client`, `class`, `value`,
+    /// `factory`, `existing`, or `inject` for an injection point (`@Inject("TOKEN") x: Service`).
     pub lifetime: String,
+    /// Injection token that links a registration to its injection points (`provide: "TOKEN"`).
+    #[serde(default)]
+    pub token: Option<String>,
     pub framework: String,
     pub span: Span,
 }

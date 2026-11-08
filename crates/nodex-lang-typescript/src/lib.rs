@@ -9,6 +9,7 @@ mod expr;
 mod flow;
 mod frameworks;
 mod instrument;
+mod knowledge;
 mod prepare;
 mod project;
 pub mod semantic;
@@ -181,6 +182,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         ir.flows.push(lowered.graph);
     }
 
+    ir.knowledge = knowledge::extract(src, root, &symbols, &function_ids, original);
     let from_scope = module_path(rel_path);
     ir.imports = imports.into_iter().map(|target| ImportRef { from_scope: from_scope.clone(), target }).collect();
     ir.symbols = symbols;
