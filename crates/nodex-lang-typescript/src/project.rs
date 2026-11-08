@@ -4,13 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use nodex_ir::{Language, PackageRef};
-use nodex_lang_api::ProjectDescriptor;
+use nodex_lang_api::{ProjectDescriptor, is_ignored_dir};
 use serde_json::Value;
-
-const SKIP_DIRS: &[&str] = &[
-    "node_modules", ".git", "dist", "build", "out", "coverage", ".next", ".nodex", "bin", "obj", "target", "Library",
-    "Temp", ".turbo",
-];
 
 const CODE_EXTENSIONS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "vue"];
 
@@ -79,40 +74,53 @@ pub fn detect(root: &Path) -> Option<ProjectDescriptor> {
     Some(ProjectDescriptor { language: Language::Typescript, name, manifests, packages, flavors })
 }
 
-fn skip(path: &Path) -> bool {
-    path.file_name().and_then(|n| n.to_str()).is_some_and(|n| SKIP_DIRS.contains(&n) || n.starts_with('.'))
+/// Folders detection never enters: ignored ones and hidden ones.
+fn skip(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|n| is_ignored_dir(n) || n.starts_with('.'))
 }
 
 fn find_files(dir: &Path, depth: usize, max: usize, pred: &mut dyn FnMut(&Path) -> bool, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth < max && !skip(&path) {
-                find_files(&path, depth + 1, max, pred, out);
+        // The entry's type comes with the listing; `path.is_dir()` would stat every file.
+        let Ok(kind) = entry.file_type() else { continue };
+        if kind.is_dir() {
+            if depth < max && !skip(&entry.file_name()) {
+                find_files(&entry.path(), depth + 1, max, pred, out);
             }
-        } else if pred(&path) {
-            out.push(path);
+        } else {
+            let path = entry.path();
+            if pred(&path) {
+                out.push(path);
+            }
         }
     }
 }
 
+/// A file name with a code extension, not minified and not a declaration file.
+fn is_code_file(name: &str) -> bool {
+    Path::new(name).extension().and_then(|e| e.to_str()).is_some_and(|e| CODE_EXTENSIONS.contains(&e))
+        && !name.ends_with(".min.js")
+        && !name.ends_with(".d.ts")
+}
+
+/// True as soon as one code file is found within `max` levels (a folder's files before its
+/// subfolders, so a shallow file ends the search early).
 fn has_code_file(dir: &Path, depth: usize, max: usize) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    let mut subdirs = Vec::new();
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth < max && !skip(&path) && has_code_file(&path, depth + 1, max) {
-                return true;
+        let Ok(kind) = entry.file_type() else { continue };
+        let name = entry.file_name();
+        if kind.is_dir() {
+            if depth < max && !skip(&name) {
+                subdirs.push(entry.path());
             }
-        } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| CODE_EXTENSIONS.contains(&e))
-            && !path.to_string_lossy().ends_with(".min.js")
-            && !path.to_string_lossy().ends_with(".d.ts")
-        {
+        } else if is_code_file(&name.to_string_lossy()) {
             return true;
         }
     }
-    false
+    subdirs.iter().any(|d| has_code_file(d, depth + 1, max))
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use tree_sitter::{Node, Parser, Tree};
+use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
 pub struct Prepared {
     /// Text to parse (same length as the original). `None` when no rewrite was needed.
@@ -30,6 +30,9 @@ pub struct DirectiveFix {
     pub kept: String,
 }
 
+/// Directive chains tried one by one, in a row without success, before the all-at-once pass.
+const MAX_FAILED_CHAINS: usize = 6;
+
 pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
     let mut out = Prepared { text: None, extension_blocks: HashMap::new(), merged_directives: Vec::new() };
     let mut text = original.as_bytes().to_vec();
@@ -41,6 +44,9 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
 
     let Some(tree) = parse(parser, &text) else { return finish(out, text, original) };
     let mut errors = error_count(&tree);
+    // The tree of `text`: candidates differ from it in a few same-length ranges, so they are
+    // parsed incrementally from it instead of from scratch.
+    let mut base = tree;
     if errors == 0 {
         return finish(out, text, original);
     }
@@ -48,11 +54,12 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
     // C# 14 extension blocks: the grammar reads them as a constructor named `extension`.
     let (candidate, blocks) = rewrite_extension_blocks(&text);
     if !blocks.is_empty()
-        && let Some(t) = parse(parser, &candidate) {
+        && let Some(t) = reparse(parser, &text, &base, &candidate) {
             let e = error_count(&t);
             if e < errors {
                 text = candidate;
                 errors = e;
+                base = t;
                 out.extension_blocks = blocks;
             }
         }
@@ -62,19 +69,19 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
         if errors == 0 {
             break;
         }
-        let Some(tree) = parse(parser, &text) else { break };
-        let lines = error_lines(&tree);
+        let lines = error_lines(&base);
         let mut improved = false;
         for rule in [null_conditional_assignment as Rule, compound_operator, allows_ref_struct, unary_dereference] {
             let candidate = apply_on_lines(&text, &lines, rule);
             if candidate == text {
                 continue;
             }
-            if let Some(t) = parse(parser, &candidate) {
+            if let Some(t) = reparse(parser, &text, &base, &candidate) {
                 let e = error_count(&t);
                 if e < errors {
                     text = candidate;
                     errors = e;
+                    base = t;
                     improved = true;
                 }
             }
@@ -87,15 +94,25 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
         let groups = directive_groups(&text);
         let mut progressed = false;
         let mut done: Vec<usize> = Vec::new();
+        // Chains already tried without success since the text last changed. An ERROR node can
+        // span hundreds of lines inside the same groups; each chain is worth one try, not one per
+        // line (a 39 KB DOTween file took 8 s re-trying the same groups for 536 lines).
+        let mut tried: std::collections::HashSet<Vec<usize>> = std::collections::HashSet::new();
+        let mut failed_chains = 0;
         for &line in &lines {
             // Groups around the failing line, innermost first. Nested groups (an `#if` inside an
             // `#if`) are resolved together, widening until the error goes away.
             let mut chain: Vec<&DirectiveGroup> = groups.iter().filter(|g| g.first <= line && line <= g.last && !done.contains(&g.first)).collect();
             chain.sort_by_key(|g| g.last - g.first);
-            if chain.is_empty() {
+            if chain.is_empty() || !tried.insert(chain.iter().map(|g| g.first).collect()) {
                 continue;
             }
-            let mut best: Option<(usize, Vec<u8>, Vec<DirectiveFix>)> = None;
+            // Many groups that each fail alone usually only parse together (DOTween's marker
+            // blocks): stop trying them one by one and let the all-at-once pass below run.
+            if failed_chains >= MAX_FAILED_CHAINS {
+                break;
+            }
+            let mut best: Option<(usize, Vec<u8>, Vec<DirectiveFix>, Tree)> = None;
             'levels: for depth in 1..=chain.len() {
                 for strategy in [Strategy::Merge, Strategy::KeepFirst, Strategy::KeepLast] {
                     let outer = chain[depth - 1];
@@ -109,10 +126,10 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
                     }
                     candidate = resolve_group(&candidate, outer, strategy);
                     fixes.push(DirectiveFix { first: outer.first, last: outer.last, kept: strategy.describe(&text, outer) });
-                    if let Some(t) = parse(parser, &candidate) {
+                    if let Some(t) = reparse(parser, &text, &base, &candidate) {
                         let e = error_count(&t);
-                        if e < errors && best.as_ref().is_none_or(|(b, _, _)| e < *b) {
-                            best = Some((e, candidate, fixes));
+                        if e < errors && best.as_ref().is_none_or(|(b, _, _, _)| e < *b) {
+                            best = Some((e, candidate, fixes, t));
                         }
                     }
                 }
@@ -120,12 +137,17 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
                     break 'levels;
                 }
             }
-            if let Some((e, candidate, fixes)) = best {
+            if let Some((e, candidate, fixes, t)) = best {
                 errors = e;
                 text = candidate;
+                base = t;
                 progressed = true;
+                tried.clear();
+                failed_chains = 0;
                 done.extend(fixes.iter().map(|f| f.first));
                 out.merged_directives.extend(fixes);
+            } else {
+                failed_chains += 1;
             }
         }
         if !progressed {
@@ -145,11 +167,12 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
                     candidate = resolve_group(&candidate, outer, strategy);
                     fixes.push(DirectiveFix { first: outer.first, last: outer.last, kept: strategy.describe(&text, outer) });
                 }
-                if let Some(t) = parse(parser, &candidate)
+                if let Some(t) = reparse(parser, &text, &base, &candidate)
                     && error_count(&t) < errors
                 {
                     errors = error_count(&t);
                     text = candidate;
+                    base = t;
                     progressed = true;
                     done.extend(fixes.iter().map(|f| f.first));
                     out.merged_directives.extend(fixes);
@@ -174,6 +197,32 @@ fn finish(mut out: Prepared, text: Vec<u8>, original: &str) -> Prepared {
 
 fn parse(parser: &mut Parser, text: &[u8]) -> Option<Tree> {
     parser.parse(text, None)
+}
+
+/// Parses `candidate`, which has the same length as `old` (the text `tree` was parsed from),
+/// reusing `tree` outside the range where the two differ.
+fn reparse(parser: &mut Parser, old: &[u8], tree: &Tree, candidate: &[u8]) -> Option<Tree> {
+    debug_assert_eq!(old.len(), candidate.len());
+    let Some(start) = old.iter().zip(candidate).position(|(a, b)| a != b) else { return Some(tree.clone()) };
+    let end = old.len() - old.iter().rev().zip(candidate.iter().rev()).position(|(a, b)| a != b).unwrap_or(0);
+    let mut edited = tree.clone();
+    edited.edit(&InputEdit {
+        start_byte: start,
+        old_end_byte: end,
+        new_end_byte: end,
+        start_position: point(old, start),
+        old_end_position: point(old, end),
+        new_end_position: point(candidate, end),
+    });
+    parser.parse(candidate, Some(&edited))
+}
+
+/// Row and byte column of `offset` in `text`.
+fn point(text: &[u8], offset: usize) -> Point {
+    let before = &text[..offset];
+    let row = before.iter().filter(|&&b| b == b'\n').count();
+    let column = offset - before.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    Point { row, column }
 }
 
 fn error_count(tree: &Tree) -> usize {

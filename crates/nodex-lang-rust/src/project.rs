@@ -3,9 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use nodex_ir::{Language, PackageRef};
-use nodex_lang_api::ProjectDescriptor;
+use nodex_lang_api::{ProjectDescriptor, is_ignored_dir};
 
-const SKIP_DIRS: &[&str] = &["target", ".git", ".nodex", "node_modules", "bin", "obj"];
 
 /// Dependencies that describe what kind of project this is.
 const FLAVOR_DEPS: &[(&str, &str)] = &[
@@ -123,37 +122,43 @@ fn read_package(manifest: &Path) -> Option<CargoPackage> {
     Some(CargoPackage { manifest: manifest.to_owned(), name, edition, bins, lib, dependencies })
 }
 
-fn skip(path: &Path) -> bool {
-    path.file_name().and_then(|n| n.to_str()).is_some_and(|n| SKIP_DIRS.contains(&n) || n.starts_with('.'))
+/// Folders detection never enters: ignored ones and hidden ones.
+fn skip(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|n| is_ignored_dir(n) || n.starts_with('.'))
 }
 
 fn find_manifests(dir: &Path, depth: usize, max: usize, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth < max && !skip(&path) {
-                find_manifests(&path, depth + 1, max, out);
+        // The entry's type comes with the listing; `path.is_dir()` would stat every file.
+        let Ok(kind) = entry.file_type() else { continue };
+        if kind.is_dir() {
+            if depth < max && !skip(&entry.file_name()) {
+                find_manifests(&entry.path(), depth + 1, max, out);
             }
-        } else if path.file_name().is_some_and(|n| n == "Cargo.toml") {
-            out.push(path);
+        } else if entry.file_name() == "Cargo.toml" {
+            out.push(entry.path());
         }
     }
 }
 
+/// True as soon as one `.rs` file is found within `max` levels (a folder's files before its
+/// subfolders, so a shallow file ends the search early).
 fn has_rust_file(dir: &Path, depth: usize, max: usize) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    let mut subdirs = Vec::new();
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth < max && !skip(&path) && has_rust_file(&path, depth + 1, max) {
-                return true;
+        let Ok(kind) = entry.file_type() else { continue };
+        let name = entry.file_name();
+        if kind.is_dir() {
+            if depth < max && !skip(&name) {
+                subdirs.push(entry.path());
             }
-        } else if path.extension().is_some_and(|e| e == "rs") {
+        } else if Path::new(&name).extension().is_some_and(|e| e == "rs") {
             return true;
         }
     }
-    false
+    subdirs.iter().any(|d| has_rust_file(d, depth + 1, max))
 }
 
 #[cfg(test)]

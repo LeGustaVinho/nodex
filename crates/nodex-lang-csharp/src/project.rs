@@ -3,9 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use nodex_ir::{Language, PackageRef};
-use nodex_lang_api::ProjectDescriptor;
+use nodex_lang_api::{ProjectDescriptor, is_ignored_dir};
 
-const SKIP_DIRS: &[&str] = &["bin", "obj", ".git", "node_modules", "Library", "Temp", "Logs", ".nodex", "target"];
 
 /// `productName` in `ProjectSettings/ProjectSettings.asset` (Player settings).
 fn unity_product_name(root: &Path) -> Option<String> {
@@ -64,25 +63,46 @@ pub fn detect(root: &Path) -> Option<ProjectDescriptor> {
     })
 }
 
+/// Folders detection never enters: ignored ones and hidden ones.
+fn skip(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|n| is_ignored_dir(n) || n.starts_with('.'))
+}
+
 fn find_files(dir: &Path, depth: usize, max: usize, pred: &mut dyn FnMut(&Path) -> bool, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let skip = path.file_name().and_then(|n| n.to_str()).is_some_and(|n| SKIP_DIRS.contains(&n) || n.starts_with('.'));
-            if depth < max && !skip {
-                find_files(&path, depth + 1, max, pred, out);
+        // The entry's type comes with the listing; `path.is_dir()` would stat every file.
+        let Ok(kind) = entry.file_type() else { continue };
+        if kind.is_dir() {
+            if depth < max && !skip(&entry.file_name()) {
+                find_files(&entry.path(), depth + 1, max, pred, out);
             }
-        } else if pred(&path) {
-            out.push(path);
+        } else {
+            let path = entry.path();
+            if pred(&path) {
+                out.push(path);
+            }
         }
     }
 }
 
+/// True as soon as one `.cs` file is found within `max` levels (a folder's files before its
+/// subfolders, so a shallow file ends the search early).
 fn has_cs_file(dir: &Path, depth: usize, max: usize) -> bool {
-    let mut found = Vec::new();
-    find_files(dir, depth, max, &mut |p| p.extension().is_some_and(|e| e == "cs"), &mut found);
-    !found.is_empty()
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else { continue };
+        let name = entry.file_name();
+        if kind.is_dir() {
+            if depth < max && !skip(&name) {
+                subdirs.push(entry.path());
+            }
+        } else if Path::new(&name).extension().is_some_and(|e| e == "cs") {
+            return true;
+        }
+    }
+    subdirs.iter().any(|d| has_cs_file(d, depth + 1, max))
 }
 
 /// Extracts `<PackageReference Include="X" Version="Y" />` entries without a full XML parser.

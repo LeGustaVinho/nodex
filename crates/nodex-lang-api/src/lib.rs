@@ -20,6 +20,27 @@ pub use nodex_ir as ir;
 use nodex_ir::semantic::SemanticFacts;
 use nodex_ir::{FileIr, Language, PackageRef};
 
+/// Directories never scanned: build output, dependencies, package caches, engine caches, VCS and
+/// tool state. Matched exactly: a Unity `Editor/Build/` folder holds build scripts, not output.
+pub const IGNORED_DIRS: &[&str] = &[
+    // Version control and editors.
+    ".git", ".hg", ".svn", ".vs", ".idea", ".vscode", ".nodex",
+    // .NET, Rust and generic build output.
+    "bin", "obj", "target", "dist", "build", "out", "coverage", "artifacts",
+    // JavaScript dependencies, package caches and framework output.
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store", ".cache", ".parcel-cache", ".next",
+    ".nuxt", ".output", ".angular", ".svelte-kit", ".turbo", ".vercel", ".expo", "storybook-static",
+    // Unity's caches and player builds.
+    "Library", "Temp", "Logs", "UserSettings", "MemoryCaptures", "Builds",
+    // Vendored dependencies and other ecosystems.
+    "vendor", "Pods", "DerivedData", ".gradle", ".venv", "venv", "__pycache__",
+];
+
+/// True for a directory name Nodex never scans ([`IGNORED_DIRS`]).
+pub fn is_ignored_dir(name: &str) -> bool {
+    IGNORED_DIRS.contains(&name)
+}
+
 /// A source file handed to a frontend.
 #[derive(Debug, Clone)]
 pub struct SourceFile {

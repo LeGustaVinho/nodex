@@ -16,11 +16,8 @@ use ts_rs::TS;
 use crate::{knowledge, link, semantic};
 
 /// Directories never scanned (build output, dependencies, engine caches, VCS).
-pub const IGNORED_DIRS: &[&str] = &[
-    ".git", ".hg", ".svn", ".vs", ".idea", ".vscode", ".nodex", "bin", "obj", "node_modules", "target",
-    "dist", "build", "out", "coverage", ".next", ".turbo", ".svelte-kit", "Library", "Temp", "Logs", "UserSettings",
-    "MemoryCaptures",
-];
+pub use nodex_lang_api::IGNORED_DIRS;
+use nodex_lang_api::is_ignored_dir;
 
 /// Files larger than this are skipped (generated code, minified bundles).
 pub const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -78,39 +75,49 @@ impl Project {
         if !root.is_dir() {
             bail!("{} is not a directory", root.display());
         }
-        let timer = crate::perf::phase("open.detect");
-        let descriptors: Vec<ProjectDescriptor> = frontends.iter().filter_map(|f| f.detect(&root)).collect();
-        timer.finish(format_args!("({} descriptors)", descriptors.len()));
         let mut project = Self {
             root,
             frontends,
-            descriptors,
+            descriptors: Vec::new(),
             files: BTreeMap::new(),
             structure: None,
             knowledge: None,
             semantic: BTreeMap::new(),
             locator: None,
         };
+        // Detection (each language walks the top of the tree for its manifests) needs nothing
+        // from the files, and lowering needs nothing from it: both run at once, the languages too.
+        let (descriptors, lowered) = rayon::join(
+            || {
+                let timer = crate::perf::phase("open.detect");
+                let found: Vec<ProjectDescriptor> = project.frontends.par_iter().filter_map(|f| f.detect(&project.root)).collect();
+                timer.finish(format_args!("({} descriptors)", found.len()));
+                found
+            },
+            || project.lower_all(),
+        );
+        project.descriptors = descriptors;
+        project.files.extend(lowered);
+        Ok(project)
+    }
 
+    /// Walks the root and lowers every supported file in parallel.
+    fn lower_all(&self) -> Vec<(String, FileEntry)> {
         let timer = crate::perf::phase("open.walk");
-        let paths: Vec<PathBuf> = walkdir::WalkDir::new(&project.root)
+        let paths: Vec<PathBuf> = walkdir::WalkDir::new(&self.root)
             .into_iter()
             .filter_entry(|e| !(e.file_type().is_dir() && e.depth() > 0 && is_ignored_dir(e.file_name().to_str().unwrap_or(""))))
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
             .map(|e| e.into_path())
-            .filter(|p| project.frontend_for(p).is_some())
+            .filter(|p| self.frontend_for(p).is_some())
             .collect();
         timer.finish(format_args!("({} files)", paths.len()));
 
         let timer = crate::perf::phase("open.lower");
-        let lowered: Vec<(String, FileEntry)> = paths
-            .par_iter()
-            .filter_map(|p| project.lower_path(p))
-            .collect();
-        project.files.extend(lowered);
-        timer.finish(format_args!("({} files lowered)", project.files.len()));
-        Ok(project)
+        let lowered: Vec<(String, FileEntry)> = paths.par_iter().filter_map(|p| self.lower_path(p)).collect();
+        timer.finish(format_args!("({} files lowered)", lowered.len()));
+        lowered
     }
 
     /// No folder yet: an empty project whose root is empty. The server starts with it when it
@@ -450,10 +457,6 @@ impl Project {
 fn is_unit_manifest(path: &Path) -> bool {
     let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     name.ends_with(".csproj") || name == "package.json" || name == "Cargo.toml"
-}
-
-fn is_ignored_dir(name: &str) -> bool {
-    IGNORED_DIRS.contains(&name)
 }
 
 /// Canonicalizes without the `\\?\` prefix Windows adds, so paths stay readable.
