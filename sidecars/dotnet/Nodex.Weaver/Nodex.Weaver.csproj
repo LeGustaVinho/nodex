@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,6 +9,12 @@
 
   <ItemGroup>
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+  </ItemGroup>
+
+  <!-- The weaving itself is shared with the Unity package's IL post-processor. -->
+  <ItemGroup>
+    <Compile Include="..\..\unity\com.nodex.trace\CodeGen\ModuleWeaver.cs" Link="Shared\ModuleWeaver.cs" />
+    <Compile Include="..\..\unity\com.nodex.trace\CodeGen\SourceMaps.cs" Link="Shared\SourceMaps.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -9,8 +9,6 @@ use serde_json::json;
 
 pub struct RustDebugger;
 
-const BASE: &str = "https://github.com/vadimcn/codelldb/releases/download/v1.12.3/";
-
 const DOWNLOADS: &[AdapterDownload] = &[
     AdapterDownload {
         os: "windows",
@@ -61,7 +59,6 @@ const DOWNLOADS: &[AdapterDownload] = &[
 
 impl DebugLauncher for RustDebugger {
     fn adapter(&self) -> AdapterSpec {
-        let _ = BASE;
         AdapterSpec {
             name: "codelldb",
             version: "1.12.3",
@@ -124,6 +121,7 @@ impl DebugLauncher for RustDebugger {
                 "terminal": "console",
             }),
             description: format!("{bin} (Rust, debug build)"),
+            attach: false,
         })
     }
 }

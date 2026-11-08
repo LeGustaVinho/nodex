@@ -10,6 +10,7 @@ nodex-ir.workspace = true
 nodex-lang-api.workspace = true
 tree-sitter.workspace = true
 tree-sitter-c-sharp.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

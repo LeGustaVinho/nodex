@@ -73,7 +73,9 @@ export function instrumentCommand(args: string[]): number {
       return 0;
     }
     if (opt("debug")) {
-      // A plain JavaScript copy with source maps for the debugger (no probes).
+      // A plain JavaScript copy with source maps for the debugger (no probes). Browser apps are
+      // decided here, with the same rules as Run.
+      if (detectTarget(resolvedRoot) === "browser") throw new Error("debugging browser apps is not supported yet; use Run to watch them live");
       const result = instrument(resolvedRoot, path.resolve(out), undefined, true);
       process.stdout.write(`NODEX-RESULT ${JSON.stringify({ mode: "debug", ...result })}\n`);
       return 0;

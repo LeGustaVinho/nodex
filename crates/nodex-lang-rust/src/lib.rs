@@ -49,11 +49,11 @@ impl LanguageFrontend for RustFrontend {
         Some(semantic::RustAnalyzer::start(root).map(|s| Box::new(s) as Box<dyn SemanticProvider>))
     }
 
-    fn debugger(&self) -> Option<Box<dyn nodex_lang_api::DebugLauncher>> {
+    fn debugger(&self, _root: &Path) -> Option<Box<dyn nodex_lang_api::DebugLauncher>> {
         Some(Box::new(debug::RustDebugger))
     }
 
-    fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {
+    fn instrumenter(&self, _root: &Path) -> Option<Box<dyn TraceInstrumenter>> {
         Some(Box::new(instrument::RustInstrumenter))
     }
 }

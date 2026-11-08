@@ -61,29 +61,6 @@ pub fn sidecar_debug_build(root: &Path, out_dir: &Path, log: &mut dyn FnMut(&str
     sidecar(&["--root".as_ref(), root.as_os_str(), "--out".as_ref(), out_dir.as_os_str(), "--debug".as_ref(), "1".as_ref()], log)
 }
 
-/// True for browser apps served by a dev server (`package.json` with a framework and a dev
-/// script), as the sidecar decides for runs.
-pub fn is_browser_app(root: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(root.join("package.json")) else { return false };
-    let Ok(pkg) = serde_json::from_str::<Value>(&text) else { return false };
-    if let Some(t) = pkg.pointer("/nodex/target").and_then(Value::as_str) {
-        return t == "browser";
-    }
-    if pkg.pointer("/nodex/entry").is_some() || pkg.get("bin").is_some() {
-        return false;
-    }
-    let has_dep = |name: &str| ["dependencies", "devDependencies"].iter().any(|s| pkg.get(*s).and_then(|d| d.get(name)).is_some());
-    let framework = ["react", "react-dom", "vue", "@angular/core", "svelte", "preact", "solid-js", "lit"].iter().any(|f| has_dep(f));
-    let dev = ["dev", "start", "serve"].iter().any(|s| {
-        pkg.pointer(&format!("/scripts/{s}")).and_then(Value::as_str).is_some_and(|c| {
-            ["vite", "ng serve", "webpack serve", "webpack-dev-server", "react-scripts start", "vue-cli-service serve", "parcel", "rsbuild dev", "astro dev"]
-                .iter()
-                .any(|t| c.contains(t))
-        })
-    });
-    framework && dev
-}
-
 impl TraceInstrumenter for NodeInstrumenter {
     fn prepare(&self, root: &Path, out_dir: &Path, env: &RunEnv, log: &mut dyn FnMut(&str)) -> Result<RunCommand, String> {
         std::fs::create_dir_all(out_dir).map_err(|e| format!("cannot create {}: {e}", out_dir.display()))?;

@@ -9,7 +9,7 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use nodex_ir::Language;
 use nodex_lang_api::{AdapterSpec, LanguageFrontend};
@@ -123,9 +123,10 @@ pub fn status(language: Language, spec: &AdapterSpec) -> AdapterStatus {
     }
 }
 
-/// Adapters of the project's languages.
-pub fn statuses(frontends: &[Arc<dyn LanguageFrontend>]) -> Vec<AdapterStatus> {
-    frontends.iter().filter_map(|f| f.debugger().map(|d| status(f.id(), &d.adapter()))).collect()
+/// Adapters of the project's languages (for the project at `root`: a Unity project needs
+/// another adapter than a .NET program).
+pub fn statuses(frontends: &[Arc<dyn LanguageFrontend>], root: &Path) -> Vec<AdapterStatus> {
+    frontends.iter().filter_map(|f| f.debugger(root).map(|d| status(f.id(), &d.adapter()))).collect()
 }
 
 /// Downloads, verifies and unpacks an adapter, reporting progress through `progress`.
@@ -194,10 +195,19 @@ pub fn install(spec: &AdapterSpec, progress: &mut dyn FnMut(u64, u64)) -> Result
     Ok(program)
 }
 
+/// Adapters being downloaded now (by name).
+static INSTALLING: std::sync::LazyLock<Mutex<std::collections::HashSet<&'static str>>> = std::sync::LazyLock::new(Default::default);
+
 /// Installs the adapter of `language` in the background; browsers follow `adapter-progress`.
 pub fn start_install(state: &Arc<AppState>, language: Language) -> Result<(), String> {
     let frontend = state.frontends.iter().find(|f| f.id() == language).ok_or("unknown language")?;
-    let spec = frontend.debugger().ok_or("this language has no debugger")?.adapter();
+    let root = state.project.lock().map_err(|_| "project lock poisoned")?.root().to_path_buf();
+    let spec = frontend.debugger(&root).ok_or("this language has no debugger")?.adapter();
+    // One install per adapter at a time: two would write the same archive and staging folder.
+    if !INSTALLING.lock().map_err(|_| "poisoned")?.insert(spec.name) {
+        return Err(format!("{} is already being installed", spec.name));
+    }
+    let name = spec.name;
     let state = state.clone();
     std::thread::Builder::new()
         .name("nodex-adapter-install".into())
@@ -205,7 +215,11 @@ pub fn start_install(state: &Arc<AppState>, language: Language) -> Result<(), St
             let send = |received: u64, total: u64, done: bool, error: Option<String>| {
                 let _ = state.events.send(ServerEvent::AdapterProgress(AdapterProgress { language, received, total, done, error }));
             };
-            match install(&spec, &mut |r, t| send(r, t, false, None)) {
+            let result = install(&spec, &mut |r, t| send(r, t, false, None));
+            if let Ok(mut busy) = INSTALLING.lock() {
+                busy.remove(spec.name);
+            }
+            match result {
                 Ok(path) => {
                     tracing::info!(adapter = spec.name, path = %path.display(), "debug adapter installed");
                     send(1, 1, true, None);
@@ -216,6 +230,11 @@ pub fn start_install(state: &Arc<AppState>, language: Language) -> Result<(), St
                 }
             }
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            if let Ok(mut busy) = INSTALLING.lock() {
+                busy.remove(name);
+            }
+            e.to_string()
+        })?;
     Ok(())
 }

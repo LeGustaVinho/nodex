@@ -15,7 +15,16 @@ import * as path from "node:path";
 import ts from "typescript";
 import type { MethodMap } from "./instrument.js";
 
-const SKIP = new Set(["node_modules", ".git", ".nodex", "dist", "build", "coverage", ".angular", ".svelte-kit", ".next", ".nuxt", ".turbo", ".vite", "target", "bin", "obj"]);
+/** Never copied, at any depth. */
+const SKIP = new Set(["node_modules", ".git", ".nodex"]);
+/** Build output and tool caches: skipped at the project root only (a `src/build/` folder is source). */
+const ROOT_SKIP = new Set(["dist", "build", "coverage", ".angular", ".svelte-kit", ".next", ".nuxt", ".turbo", ".vite", "target", "bin", "obj"]);
+
+/** Whether a folder is left out of the copy; dot-folders only at the root (keeps `public/.well-known`). */
+function skipped(name: string, atRoot: boolean): boolean {
+  if (SKIP.has(name)) return true;
+  return atRoot && (ROOT_SKIP.has(name) || (name.startsWith(".") && name !== ".vscode"));
+}
 const CODE = /\.(tsx?|jsx?|mts|cts|mjs|cjs)$/;
 const FRAMEWORKS = ["react", "react-dom", "vue", "@angular/core", "svelte", "preact", "solid-js", "lit"];
 const DEV_TOOLS = /\b(vite|ng\s+serve|webpack(-dev-server|\s+serve)|react-scripts\s+start|vue-cli-service\s+serve|parcel|rsbuild\s+dev|astro\s+dev)\b/;
@@ -64,21 +73,22 @@ function packageManager(root: string): string {
   return "npm";
 }
 
-function copyTree(from: string, to: string): void {
+function copyTree(from: string, to: string, atRoot = true): void {
   fs.mkdirSync(to, { recursive: true });
   for (const e of fs.readdirSync(from, { withFileTypes: true })) {
-    if (e.isDirectory() && (SKIP.has(e.name) || (e.name.startsWith(".") && e.name !== ".vscode"))) continue;
+    if (e.isDirectory() && skipped(e.name, atRoot)) continue;
     const src = path.join(from, e.name);
     const dst = path.join(to, e.name);
-    if (e.isDirectory()) copyTree(src, dst);
+    if (e.isDirectory()) copyTree(src, dst, false);
     else if (e.isFile()) fs.copyFileSync(src, dst);
   }
 }
 
-function sourceFiles(dir: string, out: string[]): void {
+function sourceFiles(dir: string, out: string[], atRoot = true): void {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.isDirectory()) {
-      if (!SKIP.has(e.name) && !e.name.startsWith(".")) sourceFiles(path.join(dir, e.name), out);
+      // Code in dot-folders (tool configuration) is copied but not instrumented.
+      if (!skipped(e.name, atRoot) && !e.name.startsWith(".")) sourceFiles(path.join(dir, e.name), out, false);
     } else if ((CODE.test(e.name) && !e.name.endsWith(".d.ts") && !/\.config\.[cm]?[jt]s$/.test(e.name)) || e.name.endsWith(".vue")) {
       out.push(path.join(dir, e.name));
     }
@@ -189,7 +199,8 @@ export function instrumentBrowser(root: string, out: string, wsUrl: string, runt
   fs.writeFileSync(map, JSON.stringify({ version: 1, methods }));
 
   const manager = packageManager(root);
-  const program = process.platform === "win32" ? `${manager}.cmd` : manager;
+  // npm, pnpm and yarn are `.cmd` shims on Windows; bun is a real executable.
+  const program = process.platform === "win32" && manager !== "bun" ? `${manager}.cmd` : manager;
   return {
     mode: "browser",
     command: [program, "run", script],

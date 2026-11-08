@@ -326,6 +326,13 @@ button.run.stop { background: #5a2323; border-color: #8a3434; }
 .dbg-card a { color: #7fd1ff; }
 .dbg-more { width: 100%; text-align: left; background: transparent; border-color: transparent; color: var(--muted); font-size: 11px; padding: 2px 6px; }
 
+/* Unity */
+.unity-card { border-bottom: 1px solid var(--line); padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+.unity-card p { margin: 0; }
+.unity-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.unity-actions { display: inline-flex; gap: 6px; }
+.unity-warn { color: #ffb300; }
+
 /* ---- Knowledge graph: Hierarchy, Overview, palette, evidence (M9) ---- */
 .hnode { width: 190px; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1c2027; border: 1px solid #343b47; border-radius: 7px; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3); }
 .hnode.selected, .hgroup.selected { border-color: var(--accent-ui); box-shadow: 0 0 0 2px rgba(245, 176, 65, 0.3); }

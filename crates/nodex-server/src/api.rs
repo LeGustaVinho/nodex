@@ -288,8 +288,11 @@ pub async fn debug_evaluate(State(state): State<Arc<AppState>>, Json(req): Json<
 }
 
 pub async fn debug_adapters(State(state): State<Arc<AppState>>) -> ApiResult {
-    let frontends = state.project.lock().map_err(poisoned)?.active_frontends();
-    Ok(Json(crate::adapters::statuses(&frontends)).into_response())
+    let (frontends, root) = {
+        let project = state.project.lock().map_err(poisoned)?;
+        (project.active_frontends(), project.root().to_path_buf())
+    };
+    Ok(Json(crate::adapters::statuses(&frontends, &root)).into_response())
 }
 
 #[derive(Deserialize)]
@@ -335,4 +338,37 @@ fn poisoned<T>(_: T) -> (StatusCode, String) {
 
 fn internal(e: impl std::fmt::Display) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+fn project_root(state: &AppState) -> Result<std::path::PathBuf, (StatusCode, String)> {
+    Ok(state.project.lock().map_err(poisoned)?.root().to_path_buf())
+}
+
+/// The Unity card: package, Editor, trace probes (`null` for other projects).
+pub async fn unity_status(State(state): State<Arc<AppState>>) -> ApiResult {
+    let root = project_root(&state)?;
+    let status = tokio::task::spawn_blocking(move || crate::unity::status(&root)).await.map_err(internal)?;
+    Ok(Json(status).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct UnityPackageRequest {
+    action: crate::unity::PackageAction,
+}
+
+/// Adds (Link, Embed), updates or removes the Nodex package in the Unity project.
+pub async fn unity_package(State(state): State<Arc<AppState>>, Json(req): Json<UnityPackageRequest>) -> ApiResult {
+    let root = project_root(&state)?;
+    tokio::task::spawn_blocking(move || crate::unity::package(&root, req.action))
+        .await
+        .map_err(internal)?
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Scripts without trace probes again.
+pub async fn unity_trace_off(State(state): State<Arc<AppState>>) -> ApiResult {
+    let root = project_root(&state)?;
+    crate::unity::trace_off(&root).map_err(internal)?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }

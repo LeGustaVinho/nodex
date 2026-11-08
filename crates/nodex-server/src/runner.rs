@@ -76,6 +76,9 @@ struct Inner {
     trace_token: Option<String>,
     /// A dev-server run whose copy follows the project's files.
     live: Option<LiveRun>,
+    /// Id of the current run. A run task only writes the state while its id is current: after a
+    /// reset (another project) or a newer run, an old task still tearing down changes nothing.
+    run_id: u64,
 }
 
 impl Default for RunManager {
@@ -88,6 +91,7 @@ impl Default for RunManager {
                 kill: None,
                 trace_token: None,
                 live: None,
+                run_id: 0,
             }),
         }
     }
@@ -160,9 +164,11 @@ impl RunManager {
             if let Some(k) = i.kill.take() {
                 let _ = k.send(());
             }
+            i.run_id += 1;
             i.output.clear();
             i.recorder = None;
             i.live = None;
+            i.trace_token = None;
             i.status = RunStatus { state: RunState::Idle, detail: String::new(), exit_code: None, url: None };
         }
     }
@@ -172,11 +178,21 @@ impl RunManager {
     }
 }
 
-fn set_status(state: &AppState, status: RunStatus) {
-    if let Ok(mut inner) = state.run.inner.lock() {
-        inner.status = status.clone();
+/// Sets the status of run `id`; a run that is no longer current changes nothing.
+fn set_status(state: &AppState, id: u64, status: RunStatus) {
+    let Ok(mut inner) = state.run.inner.lock() else { return };
+    if inner.run_id != id {
+        return;
     }
+    inner.status = status.clone();
+    drop(inner);
     let _ = state.events.send(ServerEvent::RunStatus(status));
+}
+
+/// Runs `f` on the run state while run `id` is current; `None` once it is not.
+fn with_current<T>(state: &AppState, id: u64, f: impl FnOnce(&mut Inner) -> T) -> Option<T> {
+    let mut inner = state.run.inner.lock().ok()?;
+    (inner.run_id == id).then(|| f(&mut inner))
 }
 
 pub(crate) fn push_output(state: &AppState, lines: Vec<OutputLine>) {
@@ -234,20 +250,31 @@ pub fn start(state: &Arc<AppState>) -> Result<(), String> {
         let instrumenter = project
             .active_frontends()
             .into_iter()
-            .find_map(|f| f.instrumenter())
+            .find_map(|f| f.instrumenter(project.root()))
             .ok_or("no language in this project supports live traces yet")?;
         (project.root().to_path_buf(), instrumenter)
     };
-    if let Ok(mut inner) = state.run.inner.lock() {
+    let id = {
+        let mut inner = state.run.inner.lock().map_err(|_| "run lock poisoned")?;
+        inner.run_id += 1;
         inner.output.clear();
         inner.recorder = None;
-    }
-    set_status(state, RunStatus { state: RunState::Preparing, detail: "building and instrumenting…".into(), exit_code: None, url: None });
+        inner.run_id
+    };
+    set_status(state, id, RunStatus { state: RunState::Preparing, detail: "building and instrumenting…".into(), exit_code: None, url: None });
     let state = state.clone();
     tokio::spawn(async move {
-        if let Err(reason) = run(&state, root, instrumenter).await {
-            push_output(&state, vec![line("nodex", format!("✗ {reason}"))]);
-            set_status(&state, RunStatus { state: RunState::Failed, detail: reason, exit_code: None, url: None });
+        if let Err(reason) = run(&state, id, root, instrumenter).await {
+            // A failed run leaves nothing behind: no file following, no trace token, no kill.
+            let current = with_current(&state, id, |inner| {
+                inner.live = None;
+                inner.trace_token = None;
+                inner.kill = None;
+            });
+            if current.is_some() {
+                push_output(&state, vec![line("nodex", format!("✗ {reason}"))]);
+                set_status(&state, id, RunStatus { state: RunState::Failed, detail: reason, exit_code: None, url: None });
+            }
         }
     });
     Ok(())
@@ -263,6 +290,7 @@ struct LiveRun {
 
 async fn run(
     state: &Arc<AppState>,
+    id: u64,
     root: std::path::PathBuf,
     instrumenter: Box<dyn nodex_lang_api::TraceInstrumenter>,
 ) -> Result<(), String> {
@@ -278,9 +306,7 @@ async fn run(
         ws_url: format!("ws://127.0.0.1:{}/trace?run={trace_token}", state.port),
         token: trace_token.clone(),
     };
-    if let Ok(mut inner) = state.run.inner.lock() {
-        inner.trace_token = Some(trace_token.clone());
-    }
+    with_current(state, id, |inner| inner.trace_token = Some(trace_token.clone()));
 
     // 2. Build and instrument (blocking).
     let log_tx = out.clone();
@@ -307,12 +333,16 @@ async fn run(
         Resolver::new(project.flows())
     };
     let recorder = Arc::new(Mutex::new(Recorder::new(&map, resolver)));
-    if let Ok(mut inner) = state.run.inner.lock() {
-        inner.recorder = Some(recorder.clone());
+    // Another project was opened (or the run stopped) while building: do not launch.
+    if with_current(state, id, |inner| inner.recorder = Some(recorder.clone())).is_none() {
+        return Ok(());
     }
 
     // 3. Trace intake over TCP (programs); the `/trace` WebSocket serves browser pages.
-    let intake = tokio::spawn(accept_traces(listener, trace_token.clone(), recorder.clone(), out.clone()));
+    if command.kind == nodex_lang_api::RunKind::Attached {
+        return attached(state, id, root, out_dir, instrumenter, command, listener, trace_token, recorder, out).await;
+    }
+    let intake = tokio::spawn(accept_traces(listener, trace_token.clone(), recorder.clone(), out.clone(), None));
 
     // 4. Launch.
     let mut cmd = tokio::process::Command::new(&command.program);
@@ -329,9 +359,6 @@ async fn run(
         cmd.env(k, v);
     }
     let dev_server = command.kind == nodex_lang_api::RunKind::DevServer;
-    if dev_server && let Ok(mut inner) = state.run.inner.lock() {
-        inner.live = Some(LiveRun { instrumenter: instrumenter.clone(), root: root.clone(), out_dir: out_dir.clone() });
-    }
     if dev_server {
         // Plain output (the URL is read from it), and no browser opened by the tool itself.
         cmd.env("NO_COLOR", "1").env("FORCE_COLOR", "0").env("BROWSER", "none");
@@ -342,8 +369,19 @@ async fn run(
     // If this task ends without reaching the normal exit below (Nodex closes, a panic), the
     // program and everything it started are killed: a dev server must not outlive its run.
     let mut tree_guard = TreeGuard(child.id());
+    let (kill_tx, kill_rx) = oneshot::channel();
+    let live = dev_server.then(|| LiveRun { instrumenter: instrumenter.clone(), root: root.clone(), out_dir: out_dir.clone() });
+    if with_current(state, id, |inner| {
+        inner.kill = Some(kill_tx);
+        inner.live = live;
+    })
+    .is_none()
+    {
+        // Superseded while starting: the guard ends the program.
+        return Ok(());
+    }
     let _ = out.send(line("nodex", format!("▶ {}", command.description)));
-    set_status(state, RunStatus { state: RunState::Running, detail: command.description.clone(), exit_code: None, url: None });
+    set_status(state, id, RunStatus { state: RunState::Running, detail: command.description.clone(), exit_code: None, url: None });
     let found_url = Arc::new(std::sync::atomic::AtomicBool::new(false));
     for (stream, reader) in [
         ("out", child.stdout.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>)),
@@ -364,18 +402,13 @@ async fn run(
                     {
                         found_url.store(true, std::sync::atomic::Ordering::Relaxed);
                         let _ = tx.send(line("nodex", format!("● the app is at {url}")));
-                        set_status(&state, RunStatus { state: RunState::Running, detail: description.clone(), exit_code: None, url: Some(url) });
+                        set_status(&state, id, RunStatus { state: RunState::Running, detail: description.clone(), exit_code: None, url: Some(url) });
                     }
                     let _ = tx.send(line(stream, l));
                 }
             });
         }
     }
-    let (kill_tx, kill_rx) = oneshot::channel();
-    if let Ok(mut inner) = state.run.inner.lock() {
-        inner.kill = Some(kill_tx);
-    }
-
     // 5. Stream frames until the program exits.
     let ticker_state = state.clone();
     let ticker_recorder = recorder.clone();
@@ -410,12 +443,103 @@ async fn run(
     let code = if stopped { Some(0) } else { status.code() };
     let message = if stopped { "■ stopped".to_owned() } else { format!("■ exited with code {}", code.map_or("?".into(), |c| c.to_string())) };
     let _ = out.send(line("nodex", message));
-    if let Ok(mut inner) = state.run.inner.lock() {
+    with_current(state, id, |inner| {
         inner.kill = None;
         inner.trace_token = None;
         inner.live = None;
+    });
+    set_status(state, id, RunStatus { state: RunState::Exited, detail: command.description, exit_code: code, url: None });
+    Ok(())
+}
+
+/// Called when a program connects to the trace intake (before its events are read).
+type OnConnect = Arc<dyn Fn() + Send + Sync>;
+
+/// A run with nothing to start: the program (the Unity Editor in Play Mode) connects by itself,
+/// any number of times (each Play Mode, each domain reload), until Stop.
+#[allow(clippy::too_many_arguments)]
+async fn attached(
+    state: &Arc<AppState>,
+    id: u64,
+    root: std::path::PathBuf,
+    out_dir: std::path::PathBuf,
+    instrumenter: Arc<dyn nodex_lang_api::TraceInstrumenter>,
+    command: nodex_lang_api::RunCommand,
+    listener: TcpListener,
+    trace_token: String,
+    recorder: Arc<Mutex<Recorder>>,
+    out: mpsc::UnboundedSender<OutputLine>,
+) -> Result<(), String> {
+    let (kill_tx, kill_rx) = oneshot::channel();
+    if with_current(state, id, |inner| inner.kill = Some(kill_tx)).is_none() {
+        instrumenter.finish(&root);
+        return Ok(());
     }
-    set_status(state, RunStatus { state: RunState::Exited, detail: command.description, exit_code: code, url: None });
+    // Each connection follows a compilation that may have changed the trace maps: re-read them
+    // before its events are recorded.
+    let (connected_tx, mut connected_rx) = mpsc::unbounded_channel::<()>();
+    let on_connect: OnConnect = {
+        let state = state.clone();
+        let recorder = recorder.clone();
+        let instrumenter = instrumenter.clone();
+        let root = root.clone();
+        let out_dir = out_dir.clone();
+        Arc::new(move || {
+            if let Some(Ok(json)) = instrumenter.refresh(&root, &out_dir)
+                && let Ok(methods) = serde_json::from_str::<Vec<nodex_trace::map::MethodMap>>(&json)
+                && let Ok(project) = state.project.lock()
+            {
+                let resolver = Resolver::new(project.flows());
+                drop(project);
+                if let Ok(mut r) = recorder.lock() {
+                    r.extend(methods, resolver);
+                }
+            }
+            let _ = connected_tx.send(());
+        })
+    };
+    let intake = tokio::spawn(accept_traces(listener, trace_token, recorder.clone(), out.clone(), Some(on_connect)));
+    let _ = out.send(line("nodex", format!("◌ waiting for {}", command.description)));
+    set_status(state, id, RunStatus { state: RunState::Running, detail: format!("waiting for {}…", command.description), exit_code: None, url: None });
+    let ticker_state = state.clone();
+    let ticker_recorder = recorder.clone();
+    let (stop_ticker, mut ticker_done) = oneshot::channel::<()>();
+    let ticker = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(FRAME_INTERVAL);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => send_frame(&ticker_state, &ticker_recorder),
+                _ = &mut ticker_done => break,
+            }
+        }
+    });
+    let mut kill_rx = kill_rx;
+    let mut first = true;
+    loop {
+        tokio::select! {
+            _ = &mut kill_rx => break,
+            Some(()) = connected_rx.recv() => {
+                if first {
+                    first = false;
+                    let _ = out.send(line("nodex", format!("▶ {}", command.description)));
+                    set_status(state, id, RunStatus { state: RunState::Running, detail: command.description.clone(), exit_code: None, url: None });
+                }
+            }
+        }
+    }
+    let finish_root = root.clone();
+    let _ = tokio::task::spawn_blocking(move || instrumenter.finish(&finish_root)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let _ = stop_ticker.send(());
+    let _ = ticker.await;
+    intake.abort();
+    send_frame(state, &recorder);
+    let _ = out.send(line("nodex", "■ stopped"));
+    with_current(state, id, |inner| {
+        inner.kill = None;
+        inner.trace_token = None;
+    });
+    set_status(state, id, RunStatus { state: RunState::Exited, detail: command.description, exit_code: Some(0), url: None });
     Ok(())
 }
 
@@ -528,17 +652,22 @@ async fn accept_traces(
     token: String,
     recorder: Arc<Mutex<Recorder>>,
     out: mpsc::UnboundedSender<OutputLine>,
+    on_connect: Option<OnConnect>,
 ) {
     while let Ok((socket, _)) = listener.accept().await {
         let token = token.clone();
         let recorder = recorder.clone();
         let out = out.clone();
+        let on_connect = on_connect.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(socket);
             let mut hello = String::new();
             let ok = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut hello)).await;
             if !matches!(ok, Ok(Ok(_))) || hello.trim_end() != format!("NODEX1 {token}") {
                 return; // not our program
+            }
+            if let Some(hook) = on_connect {
+                let _ = tokio::task::spawn_blocking(move || hook()).await;
             }
             let mut decoder = Decoder::default();
             let mut buf = vec![0u8; 64 * 1024];

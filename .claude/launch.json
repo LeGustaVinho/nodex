@@ -4,42 +4,104 @@
     {
       "name": "nodex-sample",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/csharp/Sample", "--no-browser", "--port", "7420", "--dev-origin", "http://localhost:5173"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/csharp/Sample",
+        "--no-browser",
+        "--port",
+        "7420",
+        "--dev-origin",
+        "http://localhost:5173"
+      ],
       "port": 7420,
       "url": "http://127.0.0.1:7420"
     },
     {
       "name": "nodex-unity",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/unity", "--no-browser", "--port", "7430"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/unity",
+        "--no-browser",
+        "--port",
+        "7430"
+      ],
       "port": 7430,
       "url": "http://127.0.0.1:7430"
     },
     {
       "name": "nodex-ts",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/ts/Sample", "--no-browser", "--port", "7440"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/ts/Sample",
+        "--no-browser",
+        "--port",
+        "7440"
+      ],
       "port": 7440,
       "url": "http://127.0.0.1:7440"
     },
     {
       "name": "nodex-frameworks",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/ts/Frameworks", "--no-browser", "--port", "7450"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/ts/Frameworks",
+        "--no-browser",
+        "--port",
+        "7450"
+      ],
       "port": 7450,
       "url": "http://127.0.0.1:7450"
     },
     {
       "name": "nodex-rust",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/rust/Sample", "--no-browser", "--port", "7460"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/rust/Sample",
+        "--no-browser",
+        "--port",
+        "7460"
+      ],
       "port": 7460,
       "url": "http://127.0.0.1:7460"
     },
     {
       "name": "nodex-rust-syntax",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/rust/Syntax", "--no-browser", "--port", "7470"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/rust/Syntax",
+        "--no-browser",
+        "--port",
+        "7470"
+      ],
       "port": 7470,
       "url": "http://127.0.0.1:7470"
     },
@@ -60,14 +122,45 @@
     {
       "name": "nodex-react",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/web/react-vite", "--no-browser", "--port", "7480"],
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/web/react-vite",
+        "--no-browser",
+        "--port",
+        "7480"
+      ],
       "port": 7480,
       "url": "http://127.0.0.1:7480"
     },
     {
+      "name": "nodex-unity-sample",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "run",
+        "-p",
+        "nodex-server",
+        "--",
+        "open",
+        "fixtures/unity-sample",
+        "--no-browser",
+        "--port",
+        "7490"
+      ],
+      "port": 7490,
+      "url": "http://127.0.0.1:7490"
+    },
+    {
       "name": "web-dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "web", "dev"],
+      "runtimeArgs": [
+        "--dir",
+        "web",
+        "dev"
+      ],
       "port": 5173
     }
   ]

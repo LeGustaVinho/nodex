@@ -64,18 +64,19 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
     const f = s.stopped?.frames.find((x) => x.id === s.frame) ?? s.stopped?.frames.find((x) => x.flow);
     return !!f && f.flow === flow && f.node === node.id;
   });
-  // Selected as stable references; the name → value map is derived (a selector returning a new
-  // object each call would make zustand re-render forever).
+  // Values of the selected frame, on that frame's Blueprint only. Selected as stable references;
+  // the name → value map is derived (a selector returning a new object each call would make
+  // zustand re-render forever).
   const stopped = useDebug((s) => s.stopped);
   const frameId = useDebug((s) => s.frame);
+  const frameScopes = useDebug((s) => s.scopes);
   const pausedVars = useMemo(() => {
-    if (!stopped) return undefined;
-    const f = stopped.frames.find((x) => x.id === frameId);
-    if (f && f.flow !== flow) return undefined;
+    const f = stopped?.frames.find((x) => x.id === frameId);
+    if (!f || f.flow !== flow || !frameScopes) return undefined;
     const out: Record<string, string> = {};
-    for (const scope of stopped.scopes) for (const v of scope.variables) out[v.name] ??= v.value;
+    for (const scope of frameScopes) for (const v of scope.variables) out[v.name] ??= v.value;
     return out;
-  }, [stopped, frameId, flow]);
+  }, [stopped, frameId, frameScopes, flow]);
   const info = conceptInfo(catalog, node.concept);
   const color = conceptColor(catalog, node.concept);
   // Compact levels: the call's arguments are the statement's own pins, values inline.

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Trace runtime injected into woven assemblies. netstandard2.1 so Unity (Mono/IL2CPP) can load it too. -->
   <PropertyGroup>
@@ -7,5 +7,10 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Nodex.Trace</RootNamespace>
   </PropertyGroup>
+
+  <!-- One runtime for .NET programs and Unity: the source lives in the Unity package. -->
+  <ItemGroup>
+    <Compile Include="..\..\unity\com.nodex.trace\Runtime\T.cs" Link="T.cs" />
+  </ItemGroup>
 
 </Project>

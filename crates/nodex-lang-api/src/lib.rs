@@ -62,13 +62,14 @@ pub trait LanguageFrontend: Send + Sync {
         None
     }
 
-    /// Build-time instrumentation for live traces.
-    fn instrumenter(&self) -> Option<Box<dyn TraceInstrumenter>> {
+    /// Build-time instrumentation for live traces of the project at `root` (a language may run
+    /// different kinds of projects differently: a .NET program, a Unity Editor).
+    fn instrumenter(&self, _root: &Path) -> Option<Box<dyn TraceInstrumenter>> {
         None
     }
 
-    /// Step-through debugging through a Debug Adapter Protocol adapter (milestone M8).
-    fn debugger(&self) -> Option<Box<dyn DebugLauncher>> {
+    /// Step-through debugging of the project at `root` through a Debug Adapter Protocol adapter.
+    fn debugger(&self, _root: &Path) -> Option<Box<dyn DebugLauncher>> {
         None
     }
 }
@@ -99,6 +100,16 @@ pub trait TraceInstrumenter: Send + Sync {
     fn reinstrument(&self, _root: &Path, _out_dir: &Path, _file: &Path, _first_id: i32) -> Option<Result<String, String>> {
         None
     }
+
+    /// Every method the trace map knows now, as the JSON array of its `methods` (an attached
+    /// run re-reads it when a program connects: Unity recompiles while the Editor is open).
+    /// `None` when this run kind's map does not change.
+    fn refresh(&self, _root: &Path, _out_dir: &Path) -> Option<Result<String, String>> {
+        None
+    }
+
+    /// Ends an attached run (Stop): tells the attached program that Nodex no longer listens.
+    fn finish(&self, _root: &Path) {}
 }
 
 /// Where a run's trace events go, known before the program is prepared (browser apps bake it
@@ -121,6 +132,9 @@ pub enum RunKind {
     Program,
     /// A dev server that serves an app until stopped; its URL is read from its output.
     DevServer,
+    /// Nothing to start: a program Nodex does not own (the Unity Editor) connects to the trace
+    /// intake by itself, until Stop.
+    Attached,
 }
 
 /// A process the server starts to run an instrumented program. The server adds the
@@ -194,9 +208,12 @@ impl AdapterSpec {
 /// A program built for debugging and how the adapter should start it.
 #[derive(Debug, Clone)]
 pub struct DebugLaunch {
-    /// Arguments of the DAP `launch` request.
+    /// Arguments of the DAP `launch` (or `attach`) request.
     pub launch: serde_json::Value,
     pub description: String,
+    /// Attach to a running program (the Unity Editor) instead of starting one: Stop then
+    /// detaches without ending it.
+    pub attach: bool,
 }
 
 /// Debugging for one language: which adapter, and a debug build of the project.

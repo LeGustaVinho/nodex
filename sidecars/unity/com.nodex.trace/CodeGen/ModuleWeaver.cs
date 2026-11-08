@@ -1,10 +1,18 @@
+// Shared by Nodex.Weaver (.NET programs, compiled by sidecars/dotnet/Nodex.Weaver) and the Unity
+// IL post-processor of this package: keep it C# 9 and .NET Framework / netstandard2.1 safe.
+
+#nullable enable
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
-using System.Text.RegularExpressions;
 using Mono.Cecil.Rocks;
 
-namespace Nodex.Weaver;
-
+namespace Nodex.Weaver
+{
 /// Rewrites the methods of one module:
 /// - <c>T.Enter(id)</c> and <c>T.Arg(id, i, value)</c> at the start,
 /// - <c>T.Step(id, point)</c> before every visible sequence point,
@@ -12,33 +20,91 @@ namespace Nodex.Weaver;
 /// - <c>T.Return(value, id)</c> or <c>T.Exit(id)</c> before every <c>ret</c>.
 /// Branches and exception-handler boundaries that pointed at a rewritten instruction are moved
 /// to the inserted probe, so probes run on every path.
-public sealed partial class ModuleWeaver
+/// The probe methods of <c>Nodex.Trace.T</c>, imported into one module.
+public sealed class TraceProbes
+{
+    public MethodReference Enter { get; private set; } = null!;
+    public MethodReference Step { get; private set; } = null!;
+    public MethodReference Exit { get; private set; } = null!;
+    public MethodReference Return { get; private set; } = null!;
+    public MethodReference Local { get; private set; } = null!;
+    public MethodReference Arg { get; private set; } = null!;
+
+    /// From the Nodex.Trace assembly itself (.NET programs: the weaver ships it next to them).
+    public static TraceProbes FromModule(ModuleDefinition module, ModuleDefinition trace)
+    {
+        var t = trace.GetType("Nodex.Trace.T");
+        MethodReference Import(string name) => module.ImportReference(t.Methods.First(m => m.Name == name));
+        return new TraceProbes
+        {
+            Enter = Import("Enter"),
+            Step = Import("Step"),
+            Exit = Import("Exit"),
+            Return = Import("Return"),
+            Local = Import("Local"),
+            Arg = Import("Arg"),
+        };
+    }
+
+    /// By name and signature (Unity: an assembly definition that does not reference Nodex.Trace
+    /// still links to it, since every script assembly is loaded in the Editor).
+    public static TraceProbes ByName(ModuleDefinition module)
+    {
+        var scope = module.AssemblyReferences.FirstOrDefault(a => a.Name == "Nodex.Trace");
+        if (scope is null)
+        {
+            scope = new AssemblyNameReference("Nodex.Trace", new Version(0, 0, 0, 0));
+            module.AssemblyReferences.Add(scope);
+        }
+        var t = new TypeReference("Nodex.Trace", "T", module, scope);
+        var i4 = module.TypeSystem.Int32;
+        var obj = module.TypeSystem.Object;
+        MethodReference M(string name, params TypeReference[] parameters)
+        {
+            var m = new MethodReference(name, module.TypeSystem.Void, t) { HasThis = false };
+            foreach (var p in parameters) m.Parameters.Add(new ParameterDefinition(p));
+            return m;
+        }
+        return new TraceProbes
+        {
+            Enter = M("Enter", i4),
+            Step = M("Step", i4, i4),
+            Exit = M("Exit", i4),
+            Return = M("Return", obj, i4),
+            Local = M("Local", i4, i4, obj),
+            Arg = M("Arg", i4, i4, obj),
+        };
+    }
+}
+
+public sealed class ModuleWeaver
 {
     /// Slots for locals the compiler hoisted into state-machine fields start here.
     private const int HoistedSlotBase = 1000;
 
     /// `<order>5__2` — a local of an async method or iterator, stored as a state-machine field.
-    [GeneratedRegex(@"^<(?<name>[^>]+)>5__\d+$")]
-    private static partial Regex HoistedLocal();
+    private static readonly Regex HoistedLocal = new Regex(@"^<(?<name>[^>]+)>5__\d+$", RegexOptions.Compiled);
 
     private readonly ModuleDefinition _module;
     private readonly SourceMaps _sources;
     private readonly List<MethodMap> _methods;
+    private readonly int _idBase;
     private readonly MethodReference _enter, _step, _exit, _return, _local, _arg;
 
-    public ModuleWeaver(ModuleDefinition module, ModuleDefinition trace, SourceMaps sources, List<MethodMap> methods)
+    /// <param name="idBase">Added to method ids: Unity weaves each assembly on its own, so each
+    /// gets its own range.</param>
+    public ModuleWeaver(ModuleDefinition module, TraceProbes probes, SourceMaps sources, List<MethodMap> methods, int idBase = 0)
     {
         _module = module;
         _sources = sources;
         _methods = methods;
-        var t = trace.GetType("Nodex.Trace.T");
-        MethodReference Import(string name) => module.ImportReference(t.Methods.First(m => m.Name == name));
-        _enter = Import("Enter");
-        _step = Import("Step");
-        _exit = Import("Exit");
-        _return = Import("Return");
-        _local = Import("Local");
-        _arg = Import("Arg");
+        _idBase = idBase;
+        _enter = probes.Enter;
+        _step = probes.Step;
+        _exit = probes.Exit;
+        _return = probes.Return;
+        _local = probes.Local;
+        _arg = probes.Arg;
     }
 
     /// Returns true when at least one method was instrumented.
@@ -73,7 +139,7 @@ public sealed partial class ModuleWeaver
         }
         if (points.Count == 0) return false;
 
-        var id = _methods.Count + 1;
+        var id = _idBase + _methods.Count + 1;
         var locals = new Dictionary<int, string>();
         if (debug.Scope is { } scope) CollectLocals(scope, locals);
         var kind = IsStateMachine(method.DeclaringType) ? "resume" : method.IsConstructor ? "constructor" : "method";
@@ -84,7 +150,7 @@ public sealed partial class ModuleWeaver
             var fields = method.DeclaringType.Fields.ToList();
             for (var f = 0; f < fields.Count; f++)
             {
-                var m = HoistedLocal().Match(fields[f].Name);
+                var m = HoistedLocal.Match(fields[f].Name);
                 if (m.Success)
                 {
                     hoisted[fields[f]] = HoistedSlotBase + f;
@@ -114,7 +180,7 @@ public sealed partial class ModuleWeaver
         // Steps.
         for (var i = 0; i < points.Count; i++)
         {
-            InsertBefore(body, points[i].Instruction, [il.Create(OpCodes.Ldc_I4, id), il.Create(OpCodes.Ldc_I4, i), il.Create(OpCodes.Call, _step)]);
+            InsertBefore(body, points[i].Instruction, new List<Instruction> { il.Create(OpCodes.Ldc_I4, id), il.Create(OpCodes.Ldc_I4, i), il.Create(OpCodes.Call, _step) });
         }
 
         // Local stores.
@@ -268,4 +334,5 @@ public sealed partial class ModuleWeaver
             return false;
         }
     }
+}
 }
