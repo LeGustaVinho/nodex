@@ -216,40 +216,34 @@ impl Project {
             version: 0,
             flow_index: None,
         };
-        // Detection (each language walks the top of the tree for its manifests) needs nothing
-        // from the files, and lowering needs nothing from it: both run at once, the languages too.
+        let timer = crate::perf::phase("open.walk");
+        let paths = project.source_paths(progress);
+        timer.finish(format_args!("({} files)", paths.len()));
+        // Detection (each language walks the top of the tree for its manifests) runs only for the
+        // languages that have files, and at the same time as lowering: neither needs the other.
+        let present: std::collections::HashSet<Language> =
+            paths.iter().filter_map(|p| project.frontend_for(p)).map(|f| f.id()).collect();
         let (descriptors, lowered) = rayon::join(
             || {
                 let timer = crate::perf::phase("open.detect");
-                let found: Vec<ProjectDescriptor> = project.frontends.par_iter().filter_map(|f| f.detect(&project.root)).collect();
+                let found: Vec<ProjectDescriptor> = project
+                    .frontends
+                    .par_iter()
+                    .filter(|f| present.contains(&f.id()))
+                    .filter_map(|f| f.detect(&project.root))
+                    .collect();
                 timer.finish(format_args!("({} descriptors)", found.len()));
                 found
             },
-            || project.lower_all(progress),
+            || project.lower_paths(&paths, progress),
         );
         project.descriptors = descriptors;
         project.files.extend(lowered.into_iter().map(|(rel, entry)| (rel, Arc::new(entry))));
         Ok(project)
     }
 
-    /// Walks the root and lowers every supported file in parallel.
-    fn lower_all(&self, progress: &(dyn Fn(OpenProgress) + Sync)) -> Vec<(String, FileEntry)> {
-        let timer = crate::perf::phase("open.walk");
-        let mut paths: Vec<PathBuf> = Vec::new();
-        for entry in walkdir::WalkDir::new(&self.root)
-            .into_iter()
-            .filter_entry(|e| !(e.file_type().is_dir() && e.depth() > 0 && is_ignored_dir(e.file_name().to_str().unwrap_or(""))))
-            .filter_map(Result::ok)
-        {
-            if entry.file_type().is_file() && self.frontend_for(entry.path()).is_some() {
-                paths.push(entry.into_path());
-                if paths.len() % 1000 == 0 {
-                    progress(OpenProgress { phase: "scanning", done: paths.len(), total: 0 });
-                }
-            }
-        }
-        timer.finish(format_args!("({} files)", paths.len()));
-
+    /// Lowers `paths` in parallel.
+    fn lower_paths(&self, paths: &[PathBuf], progress: &(dyn Fn(OpenProgress) + Sync)) -> Vec<(String, FileEntry)> {
         let timer = crate::perf::phase("open.lower");
         let total = paths.len();
         progress(OpenProgress { phase: "reading", done: 0, total });
@@ -269,6 +263,42 @@ impl Project {
             .collect();
         timer.finish(format_args!("({} files lowered)", lowered.len()));
         lowered
+    }
+
+    /// Every file a frontend reads, found by walking the root on several threads. Skips
+    /// [`IGNORED_DIRS`] and what the project's own `.gitignore`, `.ignore` and `.git/info/exclude`
+    /// leave out (not ignore files above the root: a project inside a folder its enclosing
+    /// repository ignores must still open). Sorted, so the result does not depend on threads.
+    fn source_paths(&self, progress: &(dyn Fn(OpenProgress) + Sync)) -> Vec<PathBuf> {
+        let found = std::sync::Mutex::new(Vec::new());
+        let count = std::sync::atomic::AtomicUsize::new(0);
+        ignore::WalkBuilder::new(&self.root)
+            .hidden(false)
+            .parents(false)
+            .git_global(false)
+            .filter_entry(|e| !(e.depth() > 0 && e.file_type().is_some_and(|t| t.is_dir()) && is_ignored_dir(e.file_name().to_str().unwrap_or(""))))
+            .build_parallel()
+            .run(|| {
+                let (found, count) = (&found, &count);
+                Box::new(move |entry| {
+                    if let Ok(entry) = entry
+                        && entry.file_type().is_some_and(|t| t.is_file())
+                        && self.frontend_for(entry.path()).is_some()
+                    {
+                        if let Ok(mut f) = found.lock() {
+                            f.push(entry.into_path());
+                        }
+                        let n = count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        if n % 1000 == 0 {
+                            progress(OpenProgress { phase: "scanning", done: n, total: 0 });
+                        }
+                    }
+                    ignore::WalkState::Continue
+                })
+            });
+        let mut paths = found.into_inner().unwrap_or_default();
+        paths.sort();
+        paths
     }
 
     /// No folder yet: an empty project whose root is empty. The server starts with it when it

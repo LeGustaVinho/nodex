@@ -34,6 +34,7 @@ scip = "0.10"
 ts-rs = { version = "12", features = ["serde-compat", "no-serde-warnings"] }
 rayon = "1"
 walkdir = "2"
+ignore = "0.4"
 notify = "8"
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }

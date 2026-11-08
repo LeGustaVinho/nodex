@@ -13,6 +13,9 @@ use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 pub struct Prepared {
     /// Text to parse (same length as the original). `None` when no rewrite was needed.
     pub text: Option<String>,
+    /// The tree of the original text, when no rewrite was needed (a fresh parse, so the caller
+    /// need not parse the file a second time).
+    pub tree: Option<Tree>,
     /// C# 14 `extension(T r)` blocks rewritten as classes: start byte → receiver text.
     pub extension_blocks: HashMap<usize, String>,
     /// `#if` groups that split a declaration or statement and were resolved for the parser.
@@ -34,7 +37,7 @@ pub struct DirectiveFix {
 const MAX_FAILED_CHAINS: usize = 6;
 
 pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
-    let mut out = Prepared { text: None, extension_blocks: HashMap::new(), merged_directives: Vec::new() };
+    let mut out = Prepared { text: None, tree: None, extension_blocks: HashMap::new(), merged_directives: Vec::new() };
     let mut text = original.as_bytes().to_vec();
 
     // A UTF-8 byte order mark is not C#: the grammar reports it as an error.
@@ -42,14 +45,16 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
         text[..3].copy_from_slice(b"   ");
     }
 
-    let Some(tree) = parse(parser, &text) else { return finish(out, text, original) };
+    let Some(tree) = parse(parser, &text) else { return finish(out, text, original, None) };
     let mut errors = error_count(&tree);
     // The tree of `text`: candidates differ from it in a few same-length ranges, so they are
     // parsed incrementally from it instead of from scratch.
     let mut base = tree;
     if errors == 0 {
-        return finish(out, text, original);
+        return finish(out, text, original, Some(base));
     }
+    // Kept while no rewrite is accepted: later trees are incremental parses of rewritten text.
+    let fresh = base.clone();
 
     // C# 14 extension blocks: the grammar reads them as a constructor named `extension`.
     let (candidate, blocks) = rewrite_extension_blocks(&text);
@@ -184,12 +189,16 @@ pub fn prepare(parser: &mut Parser, original: &str) -> Prepared {
             break;
         }
     }
-    finish(out, text, original)
+    finish(out, text, original, Some(fresh))
 }
 
-fn finish(mut out: Prepared, text: Vec<u8>, original: &str) -> Prepared {
+/// `tree` is a fresh parse of `text` before any rewrite; it is handed back only when the text
+/// stayed the original.
+fn finish(mut out: Prepared, text: Vec<u8>, original: &str, tree: Option<Tree>) -> Prepared {
     if text != original.as_bytes() {
         out.text = String::from_utf8(text).ok();
+    } else {
+        out.tree = tree;
     }
     out.merged_directives.sort_by_key(|d| d.first);
     out

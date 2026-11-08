@@ -134,9 +134,9 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         return ir;
     }
     // Parse a prepared copy (same length); read code and spans from the original.
-    let prepared = prepare::prepare(&mut parser, text);
+    let mut prepared = prepare::prepare(&mut parser, text);
     let parse_text: &str = prepared.text.as_deref().unwrap_or(text);
-    let Some(tree) = parser.parse(parse_text, None) else {
+    let Some(tree) = prepared.tree.take().or_else(|| parser.parse(parse_text, None)) else {
         ir.diagnostics.push(Diagnostic {
             severity: Severity::Error,
             message: "parser returned no tree".into(),
