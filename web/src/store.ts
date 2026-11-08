@@ -136,9 +136,10 @@ export const useUi = create<UiState>((set) => ({
   projectLoading: null,
   setProjectLoading: (projectLoading) => set({ projectLoading }),
   resetForProject: () => {
-    writeHash("architecture", null);
+    // Overview first: it shows the project at a glance and stays cheap on large projects.
+    writeHash("overview", null);
     set({
-      view: "architecture",
+      view: "overview",
       flowSymbol: null,
       namespace: null,
       callFocus: null,

@@ -2,8 +2,18 @@ import ELK, { type ElkExtendedEdge, type ElkNode, type ElkPort } from "elkjs/lib
 import elkWorkerUrl from "elkjs/lib/elk-worker.min.js?url";
 import type { GGraph, GNode } from "./model";
 
-// ELK runs in a web worker so large graphs never block the UI.
-const elk = new ELK({ workerFactory: () => new Worker(elkWorkerUrl) });
+// ELK runs in a web worker so large graphs never block the UI. The worker starts with the first
+// layout (not when the page loads), and a layout that is no longer wanted is stopped with its
+// own worker instead of running on in the background.
+let shared: InstanceType<typeof ELK> | null = null;
+const newElk = () => new ELK({ workerFactory: () => new Worker(elkWorkerUrl) });
+
+/**
+ * Keeping the model order (statements in source order) makes ELK's crossing minimization
+ * explode on dense graphs: 300 import edges took 3 s, 800 took 73 s. Blueprints are sparse and
+ * keep it; dense graphs (namespaces, calls) are laid out freely.
+ */
+const keepsModelOrder = (nodes: number, edges: number) => edges <= Math.max(150, 1.5 * nodes);
 
 /** Node positions; nodes inside a container are relative to it. Containers also get a size. */
 export type Positions = Map<string, { x: number; y: number; width?: number; height?: number }>;
@@ -13,8 +23,11 @@ const portKey = (node: string, port: string) => `${node}::${port}`;
 /** Room for a container's header and border around its children. */
 const CONTAINER_PADDING = "[top=34,left=12,bottom=12,right=12]";
 
-/** Lays out the layout-relevant part of a graph with ELK's layered algorithm. */
-export async function layoutGraph(g: GGraph): Promise<Positions> {
+/**
+ * Lays out the layout-relevant part of a graph with ELK's layered algorithm. Aborting `signal`
+ * stops the layout (its worker is terminated) and rejects with an `AbortError`.
+ */
+export async function layoutGraph(g: GGraph, signal?: AbortSignal): Promise<Positions> {
   const laidOut = g.nodes.filter((n) => !n.attach);
   const nodeIds = new Set(laidOut.map((n) => n.id));
   const kids = new Map<string | undefined, GNode[]>();
@@ -69,15 +82,26 @@ export async function layoutGraph(g: GGraph): Promise<Positions> {
       return { id: e.id, sources: [portIds.has(s) ? s : e.source], targets: [portIds.has(t) ? t : e.target] };
     });
 
-  const result = await elk.layout({
+  // A cancellable layout gets a worker of its own, so stopping it leaves other layouts running.
+  const elk = signal ? newElk() : (shared ??= newElk());
+  const ordered = keepsModelOrder(laidOut.length, edges.length);
+  const aborted = new Promise<never>((_, reject) => {
+    signal?.addEventListener("abort", () => {
+      elk.terminateWorker();
+      reject(new DOMException("layout cancelled", "AbortError"));
+    });
+  });
+  aborted.catch(() => {}); // Aborting after the layout finished is not an error.
+  const layout = elk.layout({
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": g.direction,
       "elk.spacing.nodeNode": g.direction === "RIGHT" ? "36" : "48",
       "elk.layered.spacing.nodeNodeBetweenLayers": g.direction === "RIGHT" ? "70" : "80",
-      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-      "elk.layered.crossingMinimization.forceNodeModelOrder": "true",
+      ...(ordered
+        ? { "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES", "elk.layered.crossingMinimization.forceNodeModelOrder": "true" }
+        : {}),
       "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       "elk.separateConnectedComponents": "true",
       "elk.spacing.componentComponent": "60",
@@ -87,6 +111,12 @@ export async function layoutGraph(g: GGraph): Promise<Positions> {
     children,
     edges,
   });
+  let result: ElkNode;
+  try {
+    result = await (signal ? Promise.race([layout, aborted]) : layout);
+  } finally {
+    if (signal) elk.terminateWorker();
+  }
 
   const positions: Positions = new Map();
   const byId = new Map(g.nodes.map((n) => [n.id, n]));

@@ -8,7 +8,7 @@ import type { Concept } from "../gen/Concept";
 import type { Expr } from "../gen/Expr";
 import type { Language } from "../gen/Language";
 import { useUi } from "../store";
-import { useKnowledge } from "../views/Knowledge";
+import { useKnowledge } from "../views/hierarchyAccess";
 import { useStructure } from "../views/Views";
 import type { StructEdge } from "../gen/StructEdge";
 import type { StructureIndex } from "../graph/structureGraph";

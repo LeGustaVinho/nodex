@@ -110,24 +110,30 @@ export class Hierarchy {
     for (const item of this.items.values()) order(item.children);
   }
 
-  /** Merges chains of synthetic containers with a single child (`src` → `src/services`). */
+  /**
+   * Merges chains of synthetic containers with a single child (`src` → `src/services`). Each
+   * merge fixes the parent's child list in place; the tree is sorted once at the end (labels of a
+   * chain come out the same whatever the order of the merges).
+   */
   private compact() {
+    let merged = false;
     let changed = true;
     while (changed) {
       changed = false;
-      for (const item of this.items.values()) {
-        if (item.symbol || item.children.length !== 1) continue;
+      for (const item of [...this.items.values()]) {
+        if (!this.items.has(item.id) || item.symbol || item.children.length !== 1) continue;
         const only = this.items.get(item.children[0])!;
         if (only.symbol || only.kind !== item.kind) continue;
         const sep = item.kind === "folder" ? "/" : ".";
         only.label = `${item.label}${sep}${only.label}`;
         only.parent = item.parent;
+        const siblings = item.parent ? this.items.get(item.parent)!.children : this.roots;
+        siblings[siblings.indexOf(item.id)] = only.id;
         this.items.delete(item.id);
-        changed = true;
-        break;
+        changed = merged = true;
       }
-      if (changed) this.link();
     }
+    if (merged) this.link();
   }
 
   get(id: string): HItem | undefined {

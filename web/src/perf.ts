@@ -2,6 +2,7 @@
 // `[nodex perf]` lines in the console (verbose level), measured from `project-loading`.
 
 let openedAt: number | null = null;
+let changed = false;
 let firstViewShown = false;
 
 const since = () => (openedAt === null ? "" : ` at +${(performance.now() - openedAt).toFixed(0)} ms`);
@@ -9,6 +10,7 @@ const since = () => (openedAt === null ? "" : ` at +${(performance.now() - opene
 /** A project started loading (any path: Welcome, Open dialog, menu, drag and drop). */
 export function openStarted() {
   openedAt = performance.now();
+  changed = false;
   firstViewShown = false;
   performance.mark("nodex:open-start");
   console.debug("[nodex perf] open-start");
@@ -16,13 +18,15 @@ export function openStarted() {
 
 /** A step of the open (`project-changed`, …). */
 export function step(name: string) {
+  if (name === "project-changed") changed = true;
   performance.mark(`nodex:${name}`);
   console.debug(`[nodex perf] ${name}${since()}`);
 }
 
-/** The first view has data on screen; logged once per open, after the next paint. */
+/** The first view has data on screen; logged once per open, after the next paint. Views of the
+ * previous project, still on screen until `project-changed`, do not count. */
 export function firstView(view: string) {
-  if (firstViewShown || openedAt === null) return;
+  if (firstViewShown || openedAt === null || !changed) return;
   firstViewShown = true;
   requestAnimationFrame(() => setTimeout(() => step(`first-view:${view}`), 0));
 }

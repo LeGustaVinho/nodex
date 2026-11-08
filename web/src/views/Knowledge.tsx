@@ -6,42 +6,16 @@ import { useMemo } from "react";
 import { api } from "../api";
 import type { StructEdgeKind } from "../gen/StructEdgeKind";
 import type { Confidence } from "../gen/Confidence";
-import { HIERARCHY_CAP, Hierarchy, type HierarchyNodeData, hierarchyGraph, kindsOf } from "../graph/hierarchy";
+import { HIERARCHY_CAP, type HierarchyNodeData, hierarchyGraph, kindsOf } from "../graph/hierarchy";
 import { KNOWLEDGE_CAP, knowledgeGraph } from "../graph/knowledgeGraph";
-import { type StructureIndex, isTypeKind } from "../graph/structureGraph";
+import { isTypeKind } from "../graph/structureGraph";
 import { useUi } from "../store";
 import { KNOWLEDGE_COLORS } from "./GraphCanvas";
 import { GraphCanvas } from "./GraphCanvas";
 import { useStructure } from "./Views";
 import * as perf from "../perf";
 
-export function useKnowledge() {
-  return useQuery({ queryKey: ["knowledge"], queryFn: api.knowledge });
-}
-
-const hierarchies = new WeakMap<StructureIndex, Hierarchy>();
-
-/** The containment hierarchy of the current structure (built once per structure graph). */
-export function useHierarchy(): Hierarchy | undefined {
-  const { index } = useStructure();
-  return useMemo(() => {
-    if (!index) return undefined;
-    let h = hierarchies.get(index);
-    if (!h) {
-      h = new Hierarchy(index);
-      hierarchies.set(index, h);
-    }
-    return h;
-  }, [index]);
-}
-
-/** Opens the ancestors of `id` in the Hierarchy view, shows the view and selects the symbol. */
-export function revealInHierarchy(h: Hierarchy, index: StructureIndex, id: string) {
-  const ui = useUi.getState();
-  ui.expandTree(h.ancestors(id));
-  ui.setView("hierarchy");
-  ui.select({ kind: "symbol", id }, index.byId.get(id)?.origins[0] ?? null);
-}
+import { revealInHierarchy, useHierarchy, useKnowledge } from "./hierarchyAccess";
 
 export function HierarchyView() {
   const { index } = useStructure();

@@ -23,7 +23,23 @@ import { Welcome } from "./panels/Welcome";
 import * as perf from "./perf";
 
 // Loaded on first use: Monaco, Mermaid and the knowledge views are large.
-const CodePanel = lazy(() => import("./panels/CodePanel").then((m) => ({ default: m.CodePanel })));
+const loadCodePanel = () => import("./panels/CodePanel");
+const CodePanel = lazy(() => loadCodePanel().then((m) => ({ default: m.CodePanel })));
+
+/** The code panel loads Monaco (megabytes): only once there is code to show, or when idle. */
+function CodeSlot() {
+  const hasCode = useUi((s) => s.codeFocus !== null);
+  useEffect(() => {
+    const later = setTimeout(() => void loadCodePanel(), 5000);
+    return () => clearTimeout(later);
+  }, []);
+  if (!hasCode) return <div className="code-empty muted">Select something to see its code.</div>;
+  return (
+    <Suspense fallback={null}>
+      <CodePanel />
+    </Suspense>
+  );
+}
 const UmlView = lazy(() => import("./views/UmlView").then((m) => ({ default: m.UmlView })));
 const TimelineView = lazy(() => import("./views/Timeline").then((m) => ({ default: m.TimelineView })));
 const OverviewView = lazy(() => import("./views/Knowledge").then((m) => ({ default: m.OverviewView })));
@@ -358,9 +374,7 @@ export function App() {
         <UnityCard />
         <DebugPanel />
         <Inspector />
-        <Suspense fallback={null}>
-          <CodePanel />
-        </Suspense>
+        <CodeSlot />
       </section>
       <Palette />
       <ContextMenuHost />

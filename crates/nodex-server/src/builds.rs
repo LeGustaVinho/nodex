@@ -44,10 +44,10 @@ pub async fn graphs(state: &Arc<AppState>) -> Result<(Arc<StructureGraph>, Arc<P
         };
         let built = tokio::task::spawn_blocking(move || input.build()).await.map_err(|e| e.to_string())?;
         let mut project = state.project.lock().map_err(|_| "project lock poisoned")?;
-        if project.install_build(built) {
-            if let Some(built) = project.built() {
-                return Ok(built);
-            }
+        if project.install_build(built)
+            && let Some(built) = project.built()
+        {
+            return Ok(built);
         }
         // A file or semantic facts changed during the build: build again from the new state.
     }

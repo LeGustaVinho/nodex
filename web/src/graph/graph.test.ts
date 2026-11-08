@@ -236,6 +236,26 @@ describe("structure graphs", () => {
     expect(g.edges).toHaveLength(1);
   });
 
+  it("architecture groups a project with thousands of modules by folder", () => {
+    // 20 folders of 30 file modules each (600 > ARCHITECTURE_CAP), every module importing the next folder's first.
+    const symbols: Symbol[] = [];
+    const edges: StructureGraph["edges"] = [];
+    for (let f = 0; f < 20; f++) {
+      for (let m = 0; m < 30; m++) {
+        symbols.push(sym(`ns:src/f${f}/m${m}`, "Module", null, { language: "typescript" }));
+        if (f < 19) edges.push({ from: `ns:src/f${f}/m${m}`, to: `ns:src/f${f + 1}/m0`, kind: "Imports" });
+      }
+    }
+    const g = architectureGraph(new StructureIndex({ symbols, edges }));
+    expect(g.grouped).toBe(600);
+    expect(g.nodes).toHaveLength(20);
+    expect(g.nodes[0].id).toBe("group:own|ns|src/f0");
+    expect((g.nodes[0].data as { group?: number }).group).toBe(30);
+    // 30 imports from each folder to the next roll up into one edge of weight 30.
+    expect(g.edges).toHaveLength(19);
+    expect(g.edges[0]).toMatchObject({ source: "group:own|ns|src/f0", target: "group:own|ns|src/f1", weight: 30 });
+  });
+
   it("types view rolls member references up to their type and pulls in external bases", () => {
     const g = typesGraph(index, "App", true);
     expect(g.nodes.map((n) => n.id).sort()).toEqual(["App.Circle", "App.Shape", "ext:MonoBehaviour"]);

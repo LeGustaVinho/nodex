@@ -3,7 +3,7 @@ import type { Symbol } from "../gen/Symbol";
 import { rankSymbols } from "../graph/search";
 import { type View, useUi } from "../store";
 import { UML_KINDS } from "../uml/uml";
-import { revealInHierarchy, useHierarchy } from "../views/Knowledge";
+import { revealInHierarchy, useHierarchy } from "../views/hierarchyAccess";
 import { useStructure } from "../views/Views";
 
 interface Command {

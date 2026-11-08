@@ -28,6 +28,9 @@ import { layoutGraph } from "../graph/layout";
 import type { GEdge, GGraph } from "../graph/model";
 import * as perf from "../perf";
 
+/** Above this many nodes the minimap is left out. */
+const MINIMAP_MAX_NODES = 1500;
+
 const nodeTypes: NodeTypes = {
   blueprint: BlueprintNode,
   expr: ExprNode,
@@ -166,9 +169,11 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
   useEffect(() => {
     if (!graph || !saved.isFetched) return;
     let cancelled = false;
+    // A newer graph replaces this one: stop its layout instead of letting it run on.
+    const stop = new AbortController();
     setBusy(true);
     const layoutStarted = performance.now();
-    layoutGraph(graph)
+    layoutGraph(graph, stop.signal)
       .then((positions) => {
         if (cancelled) return;
         perf.timed(`layout ${layoutKey} (${graph.nodes.length} nodes, ${(performance.now() - layoutStarted).toFixed(0)} ms in ELK) + setNodes`, () => {
@@ -209,10 +214,13 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         });
         perf.firstView(layoutKey);
       })
-      .catch((err) => console.error("layout failed", err))
+      .catch((err) => {
+        if (!(err instanceof DOMException && err.name === "AbortError")) console.error("layout failed", err);
+      })
       .finally(() => !cancelled && setBusy(false));
     return () => {
       cancelled = true;
+      stop.abort();
     };
     // selectedId is applied by the effect below; re-layout only when the graph changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,7 +288,8 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
       >
         <Background variant={BackgroundVariant.Lines} gap={32} color="#23272f" />
         <Controls showInteractive={false} />
-        <MiniMap pannable zoomable nodeColor="#3a4150" maskColor="rgba(10,12,16,0.7)" />
+        {/* The minimap draws every node, visible or not: too costly on very large graphs. */}
+        {nodes.length <= MINIMAP_MAX_NODES && <MiniMap pannable zoomable nodeColor="#3a4150" maskColor="rgba(10,12,16,0.7)" />}
       </ReactFlow>
       <div className="canvas-tools">
         {busy && <span className="muted">laying out…</span>}

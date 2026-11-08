@@ -46,9 +46,28 @@ export class StructureIndex {
     return (this.children.get(scopeId) ?? []).filter((s) => !isTypeKind(s.kind) && !isScopeKind(s.kind));
   }
 
-  /** Types declared in a namespace, including nested types. */
+  private allTypes?: Symbol[];
+  private typesByNs?: Map<string | null, Symbol[]>;
+
+  /**
+   * Types declared in a namespace, including nested types, in graph order (`null`: all of them).
+   * Indexed once, since the sidebar and the Architecture view ask for every namespace. The
+   * returned array is shared: do not modify it.
+   */
   typesIn(ns: string | null): Symbol[] {
-    return this.graph.symbols.filter((s) => isTypeKind(s.kind) && !s.external && (ns === null || this.namespaceOf(s.id) === ns));
+    if (!this.allTypes || !this.typesByNs) {
+      this.allTypes = [];
+      this.typesByNs = new Map();
+      for (const s of this.graph.symbols) {
+        if (!isTypeKind(s.kind) || s.external) continue;
+        this.allTypes.push(s);
+        const key = this.namespaceOf(s.id);
+        const list = this.typesByNs.get(key);
+        if (list) list.push(s);
+        else this.typesByNs.set(key, [s]);
+      }
+    }
+    return ns === null ? this.allTypes : (this.typesByNs.get(ns) ?? []);
   }
 }
 
@@ -58,34 +77,104 @@ export interface NamespaceData {
   /** Free functions (module-level code). */
   functions: number;
   external: boolean;
+  /** For a group of namespaces or modules sharing a prefix: how many it holds. */
+  group?: number;
+}
+
+/**
+ * Above this many namespaces, modules and packages, the Architecture view groups them by path
+ * prefix: a TypeScript or Rust project has one module per file, tens of thousands of nodes no
+ * layout handles.
+ */
+export const ARCHITECTURE_CAP = 300;
+
+/** The first `depth` segments of a qualified name (`a.b.c`, `src/a/b`, `app::a`), with their separators. */
+function prefix(name: string, depth: number): string {
+  return name.split(/(::|\.|\/)/).slice(0, depth * 2 - 1).join("");
 }
 
 /** Architecture view: namespaces, external namespaces and packages, with import edges. */
-export function architectureGraph(index: StructureIndex): GGraph {
-  const nodes: GNode[] = [];
-  const edges: GEdge[] = [];
-  const included = new Set<string>();
+export function architectureGraph(index: StructureIndex): GGraph & { grouped: number } {
+  const scopes: { s: Symbol; types: number; functions: number }[] = [];
   for (const s of index.graph.symbols) {
     if (!isScopeKind(s.kind) && s.kind !== "Package") continue;
     // Namespaces nested in a module (TypeScript `namespace X {}`) stay inside their module.
     if (s.kind === "Namespace" && s.parent && index.byId.get(s.parent)?.kind === "Module") continue;
     const types = isScopeKind(s.kind) ? index.typesIn(s.qualified_name).length : 0;
     const functions = s.kind === "Module" ? index.freeMembers(s.id).filter((m) => m.kind === "Function").length : 0;
-    nodes.push({
-      id: s.id,
-      type: "namespace",
-      data: { symbol: s, types, functions, external: s.external } satisfies NamespaceData,
-      width: 220,
-      height: s.external ? 48 : 64,
-      ports: [],
-    });
-    included.add(s.id);
+    scopes.push({ s, types, functions });
   }
-  for (const e of index.graph.edges) {
-    if (e.kind !== "Imports" || !included.has(e.from) || !included.has(e.to)) continue;
-    edges.push({ id: `${e.from}->${e.to}`, source: e.from, target: e.to, kind: "imports", layout: true });
+  const node = (symbol: Symbol, types: number, functions: number, group?: number): GNode => ({
+    id: symbol.id,
+    type: "namespace",
+    data: { symbol, types, functions, external: symbol.external, group } satisfies NamespaceData,
+    width: 220,
+    height: symbol.external && !group ? 48 : 64,
+    ports: [],
+  });
+  const imports = index.graph.edges.filter((e) => e.kind === "Imports");
+
+  if (scopes.length <= ARCHITECTURE_CAP) {
+    const included = new Set(scopes.map((x) => x.s.id));
+    const edges: GEdge[] = imports
+      .filter((e) => included.has(e.from) && included.has(e.to))
+      .map((e) => ({ id: `${e.from}->${e.to}`, source: e.from, target: e.to, kind: "imports", layout: true }));
+    return { nodes: scopes.map((x) => node(x.s, x.types, x.functions)), edges, direction: "RIGHT", grouped: 0 };
   }
-  return { nodes, edges, direction: "RIGHT" };
+
+  // The deepest prefix that still fits under the cap (one segment at least).
+  const keyAt = (s: Symbol, depth: number) => `${s.external ? "ext" : "own"}|${s.kind === "Package" ? "pkg" : "ns"}|${prefix(s.qualified_name, depth)}`;
+  let depth = 1;
+  for (let d = 2; d <= 12; d++) {
+    const keys = new Set(scopes.map((x) => keyAt(x.s, d)));
+    if (keys.size > ARCHITECTURE_CAP) break;
+    depth = d;
+    if (keys.size === scopes.length) break;
+  }
+  const groups = new Map<string, typeof scopes>();
+  for (const x of scopes) {
+    const key = keyAt(x.s, depth);
+    const list = groups.get(key);
+    if (list) list.push(x);
+    else groups.set(key, [x]);
+  }
+  const groupOf = new Map<string, string>();
+  const nodes: GNode[] = [];
+  for (const [key, members] of groups) {
+    const first = members[0].s;
+    if (members.length === 1) {
+      groupOf.set(first.id, first.id);
+      nodes.push(node(first, members[0].types, members[0].functions));
+      continue;
+    }
+    const name = prefix(first.qualified_name, depth);
+    const symbol: Symbol = {
+      ...first,
+      id: `group:${key}`,
+      name,
+      qualified_name: `${name} …`,
+      parent: null,
+      origins: [],
+      flavors: [],
+      signature: null,
+      doc: null,
+    };
+    for (const m of members) groupOf.set(m.s.id, symbol.id);
+    const sum = (f: (x: (typeof scopes)[number]) => number) => members.reduce((a, x) => a + f(x), 0);
+    nodes.push(node(symbol, sum((x) => x.types), sum((x) => x.functions), members.length));
+  }
+  const weights = new Map<string, { source: string; target: string; weight: number }>();
+  for (const e of imports) {
+    const source = groupOf.get(e.from);
+    const target = groupOf.get(e.to);
+    if (!source || !target || source === target) continue;
+    const id = `${source}->${target}`;
+    const w = weights.get(id);
+    if (w) w.weight++;
+    else weights.set(id, { source, target, weight: 1 });
+  }
+  const edges: GEdge[] = [...weights].map(([id, w]) => ({ id, source: w.source, target: w.target, kind: "imports", layout: true, weight: w.weight }));
+  return { nodes, edges, direction: "RIGHT", grouped: scopes.length };
 }
 
 export interface TypeCardData {

@@ -52,6 +52,8 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .search { margin: 8px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; }
 .tree { overflow: auto; flex: 1; padding-bottom: 12px; }
 .row { display: flex; align-items: center; }
+/* Fixed height: the sidebar tree renders only the rows in view (ROW_HEIGHT in Sidebar.tsx). */
+.tree .row { height: 22px; }
 .row.active { background: #263042; }
 .caret { width: 14px; color: var(--muted); cursor: pointer; text-align: center; flex: none; font-size: 10px; }
 .row-main { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; background: transparent; border: 0; padding: 2px 4px; text-align: left; border-radius: 0; }

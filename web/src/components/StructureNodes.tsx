@@ -34,17 +34,18 @@ const CARD_FLAVORS = new Set([
 ]);
 
 function NamespaceNodeImpl({ data, selected }: NodeProps) {
-  const { symbol, types, functions, external } = data as unknown as NamespaceData;
+  const { symbol, types, functions, external, group } = data as unknown as NamespaceData;
   const isPackage = symbol.kind === "Package";
   const isModule = symbol.kind === "Module";
+  const kind = isPackage ? "package" : external ? (isModule ? "external module" : "external namespace") : isModule ? "module" : "namespace";
   return (
     <div className={`ns ${external ? "external" : ""} ${isPackage ? "package" : ""} ${selected ? "selected" : ""}`}>
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <div className="ns-kind">{isPackage ? "package" : external ? (isModule ? "external module" : "external namespace") : isModule ? "module" : "namespace"}</div>
+      <div className="ns-kind">{group ? `${group} × ${kind}` : kind}</div>
       <div className="ns-name">{symbol.qualified_name}</div>
-      {!external && (
+      {(!external || group) && (
         <div className="ns-meta">
-          {types} types{functions > 0 ? ` · ${functions} functions` : ""}
+          {external ? `${group} items` : `${types} types${functions > 0 ? ` · ${functions} functions` : ""}`}
         </div>
       )}
       {isPackage && symbol.signature && <div className="ns-meta">{symbol.signature}</div>}

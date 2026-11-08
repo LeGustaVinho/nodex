@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { api } from "../api";
+import type { StructureGraph } from "../gen/StructureGraph";
 import * as perf from "../perf";
 import { useTrace } from "../trace";
 import { useCatalog } from "../catalog";
@@ -11,9 +12,21 @@ import { useUi } from "../store";
 import { ReplayBar } from "../panels/RunPanel";
 import { GraphCanvas } from "./GraphCanvas";
 
+/** One index per structure graph, shared by every component that shows it. */
+const indexes = new WeakMap<StructureGraph, StructureIndex>();
+
+function indexOf(graph: StructureGraph): StructureIndex {
+  let index = indexes.get(graph);
+  if (!index) {
+    index = perf.timed("StructureIndex", () => new StructureIndex(graph));
+    indexes.set(graph, index);
+  }
+  return index;
+}
+
 export function useStructure() {
   const q = useQuery({ queryKey: ["structure"], queryFn: api.structure });
-  const index = useMemo(() => (q.data ? perf.timed("StructureIndex", () => new StructureIndex(q.data)) : undefined), [q.data]);
+  const index = useMemo(() => (q.data ? indexOf(q.data) : undefined), [q.data]);
   return { index, error: q.error };
 }
 
@@ -22,24 +35,32 @@ export function ArchitectureView() {
   const { setNamespace, setView, select, selection } = useUi();
   const graph = useMemo(() => (index ? perf.timed("architectureGraph", () => architectureGraph(index)) : undefined), [index]);
   return (
-    <GraphCanvas
-      key="architecture"
-      graph={graph}
-      layoutKey="architecture"
-      selectedId={selection?.kind === "symbol" ? selection.id : null}
-      onNodeClick={(n) => {
-        const s = index?.byId.get(n.id);
-        select({ kind: "symbol", id: n.id }, s?.origins[0] ?? null);
-      }}
-      onNodeDoubleClick={(n) => {
-        const s = index?.byId.get(n.id);
-        if (s && (s.kind === "Namespace" || s.kind === "Module") && !s.external) {
-          setNamespace(s.qualified_name);
-          setView("types");
-        }
-      }}
-      emptyText="No namespaces found."
-    />
+    <>
+      <GraphCanvas
+        key="architecture"
+        graph={graph}
+        layoutKey="architecture"
+        selectedId={selection?.kind === "symbol" ? selection.id : null}
+        onNodeClick={(n) => {
+          // Groups of namespaces are not symbols.
+          const s = index?.byId.get(n.id);
+          if (s) select({ kind: "symbol", id: n.id }, s.origins[0] ?? null);
+        }}
+        onNodeDoubleClick={(n) => {
+          const s = index?.byId.get(n.id);
+          if (s && (s.kind === "Namespace" || s.kind === "Module") && !s.external) {
+            setNamespace(s.qualified_name);
+            setView("types");
+          }
+        }}
+        emptyText="No namespaces found."
+      />
+      {graph && graph.grouped > 0 && (
+        <div className="canvas-note">
+          {graph.grouped} namespaces and modules, grouped by path. The Hierarchy view opens them one by one.
+        </div>
+      )}
+    </>
   );
 }
 

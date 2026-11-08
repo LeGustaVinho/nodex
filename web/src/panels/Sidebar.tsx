@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { Fragment, type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { openMenu } from "../components/ContextMenu";
 import type { Symbol } from "../gen/Symbol";
@@ -33,12 +34,30 @@ const ICON: Record<string, string> = {
 export function Sidebar() {
   const { index } = useStructure();
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
-  const ui = useUi();
+  // Only what the tree shows: other store changes (connection, toggles…) do not re-render it.
+  const ui = useUi(
+    useShallow((s) => ({
+      view: s.view,
+      namespace: s.namespace,
+      selection: s.selection,
+      flowSymbol: s.flowSymbol,
+      setNamespace: s.setNamespace,
+      setView: s.setView,
+      select: s.select,
+      openFlow: s.openFlow,
+      focusCode: s.focusCode,
+      showUml: s.showUml,
+    })),
+  );
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [tab, setTab] = useState<"symbols" | "files">("symbols");
   const q = query.trim().toLowerCase();
-  const files = useMemo(() => fileTree((project.data?.files ?? []).map((f) => f.path)), [project.data]);
+  // Built only once the Files tab is shown.
+  const files = useMemo(
+    () => (tab === "files" ? fileTree((project.data?.files ?? []).map((f) => f.path)) : []),
+    [project.data, tab],
+  );
 
   const namespaces = useMemo(() => {
     if (!index) return [];
@@ -46,6 +65,16 @@ export function Sidebar() {
       .filter((s) => isScopeKind(s.kind) && !s.external)
       .sort((a, b) => a.qualified_name.localeCompare(b.qualified_name));
   }, [index]);
+
+  // Top-level types of each namespace (nested types appear under their parent).
+  const topTypes = useMemo(() => {
+    const map = new Map<string, Symbol[]>();
+    if (!index) return map;
+    for (const ns of namespaces) {
+      map.set(ns.id, index.typesIn(ns.qualified_name).filter((t) => !t.parent || isScopeKind(index.byId.get(t.parent)?.kind ?? "Class")));
+    }
+    return map;
+  }, [index, namespaces]);
 
   if (!index) return <aside className="sidebar">Loading…</aside>;
 
@@ -72,54 +101,59 @@ export function Sidebar() {
     if (s.has_flow) ui.openFlow(s.id);
   };
 
-  const renderMembers = (owner: Symbol, depth: number) =>
-    index
-      .members(owner.id)
-      .filter((m) => matches(m) || matches(owner) || (index.children.get(m.id) ?? []).some(matches))
-      .map((m) => {
-        const accessors = (index.children.get(m.id) ?? []).filter((c) => c.has_flow);
-        return (
-          <div key={m.id}>
-            <TreeRow symbol={m} depth={depth} active={ui.flowSymbol === m.id} onClick={() => clickSymbol(m)} />
-            {accessors.map((a) => (
-              <TreeRow key={a.id} symbol={a} depth={depth + 1} active={ui.flowSymbol === a.id} onClick={() => clickSymbol(a)} />
-            ))}
-          </div>
-        );
-      });
+  // The tree is a flat list of rows, so only the visible ones are rendered (a TypeScript project
+  // has a module per file: tens of thousands of rows).
+  const symbolRows: VirtualRow[] = [];
+  const row = (symbol: Symbol, depth: number, extra: { caret?: string; onCaret?: () => void; active?: boolean } = {}) =>
+    symbolRows.push({ key: symbol.id, render: () => <TreeRow symbol={symbol} depth={depth} {...extra} onClick={() => clickSymbol(symbol)} /> });
 
-  const renderType = (t: Symbol, depth: number): React.ReactNode => {
-    if (!typeVisible(t)) return null;
-    const nested = (index.children.get(t.id) ?? []).filter((c) => isTypeKind(c.kind));
-    return (
-      <div key={t.id}>
-        <TreeRow
-          symbol={t}
-          depth={depth}
-          caret={isOpen(t.id) ? "▾" : "▸"}
-          onCaret={() => toggle(t.id)}
-          active={ui.selection?.kind === "symbol" && ui.selection.id === t.id}
-          onClick={() => clickSymbol(t)}
-        />
-        {isOpen(t.id) && (
-          <>
-            {renderMembers(t, depth + 1)}
-            {nested.map((n) => renderType(n, depth + 1))}
-          </>
-        )}
-      </div>
-    );
+  const pushMembers = (owner: Symbol, depth: number) => {
+    for (const m of index.members(owner.id)) {
+      if (!(matches(m) || matches(owner) || (index.children.get(m.id) ?? []).some(matches))) continue;
+      row(m, depth, { active: ui.flowSymbol === m.id });
+      for (const a of (index.children.get(m.id) ?? []).filter((c) => c.has_flow)) row(a, depth + 1, { active: ui.flowSymbol === a.id });
+    }
   };
+
+  const pushType = (t: Symbol, depth: number) => {
+    if (!typeVisible(t)) return;
+    row(t, depth, {
+      caret: isOpen(t.id) ? "▾" : "▸",
+      onCaret: () => toggle(t.id),
+      active: ui.selection?.kind === "symbol" && ui.selection.id === t.id,
+    });
+    if (!isOpen(t.id)) return;
+    pushMembers(t, depth + 1);
+    for (const n of (index.children.get(t.id) ?? []).filter((c) => isTypeKind(c.kind))) pushType(n, depth + 1);
+  };
+
+  if (tab === "symbols") {
+    for (const ns of namespaces) {
+      const types = topTypes.get(ns.id) ?? [];
+      const free = index.freeMembers(ns.id);
+      if (q && !types.some(typeVisible) && !free.some(matches) && !matches(ns)) continue;
+      row(ns, 0, {
+        caret: isOpen(ns.id) ? "▾" : "▸",
+        onCaret: () => toggle(ns.id),
+        active: ui.namespace === ns.qualified_name && ui.view === "types",
+      });
+      if (!isOpen(ns.id)) continue;
+      if (free.length > 0) pushMembers(ns, 1);
+      for (const t of types) pushType(t, 1);
+    }
+  }
 
   const problems = project.data?.files.filter((f) => f.diagnostics.length > 0) ?? [];
 
   const fileMenu = (e: React.MouseEvent, node: FileNode) =>
     openMenu(e, umlMenuItems(node.folder ? { kind: "Folder", path: node.path } : { kind: "File", path: node.path }, `UML of ${node.name}`));
-  const renderFile = (node: FileNode, depth: number): React.ReactNode => {
-    if (q && !node.path.toLowerCase().includes(q)) return null;
+  const fileRows: VirtualRow[] = [];
+  const pushFile = (node: FileNode, depth: number) => {
+    if (q && !node.path.toLowerCase().includes(q)) return;
     const key = `file:${node.path}`;
-    return (
-      <div key={key}>
+    fileRows.push({
+      key,
+      render: () => (
         <div className="row" style={{ paddingLeft: 6 + depth * 14 }} onContextMenu={(e) => fileMenu(e, node)}>
           <span className="caret" onClick={() => node.folder && toggle(key)}>
             {node.folder ? (isOpen(key) ? "▾" : "▸") : ""}
@@ -138,10 +172,25 @@ export function Sidebar() {
             {node.folder && <span className="muted small">{node.files}</span>}
           </button>
         </div>
-        {node.folder && isOpen(key) && node.children.map((c) => renderFile(c, depth + 1))}
-      </div>
-    );
+      ),
+    });
+    if (node.folder && isOpen(key)) for (const c of node.children) pushFile(c, depth + 1);
   };
+  if (tab === "files") {
+    fileRows.push({
+      key: "project",
+      render: () => (
+        <div className="row" onContextMenu={(e) => openMenu(e, umlMenuItems({ kind: "Project" }, "UML of the project"))}>
+          <span className="caret" />
+          <button className="row-main" title="Right-click for UML diagrams of the whole project" onClick={() => ui.showUml({ kind: "Project" })}>
+            <span className="sym-icon">◆</span>
+            <span className="sym-name">{project.data?.name ?? "project"}</span>
+          </button>
+        </div>
+      ),
+    });
+    for (const f of files) pushFile(f, 1);
+  }
 
   return (
     <aside className="sidebar">
@@ -159,45 +208,7 @@ export function Sidebar() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
-      {tab === "files" && (
-        <div className="tree">
-          <div className="row" onContextMenu={(e) => openMenu(e, umlMenuItems({ kind: "Project" }, "UML of the project"))}>
-            <span className="caret" />
-            <button className="row-main" title="Right-click for UML diagrams of the whole project" onClick={() => ui.showUml({ kind: "Project" })}>
-              <span className="sym-icon">◆</span>
-              <span className="sym-name">{project.data?.name ?? "project"}</span>
-            </button>
-          </div>
-          {files.map((f) => renderFile(f, 1))}
-        </div>
-      )}
-      {tab === "symbols" && <div className="tree">
-        {namespaces.map((ns) => {
-          const types = index
-            .typesIn(ns.qualified_name)
-            .filter((t) => !t.parent || isScopeKind(index.byId.get(t.parent)?.kind ?? "Class"));
-          const free = index.freeMembers(ns.id);
-          if (q && !types.some(typeVisible) && !free.some(matches) && !matches(ns)) return null;
-          return (
-            <div key={ns.id}>
-              <TreeRow
-                symbol={ns}
-                depth={0}
-                caret={isOpen(ns.id) ? "▾" : "▸"}
-                onCaret={() => toggle(ns.id)}
-                active={ui.namespace === ns.qualified_name && ui.view === "types"}
-                onClick={() => clickSymbol(ns)}
-              />
-              {isOpen(ns.id) && (
-                <>
-                  {free.length > 0 && renderMembers(ns, 1)}
-                  {types.map((t) => renderType(t, 1))}
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>}
+      <VirtualList rows={tab === "files" ? fileRows : symbolRows} />
       {problems.length > 0 && (
         <div className="problems">
           <div className="section-title">Problems</div>
@@ -209,6 +220,44 @@ export function Sidebar() {
         </div>
       )}
     </aside>
+  );
+}
+
+/** One row of the sidebar tree. */
+interface VirtualRow {
+  key: string;
+  render: () => ReactNode;
+}
+
+/** Every row is this tall (`.tree .row` in styles.css): the list renders only those in view. */
+const ROW_HEIGHT = 22;
+/** Rows rendered above and below the visible ones, so fast scrolling shows no gap. */
+const OVERSCAN = 12;
+
+function VirtualList({ rows }: { rows: VirtualRow[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [scroll, setScroll] = useState(0);
+  const [height, setHeight] = useState(800);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setHeight(el.clientHeight));
+    observer.observe(el);
+    setHeight(el.clientHeight);
+    return () => observer.disconnect();
+  }, []);
+  const first = Math.max(0, Math.floor(scroll / ROW_HEIGHT) - OVERSCAN);
+  const last = Math.min(rows.length, Math.ceil((scroll + height) / ROW_HEIGHT) + OVERSCAN);
+  return (
+    <div className="tree" ref={ref} onScroll={(e) => setScroll(e.currentTarget.scrollTop)}>
+      <div style={{ height: rows.length * ROW_HEIGHT }}>
+        <div style={{ transform: `translateY(${first * ROW_HEIGHT}px)` }}>
+          {rows.slice(first, last).map((r) => (
+            <Fragment key={r.key}>{r.render()}</Fragment>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
