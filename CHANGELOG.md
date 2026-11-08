@@ -6,6 +6,19 @@ The release workflow publishes the section of the version it builds as the relea
 
 ## [Unreleased]
 
+### Changed
+
+- Large projects open much faster. A Unity project of 1,500 C# files shows its Overview in about 1 second instead of more than 10, and a project of 10,000 TypeScript files in about 2 seconds.
+- A newly opened project starts on the Overview. Architecture groups namespaces and modules by folder when there are more than 300 of them.
+- Opening a folder shows how many files have been found and read.
+- C# semantic analysis (Roslyn) runs about twice as fast.
+- Nodex skips more build and cache folders (`Builds`, `vendor`, `.yarn`, `.cache`, `Pods`, …) and the files a project's own `.gitignore` leaves out.
+
+### Fixed
+
+- The Architecture view of a project with many interdependent namespaces never finished laying out.
+- After opening another project, the sidebar could keep showing the previous one.
+
 ## [0.1.0] - 2026-11-08
 
 First public release.
