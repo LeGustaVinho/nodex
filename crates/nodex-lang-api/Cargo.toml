@@ -8,6 +8,7 @@ description = "Extension contract (LanguageFrontend) and lowering kit for Nodex 
 [dependencies]
 nodex-ir.workspace = true
 tree-sitter.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 

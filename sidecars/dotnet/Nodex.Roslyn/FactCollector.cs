@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -6,8 +7,15 @@ using Microsoft.CodeAnalysis.Text;
 namespace Nodex.Roslyn;
 
 /// Walks documents and records calls, creations, bases, event usage and local types.
-public sealed class FactCollector(ProjectHost host)
+/// Collectors of several documents can run at once when they share <paramref name="maps"/>;
+/// <see cref="Merge"/> then joins them in document order.
+public sealed class FactCollector(ProjectHost host, ConcurrentDictionary<string, FactCollector.ByteMap> maps)
 {
+    public FactCollector(ProjectHost host) : this(host, NewMaps()) { }
+
+    /// A cache of byte maps by file path, shared by collectors that run in parallel.
+    public static ConcurrentDictionary<string, ByteMap> NewMaps() => new(StringComparer.OrdinalIgnoreCase);
+
     private static readonly SymbolDisplayFormat Display = new(
         typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypes,
         genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
@@ -21,8 +29,15 @@ public sealed class FactCollector(ProjectHost host)
 
     private readonly List<SemanticRef> _refs = [];
     private readonly List<LocalTypeFact> _locals = [];
-    private readonly Dictionary<string, ByteMap> _maps = new(StringComparer.OrdinalIgnoreCase);
     private int _unresolvedCalls;
+
+    /// Appends what <paramref name="other"/> collected (a later document).
+    public void Merge(FactCollector other)
+    {
+        _refs.AddRange(other._refs);
+        _locals.AddRange(other._locals);
+        _unresolvedCalls += other._unresolvedCalls;
+    }
 
     public async Task CollectAsync(Document doc)
     {
@@ -147,9 +162,10 @@ public sealed class FactCollector(ProjectHost host)
         return new SemanticTarget(decl, display, container, kind, linq, decl is null);
     }
 
-    private ByteMap MapFor(SyntaxTree tree)
+    private ByteMap MapFor(SyntaxTree tree) => maps.GetOrAdd(tree.FilePath, _ => NewMap(tree));
+
+    private ByteMap NewMap(SyntaxTree tree)
     {
-        if (_maps.TryGetValue(tree.FilePath, out var map)) return map;
         var bom = 0;
         try
         {
@@ -158,9 +174,7 @@ public sealed class FactCollector(ProjectHost host)
             if (stream.Read(head) == 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF) bom = 3;
         }
         catch (IOException) { }
-        map = new ByteMap(host.Relative(tree.FilePath), tree.GetText().ToString(), bom);
-        _maps[tree.FilePath] = map;
-        return map;
+        return new ByteMap(host.Relative(tree.FilePath), tree.GetText().ToString(), bom);
     }
 
     public SemanticFacts Finish(string source, List<string> hostMessages)
@@ -174,7 +188,7 @@ public sealed class FactCollector(ProjectHost host)
     }
 
     /// Converts UTF-16 positions (Roslyn) to UTF-8 byte offsets (tree-sitter).
-    private sealed class ByteMap
+    public sealed class ByteMap
     {
         private readonly string _file;
         private readonly int[] _bytes;

@@ -186,13 +186,23 @@ public sealed class ProjectHost
         }
     }
 
+    /// Collects the facts of every document, several at once (Roslyn's solution and compilations
+    /// are immutable and thread-safe), and joins them in document order, so the result is the
+    /// same as one document after another.
     public async Task<SemanticFacts> AnalyzeAsync()
     {
-        var collector = new FactCollector(this);
-        foreach (var doc in SourceDocuments())
+        var docs = SourceDocuments().ToList();
+        var maps = FactCollector.NewMaps();
+        var parts = new FactCollector[docs.Count];
+        var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) };
+        await Parallel.ForEachAsync(Enumerable.Range(0, docs.Count), options, async (i, _) =>
         {
-            await collector.CollectAsync(doc);
-        }
-        return collector.Finish(Source, Messages);
+            var part = new FactCollector(this, maps);
+            await part.CollectAsync(docs[i]);
+            parts[i] = part;
+        });
+        var all = new FactCollector(this, maps);
+        foreach (var part in parts) all.Merge(part);
+        return all.Finish(Source, Messages);
     }
 }

@@ -2782,6 +2782,7 @@ name = "nodex-lang-api"
 version = "0.1.0"
 dependencies = [
  "nodex-ir",
+ "serde",
  "serde_json",
  "tracing",
  "tree-sitter",

@@ -14,7 +14,22 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::OnceLock;
 
 use nodex_ir::semantic::SemanticFacts;
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+
+/// The id of a response line.
+#[derive(Deserialize)]
+struct Head {
+    id: Option<u64>,
+}
+
+/// A response line: a result or an error.
+#[derive(Deserialize)]
+struct Response<T> {
+    result: Option<T>,
+    error: Option<String>,
+}
 
 /// A running sidecar process.
 pub struct LineSidecar {
@@ -53,6 +68,17 @@ impl LineSidecar {
 
     /// Sends a request and waits for its response.
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.request_as(method, params)
+    }
+
+    /// Sends a request whose result is a [`SemanticFacts`] object.
+    pub fn facts(&mut self, method: &str, params: Value) -> Result<SemanticFacts, String> {
+        self.request_as(method, params)
+    }
+
+    /// Sends a request and reads its result straight into `T` (the facts of a large project are
+    /// tens of megabytes on one line: no intermediate JSON tree).
+    fn request_as<T: DeserializeOwned>(&mut self, method: &str, params: Value) -> Result<T, String> {
         let name = self.name;
         let id = self.next_id;
         self.next_id += 1;
@@ -67,22 +93,22 @@ impl LineSidecar {
             if read == 0 {
                 return Err(format!("{name} sidecar exited unexpectedly"));
             }
-            let Ok(message) = serde_json::from_str::<Value>(buf.trim()) else { continue };
-            if message.get("id").and_then(Value::as_u64) != Some(id) {
+            // Only the id first (other fields are skipped, not built), then the whole response.
+            let Ok(head) = serde_json::from_str::<Head>(buf.trim()) else { continue };
+            if head.id != Some(id) {
                 continue;
             }
-            if let Some(err) = message.get("error").and_then(Value::as_str) {
+            let response: Response<T> =
+                serde_json::from_str(buf.trim()).map_err(|e| format!("unexpected response from the {name} sidecar: {e}"))?;
+            if let Some(err) = response.error {
                 return Err(format!("{name}: {err}"));
             }
-            return Ok(message.get("result").cloned().unwrap_or(Value::Null));
+            return match response.result {
+                Some(result) => Ok(result),
+                // `null` (or no result) for a method that returns nothing.
+                None => serde_json::from_value(Value::Null).map_err(|e| format!("unexpected response from the {name} sidecar: {e}")),
+            };
         }
-    }
-
-    /// Sends a request whose result is a [`SemanticFacts`] object.
-    pub fn facts(&mut self, method: &str, params: Value) -> Result<SemanticFacts, String> {
-        let name = self.name;
-        let value = self.request(method, params)?;
-        serde_json::from_value(value).map_err(|e| format!("unexpected facts from the {name} sidecar: {e}"))
     }
 }
 

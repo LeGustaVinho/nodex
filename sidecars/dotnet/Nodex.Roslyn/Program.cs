@@ -66,8 +66,9 @@ public static class Program
                     default:
                         throw new ArgumentException($"unknown method '{method}'");
                 }
-                var response = new JsonObject { ["id"] = id, ["result"] = JsonSerializer.SerializeToNode(result, Json) };
-                await Write(output, response);
+                // Serialized straight to text: facts of a large project are tens of megabytes, too
+                // many to build as a JSON tree first.
+                await output.WriteLineAsync($"{{\"id\":{id?.ToJsonString() ?? "null"},\"result\":{JsonSerializer.Serialize(result, Json)}}}");
             }
             catch (Exception ex)
             {
