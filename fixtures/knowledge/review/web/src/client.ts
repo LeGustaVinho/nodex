@@ -9,3 +9,7 @@ export function loadWidget(id: string) {
 export function list() {
   return api.get("/api/gadgets", { params: { all: true } });
 }
+
+export function ping() {
+  return api.get("/api/ping");
+}

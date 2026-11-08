@@ -128,6 +128,7 @@ const LEGEND: { kind: StructEdgeKind; label: string; color: string; dash?: strin
   { kind: "ResolvesDi", label: "provides (DI)", color: KNOWLEDGE_COLORS.resolvesdi },
   { kind: "Tests", label: "tests", color: KNOWLEDGE_COLORS.tests, dash: "4 3" },
   { kind: "Throws", label: "throws", color: KNOWLEDGE_COLORS.throws },
+  { kind: "CaughtBy", label: "caught by", color: KNOWLEDGE_COLORS.caughtby, dash: "4 3" },
   { kind: "Mutates", label: "changes", color: KNOWLEDGE_COLORS.mutates },
 ];
 

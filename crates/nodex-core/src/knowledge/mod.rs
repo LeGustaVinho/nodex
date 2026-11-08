@@ -223,11 +223,12 @@ pub fn build(graph: &StructureGraph, files: &[&FileIr], constructs: &Constructs,
     }
     let inferred: HashSet<(String, String)> = dispatch.iter().map(|d| (d.from.clone(), d.to.clone())).collect();
     // Exceptions every throw site of a function catches itself never reach its callers.
+    let lineages = global::Lineage::new(ctx.edges);
     let mut escaping: HashSet<(&str, &str)> = HashSet::new();
     let mut thrown: HashSet<(&str, &str)> = HashSet::new();
     for (from, ty, catches) in &throw_sites {
         thrown.insert((from, ty));
-        if !global::handles(&ctx, ty, catches) {
+        if !lineages.handles(&ctx, ty, catches) {
             escaping.insert((from, ty));
         }
     }
@@ -272,16 +273,26 @@ fn package_of<'r>(file: &str, roots: &'r [String]) -> &'r str {
         .unwrap_or("")
 }
 
-/// Resolves the handlers named in another file, applies project-wide prefixes (`global`, per
-/// framework within one package) and normalizes every route.
+/// Resolves the handlers named in another file, applies project-wide prefixes and normalizes
+/// every route. A `global` prefix applies to the routes of its framework in the same package; a
+/// package without one (a library of controllers) takes the framework's prefix when the project
+/// has only one.
 pub fn resolve_routes(files: &[&FileIr], symbols: &HashMap<&str, &Symbol>, package_roots: &[String]) -> Vec<ResolvedRoute> {
     let mut global: HashMap<(&str, &str), &str> = HashMap::new();
+    let mut by_framework: HashMap<&str, BTreeSet<&str>> = HashMap::new();
     for file in files {
         let package = package_of(&file.file, package_roots);
         for p in file.knowledge.prefixes.iter().filter(|p| p.kind == "global") {
             global.insert((p.framework.as_str(), package), p.prefix.as_str());
+            by_framework.entry(p.framework.as_str()).or_default().insert(p.prefix.as_str());
         }
     }
+    let prefix_of = |framework: &str, package: &str| -> Option<&str> {
+        global.get(&(framework, package)).copied().or_else(|| {
+            let all = by_framework.get(framework)?;
+            (all.len() == 1).then(|| *all.iter().next().unwrap())
+        })
+    };
     let mut functions: HashMap<&str, Vec<&Symbol>> = HashMap::new();
     for s in symbols.values().filter(|s| matches!(s.kind, SymbolKind::Function | SymbolKind::Method) && !s.external) {
         functions.entry(s.name.as_str()).or_default().push(s);
@@ -290,7 +301,7 @@ pub fn resolve_routes(files: &[&FileIr], symbols: &HashMap<&str, &Symbol>, packa
     for file in files {
         let package = package_of(&file.file, package_roots);
         for r in &file.knowledge.routes {
-            let path = match global.get(&(r.framework.as_str(), package)) {
+            let path = match prefix_of(r.framework.as_str(), package) {
                 Some(prefix) if r.method != "PAGE" => routes::join_route(prefix, &r.path),
                 _ => routes::join_route("", &r.path),
             };
@@ -309,9 +320,10 @@ pub fn resolve_routes(files: &[&FileIr], symbols: &HashMap<&str, &Symbol>, packa
     out
 }
 
-/// The function a route names (`ordersController.list`, `Handlers.Get`, `handlers::list`): the
-/// only function of that name in the language, or the only one whose owner matches the qualifier
-/// (a class, an instance named after it, or a module). `None` keeps the frontend's guess.
+/// The function a route names (`ordersController.list`, `Handlers.Get`, `handlers::list`): with a
+/// qualifier, the only function of that name whose owner matches it (a class, an instance named
+/// after it, or a module); without one, the only function of that name in the language. `None`
+/// keeps the frontend's guess.
 fn resolve_handler(r: &RouteFact, language: Language, functions: &HashMap<&str, Vec<&Symbol>>, symbols: &HashMap<&str, &Symbol>) -> Option<SymbolId> {
     let written = r.handler_ref.as_deref()?.replace("::", ".");
     let mut parts: Vec<&str> = written.split('.').filter(|p| !p.is_empty() && *p != "this").collect();
@@ -323,11 +335,11 @@ fn resolve_handler(r: &RouteFact, language: Language, functions: &HashMap<&str, 
         let file_stem = parent.qualified_name.rsplit('/').next().unwrap_or("").split('.').next().unwrap_or("");
         [parent.name.as_str(), tail, file_stem].iter().any(|n| !n.is_empty() && n.eq_ignore_ascii_case(q))
     };
-    let narrowed: Vec<&Symbol> = match parts.last() {
+    // A qualifier no owner matches (an object literal, a package import) names something else.
+    let pick: Vec<&Symbol> = match parts.last() {
         Some(q) => candidates.iter().copied().filter(|s| owner_matches(s, q)).collect(),
-        None => Vec::new(),
+        None => candidates,
     };
-    let pick = if narrowed.is_empty() { &candidates } else { &narrowed };
     match pick.as_slice() {
         [one] => Some(one.id.clone()),
         // Several: keep the frontend's choice when it is one of them.

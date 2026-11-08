@@ -2,7 +2,9 @@
 //! `models.rs`): dependency injection, data models and their writes, tests, and where thrown
 //! exceptions are caught.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
 use nodex_ir::knowledge::{Confidence, DataModel, EntityFact, EntryKind, GlobalHandlerFact, ModelField, ModelInfo, SymbolInfo};
 use nodex_ir::{FileIr, StructEdge, StructEdgeKind, Symbol, SymbolId, SymbolKind};
@@ -281,14 +283,51 @@ pub struct CallSite {
     pub catches: Vec<String>,
 }
 
-/// True when one of `catches` (types of enclosing `catch` clauses; `*` for every error) handles
-/// exception type `ty` or one of its base types.
-pub fn handles(ctx: &Ctx, ty: &str, catches: &[String]) -> bool {
-    if catches.is_empty() {
-        return false;
+/// Exception types and what catches them: the base types of every type (read once from the
+/// `Inherits` edges) and each type's lineage, computed on first use.
+pub struct Lineage<'a> {
+    bases: HashMap<&'a str, Vec<&'a str>>,
+    cache: RefCell<HashMap<String, Rc<HashSet<String>>>>,
+}
+
+impl<'a> Lineage<'a> {
+    pub fn new(edges: &'a [StructEdge]) -> Self {
+        let mut bases: HashMap<&str, Vec<&str>> = HashMap::new();
+        for e in edges.iter().filter(|e| e.kind == StructEdgeKind::Inherits) {
+            bases.entry(e.from.as_str()).or_default().push(e.to.as_str());
+        }
+        Self { bases, cache: RefCell::new(HashMap::new()) }
     }
-    let lineage = ancestors(ctx, ty);
-    catches.iter().any(|t| t == "*" || lineage.contains(&simple_name(t)))
+
+    /// Simple names of `ty` and its base types, plus the universal roots (`Exception`, `Error`).
+    pub fn of(&self, ctx: &Ctx, ty: &str) -> Rc<HashSet<String>> {
+        if let Some(known) = self.cache.borrow().get(ty) {
+            return known.clone();
+        }
+        let mut out: HashSet<String> = ["Exception", "Error", "Throwable", "object", "Object"].iter().map(|s| s.to_string()).collect();
+        let mut cur = vec![ty];
+        let mut seen = HashSet::new();
+        while let Some(t) = cur.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            out.insert(simple_name(&ctx.name(t)));
+            cur.extend(self.bases.get(t).into_iter().flatten().copied());
+        }
+        let out = Rc::new(out);
+        self.cache.borrow_mut().insert(ty.to_owned(), out.clone());
+        out
+    }
+
+    /// True when one of `catches` (types of enclosing `catch` clauses; `*` for every error)
+    /// handles exception type `ty` or one of its base types.
+    pub fn handles(&self, ctx: &Ctx, ty: &str, catches: &[String]) -> bool {
+        if catches.is_empty() {
+            return false;
+        }
+        let lineage = self.of(ctx, ty);
+        catches.iter().any(|t| t == "*" || lineage.contains(&simple_name(t)))
+    }
 }
 
 /// Where each thrown exception is caught: walks up the callers of the throwing function until a
@@ -309,12 +348,12 @@ pub fn caught_by_edges(
         callers.entry(s.target.as_str()).or_default().push(s);
     }
     let mut out: BTreeMap<(String, String), StructEdge> = BTreeMap::new();
+    let lineages = Lineage::new(ctx.edges);
     for throw in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Throws) {
         if caught_locally.contains(&(throw.from.clone(), throw.to.clone())) {
             continue;
         }
-        let lineage = ancestors(ctx, &throw.to);
-        let handles = |types: &[String]| types.iter().any(|t| t == "*" || lineage.contains(&simple_name(t)));
+        let handles = |types: &[String]| lineages.handles(ctx, &throw.to, types);
         // BFS over callers: (function reached, confidence so far, depth).
         let mut queue = VecDeque::from([(throw.from.as_str(), Confidence::Exact, 0usize)]);
         let mut seen = HashSet::new();
@@ -353,21 +392,4 @@ pub fn caught_by_edges(
         }
     }
     out.into_values().collect()
-}
-
-/// Simple names of a type and its base types (through `Inherits` edges), plus the universal roots.
-fn ancestors(ctx: &Ctx, ty: &str) -> HashSet<String> {
-    let mut out: HashSet<String> = ["Exception", "Error", "Throwable", "object", "Object"].iter().map(|s| s.to_string()).collect();
-    let mut cur = vec![ty.to_owned()];
-    let mut seen = HashSet::new();
-    while let Some(t) = cur.pop() {
-        if !seen.insert(t.clone()) {
-            continue;
-        }
-        out.insert(simple_name(&ctx.name(&t)));
-        for e in ctx.edges.iter().filter(|e| e.kind == StructEdgeKind::Inherits && e.from == t) {
-            cur.push(e.to.clone());
-        }
-    }
-    out
 }

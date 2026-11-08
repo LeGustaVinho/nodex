@@ -395,3 +395,25 @@ fn diesel_writes_without_the_crate_prefix_change_their_model() {
         assert!(edge(&graph, &id, &gadget, StructEdgeKind::Mutates).is_some(), "{f} writes gadgets");
     }
 }
+
+#[test]
+fn a_qualifier_no_owner_matches_keeps_the_frontend_guess() {
+    let mut project = open("knowledge/review");
+    let k = project.knowledge();
+    let ping = k.routes.iter().find(|r| r.path == "/api/ping").expect("app.get(\"/api/ping\", controller.ping)");
+    assert_ne!(ping.handler, "web/src/client.ping", "`controller` is a package import, not web/src/client");
+}
+
+#[test]
+fn fastify_route_options_name_their_handler() {
+    let mut project = open("knowledge/review");
+    let k = project.knowledge();
+    assert_eq!(routes_of(&k, "server/src/fast.health"), vec![("GET", "/api/fast")]);
+}
+
+#[test]
+fn a_library_of_controllers_takes_the_only_global_prefix() {
+    let mut project = open("knowledge/nest-libs");
+    let k = project.knowledge();
+    assert_eq!(routes_of(&k, "libs/orders/src/orders.controller.OrdersController.list"), vec![("GET", "/api/orders")]);
+}

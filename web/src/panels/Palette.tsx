@@ -70,6 +70,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const total = symbols.length + commands.length;
 
   const choose = (i: number, alt: boolean) => {
+    if (i < 0 || i >= total) return;
     if (i < symbols.length) {
       const s = symbols[i];
       onClose();
@@ -101,7 +102,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             if (e.key === "Escape") onClose();
             else if (e.key === "ArrowDown") {
               e.preventDefault();
-              setActive((a) => Math.min(total - 1, a + 1));
+              setActive((a) => Math.max(0, Math.min(total - 1, a + 1)));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setActive((a) => Math.max(0, a - 1));

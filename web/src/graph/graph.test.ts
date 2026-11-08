@@ -277,6 +277,13 @@ describe("callGraph", () => {
   it("limits the depth", () => {
     expect(callGraph(index, "App.S.Ship()", 1).nodes).toHaveLength(3);
   });
+
+  it("keeps the confidence of calls deduced from dependency injection", () => {
+    const di = new StructureIndex({ ...calls, edges: [...calls.edges, { from: "App.S.Log()", to: "App.S.Unrelated()", kind: "Calls", confidence: "Inferred" }] });
+    const e = callGraph(di, "App.S.Log()", 1).edges.find((x) => x.target === "App.S.Unrelated()" && x.source === "App.S.Log()");
+    expect(e?.confidence).toBe("Inferred");
+    expect(callGraph(di, "App.S.Log()", 1).edges.find((x) => x.source === "App.S.Unrelated()")?.confidence).toBeNull();
+  });
 });
 
 describe("pointerBadge", () => {

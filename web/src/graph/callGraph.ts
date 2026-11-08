@@ -73,7 +73,8 @@ export function callGraph(index: StructureIndex, focus: string, depth: number): 
   for (const e of edges) {
     const key = `${e.from}->${e.to}:${e.kind}`;
     if (!used.has(key) || !distance.has(e.from) || !distance.has(e.to) || e.from === e.to) continue;
-    gedges.push({ id: key, source: e.from, target: e.to, kind: EDGE_KIND[e.kind] ?? "calls", layout: true });
+    // Calls deduced from dependency injection keep their confidence (drawn dashed).
+    gedges.push({ id: key, source: e.from, target: e.to, kind: EDGE_KIND[e.kind] ?? "calls", layout: true, confidence: e.confidence ?? null, data: e });
   }
   return { nodes, edges: gedges, direction: "RIGHT" };
 }

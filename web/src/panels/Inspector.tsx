@@ -358,11 +358,13 @@ export function Inspector() {
           {outgoing.map((e) => (
             <div key={`o${e.to}${e.kind}`} className="value-row">
               {e.kind.toLowerCase()} → <code>{name(e.to)}</code>
+              {e.confidence && <span className={`conf conf-${e.confidence.toLowerCase()}`} title={e.evidence ?? undefined}>{e.confidence.toLowerCase()}</span>}
             </div>
           ))}
           {incoming.map((e) => (
             <div key={`i${e.from}${e.kind}`} className="value-row">
               <code>{name(e.from)}</code> → {e.kind.toLowerCase()} this
+              {e.confidence && <span className={`conf conf-${e.confidence.toLowerCase()}`} title={e.evidence ?? undefined}>{e.confidence.toLowerCase()}</span>}
             </div>
           ))}
         </div>

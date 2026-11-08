@@ -375,9 +375,14 @@ impl<'a> Walker<'a> {
         let routerish = matches!(recv_last.as_str(), "app" | "router" | "fastify")
             || recv_last.ends_with("router")
             || self.imports_server && matches!(recv_last.as_str(), "server" | "routes" | "api");
-        // A route always has a handler after the path; a client call has a config object or nothing.
-        let handler_arg = args.last().copied().filter(|a| {
-            args.len() >= 2 && (crate::syntax::is_function_value(a.kind()) || matches!(a.kind(), "identifier" | "member_expression" | "call_expression"))
+        // A route always has a handler after the path; a client call has a config object or
+        // nothing. Fastify route options carry it as `{ schema, handler }`; a spread
+        // (`...middlewares`) hides it.
+        let handler_arg = args.last().copied().filter(|_| args.len() >= 2).and_then(|a| match a.kind() {
+            "object" => options_handler(src, a).map(Some),
+            "spread_element" => Some(None),
+            k if crate::syntax::is_function_value(k) || matches!(k, "identifier" | "member_expression" | "call_expression") => Some(Some(a)),
+            _ => None,
         });
         if routerish
             && ROUTE_VERBS.contains(&name.as_str())
@@ -389,7 +394,7 @@ impl<'a> Walker<'a> {
                 "all" => "ANY".to_owned(),
                 other => other.to_uppercase(),
             };
-            let (handler, handler_ref) = self.handler_of(Some(handler_arg));
+            let (handler, handler_ref) = self.handler_of(handler_arg);
             let handler = handler.unwrap_or_else(|| owner.clone());
             self.out.routes.push(RouteFact { handler, handler_ref, method, path: path.clone(), framework: self.server.into(), span: src.span(node) });
             return;
@@ -504,6 +509,14 @@ impl<'a> Walker<'a> {
     fn mutation(&mut self, owner: &str, target: &str, kind: &str, node: Node) {
         self.out.mutations.push(MutationFact { owner: owner.to_owned(), target: target.to_owned(), kind: kind.into(), span: self.src.span(node) });
     }
+}
+
+/// The `handler` of Fastify route options (`{ schema, handler: list }`).
+fn options_handler<'t>(src: Src, options: Node<'t>) -> Option<Node<'t>> {
+    children_of_kind(options, "pair")
+        .into_iter()
+        .find(|p| p.child_by_field_name("key").is_some_and(|k| src.norm(k) == "handler"))
+        .and_then(|p| p.child_by_field_name("value"))
 }
 
 /// `["users", "[id]"]` → `/users/[id]` (route groups `(admin)` are not part of the URL).
