@@ -194,9 +194,10 @@ function Canvas({ graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, 
         );
         if (fittedKey.current !== layoutKey || refit) {
           fittedKey.current = layoutKey;
-          // Wide Blueprints: start readable at the entry instead of shrinking everything.
-          const focus = refit && selectedId && graph.nodes.some((n) => n.id === selectedId) ? [{ id: selectedId }] : null;
-          pendingFit.current = focus ?? (fitFirst ? graph.nodes.slice(0, fitFirst).map((n) => ({ id: n.id })) : []);
+          // Opened at a node (a debugger stop, a search hit): start there. Wide Blueprints: start
+          // readable at the entry instead of shrinking everything.
+          if (selectedId && graph.nodes.some((n) => n.id === selectedId)) pendingFit.current = [{ id: selectedId }];
+          else pendingFit.current = fitFirst ? graph.nodes.slice(0, fitFirst).map((n) => ({ id: n.id })) : [];
         }
       })
       .catch((err) => console.error("layout failed", err))

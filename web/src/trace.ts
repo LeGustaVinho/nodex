@@ -26,6 +26,8 @@ interface TraceState {
   /** Replay of one flow's recorded steps; `index` is the step shown. */
   replay: { flow: string; page: StepsPage; index: number } | null;
   setStatus: (s: RunStatus) => void;
+  /** Forget the last run (another project was opened). */
+  reset: () => void;
   appendOutput: (lines: OutputLine[]) => void;
   applyFrame: (f: TraceFrame) => void;
   loadSnapshot: (s: RunSnapshot) => void;
@@ -45,10 +47,11 @@ const merge = <T,>(base: Nested<T>, delta: Record<string, Record<string, T> | un
 const empty = { counts: {}, calls: {}, values: {}, vars: {}, throws: {}, active: [], events: 0, dropped: 0, replay: null };
 
 export const useTrace = create<TraceState>((set) => ({
-  status: { state: "idle", detail: "", exit_code: null },
+  status: { state: "idle", detail: "", exit_code: null, url: null },
   output: [],
   ...empty,
   consoleOpen: false,
+  reset: () => set({ ...empty, output: [], status: { state: "idle", detail: "", exit_code: null, url: null } }),
   setStatus: (status) =>
     set((s) =>
       status.state === "preparing"

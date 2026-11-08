@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { type ByteOffset, byteOffsets } from "./positions.js";
 import { ProjectHost } from "./project.js";
+import { detectTarget, instrumentBrowser, reinstrumentFile } from "./browser.js";
 
 interface PointMap {
   file: string;
@@ -31,7 +32,7 @@ interface PointMap {
   end: number;
 }
 
-interface MethodMap {
+export interface MethodMap {
   id: number;
   name: string;
   kind: "method" | "constructor" | "resume";
@@ -58,11 +59,34 @@ export function instrumentCommand(args: string[]): number {
   const root = opt("root");
   const out = opt("out");
   if (!root || !out) {
-    console.error("usage: nodex-ts instrument --root <project> --out <dir> [--runtime <runtime.cjs>]");
+    console.error("usage: nodex-ts instrument --root <project> --out <dir> [--target auto|node|browser --ws-url <url>] [--runtime <file>] [--file <changed> --first-id <n>]");
     return 2;
   }
   try {
-    const result = instrument(path.resolve(root), path.resolve(out), opt("runtime"));
+    const target = opt("target") ?? "auto";
+    const resolvedRoot = path.resolve(root);
+    const file = opt("file");
+    if (file) {
+      // One changed file of a running browser app.
+      const methods = reinstrumentFile(resolvedRoot, path.resolve(out), path.resolve(file), Number(opt("first-id") ?? "1"), instrumenter);
+      process.stdout.write(`NODEX-RESULT ${JSON.stringify({ mode: "file", methods })}\n`);
+      return 0;
+    }
+    if (opt("debug")) {
+      // A plain JavaScript copy with source maps for the debugger (no probes).
+      const result = instrument(resolvedRoot, path.resolve(out), undefined, true);
+      process.stdout.write(`NODEX-RESULT ${JSON.stringify({ mode: "debug", ...result })}\n`);
+      return 0;
+    }
+    const mode = target === "auto" ? detectTarget(resolvedRoot) : target;
+    if (mode === "browser") {
+      const wsUrl = opt("ws-url");
+      if (!wsUrl) throw new Error("--ws-url is required for browser apps");
+      const result = instrumentBrowser(resolvedRoot, path.resolve(out), wsUrl, opt("runtime") ?? defaultRuntime("runtime-browser.js"), instrumenter);
+      process.stdout.write(`NODEX-RESULT ${JSON.stringify(result)}\n`);
+      return 0;
+    }
+    const result = { mode: "node", ...instrument(resolvedRoot, path.resolve(out), opt("runtime")) };
     process.stdout.write(`NODEX-RESULT ${JSON.stringify(result)}\n`);
     return 0;
   } catch (err) {
@@ -72,6 +96,10 @@ export function instrumentCommand(args: string[]): number {
 }
 
 export interface InstrumentResult {
+  /** The compiled copy's folder. */
+  out: string;
+  /** The entry's source file (relative). */
+  source: string;
   /** The instrumented entry file to run with Node. */
   entry: string;
   /** The runtime to preload (`node --require`). */
@@ -80,13 +108,13 @@ export interface InstrumentResult {
   description: string;
 }
 
-export function instrument(root: string, out: string, runtimeArg?: string): InstrumentResult {
+export function instrument(root: string, out: string, runtimeArg?: string, debug = false): InstrumentResult {
   const say = (line: string) => process.stdout.write(`${line}\n`);
   const project = new ProjectHost(root);
   project.open();
   say(`Loaded ${project.describe()}`);
 
-  const jsOut = path.join(out, "js");
+  const jsOut = path.join(out, debug ? "debug-js" : "js");
   fs.rmSync(jsOut, { recursive: true, force: true });
   fs.mkdirSync(jsOut, { recursive: true });
 
@@ -101,9 +129,11 @@ export function instrument(root: string, out: string, runtimeArg?: string): Inst
       emitDeclarationOnly: false,
       declaration: false,
       declarationMap: false,
-      sourceMap: false,
+      sourceMap: debug,
       inlineSourceMap: false,
       inlineSources: false,
+      sourceRoot: undefined,
+      mapRoot: undefined,
       composite: false,
       incremental: false,
       tsBuildInfoFile: undefined,
@@ -120,12 +150,12 @@ export function instrument(root: string, out: string, runtimeArg?: string): Inst
       if (sf.isDeclarationFile || done.has(sf.fileName) || !project.isProjectFile(sf.fileName)) continue;
       done.add(sf.fileName);
       const rel = project.relative(sf.fileName)!;
-      const result = program.emit(sf, writeFile, undefined, false, { before: [instrumenter(rel, methods)] });
+      const result = program.emit(sf, writeFile, undefined, false, debug ? undefined : { before: [instrumenter(rel, methods)] });
       if (result.emitSkipped) say(`  skipped ${rel}`);
       else emitted++;
     }
   }
-  say(`Instrumented ${emitted} files, ${methods.filter((m) => m.kind !== "resume").length} functions`);
+  say(debug ? `Compiled ${emitted} files with source maps` : `Instrumented ${emitted} files, ${methods.filter((m) => m.kind !== "resume").length} functions`);
 
   copyRuntimeFiles(root, jsOut);
 
@@ -138,7 +168,7 @@ export function instrument(root: string, out: string, runtimeArg?: string): Inst
   const source = findEntry(root, project);
   const entry = path.join(jsOut, emittedName(source));
   if (!fs.existsSync(entry)) throw new Error(`the entry ${source} was not emitted (${entry})`);
-  return { entry, runtime, map, description: `${source} (Node.js, instrumented)` };
+  return { entry, runtime, map, out: jsOut, source, description: `${source} (Node.js, instrumented)` };
 }
 
 function writeFile(fileName: string, text: string): void {
@@ -146,10 +176,10 @@ function writeFile(fileName: string, text: string): void {
   fs.writeFileSync(fileName, text);
 }
 
-function defaultRuntime(): string {
-  // dist/instrument.js → ../../nodex-trace/runtime.cjs (repository and installed layouts).
+function defaultRuntime(name = "runtime.cjs"): string {
+  // dist/instrument.js → ../../nodex-trace/<name> (repository and installed layouts).
   const here = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(here, "..", "..", "nodex-trace", "runtime.cjs");
+  return path.resolve(here, "..", "..", "nodex-trace", name);
 }
 
 /** JavaScript and JSON files the compiler did not emit (plain .js helpers, data files). */

@@ -5,6 +5,7 @@ import type { OperationInfo } from "../gen/OperationInfo";
 import type { StructureGraph } from "../gen/StructureGraph";
 import type { Symbol } from "../gen/Symbol";
 import { pointerBadge } from "./pointers";
+import { breadcrumbs, folderName } from "../paths";
 import { callGraph } from "./callGraph";
 import { type BlueprintData, type ExprData, flowToGraph } from "./flowGraph";
 import { StructureIndex, architectureGraph, typesGraph } from "./structureGraph";
@@ -292,5 +293,14 @@ describe("pointerBadge", () => {
     expect(pointerBadge("MutexGuard<…>")?.label).toBe("lock");
     expect(pointerBadge("&mut String")?.label).toBe("&mut");
     expect(pointerBadge("String")).toBeUndefined();
+  });
+});
+
+describe("open dialog paths", () => {
+  it("splits Windows and POSIX paths into breadcrumbs", () => {
+    expect(breadcrumbs("D:\\Projects\\Nodex").map((c) => c.path)).toEqual(["D:\\", "D:\\Projects", "D:\\Projects\\Nodex"]);
+    expect(breadcrumbs("/home/me/app").map((c) => c.label)).toEqual(["/", "home", "me", "app"]);
+    expect(breadcrumbs("")).toEqual([]);
+    expect(folderName("D:\\Projects\\Nodex\\")).toBe("Nodex");
   });
 });

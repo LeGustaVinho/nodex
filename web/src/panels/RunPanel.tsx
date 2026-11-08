@@ -27,6 +27,11 @@ export function RunButton() {
           ▶ {label}
         </button>
       )}
+      {status.state === "running" && status.url && (
+        <a className="app-link" href={status.url} target="_blank" rel="noreferrer" title="The app runs with tracing: use it and watch the graphs">
+          Open app ↗
+        </a>
+      )}
       {status.state === "exited" && <span className={`run-code ${status.exit_code === 0 ? "ok" : "bad"}`}>exit {status.exit_code ?? "?"}</span>}
       {status.state === "failed" && <span className="run-code bad" title={status.detail}>failed</span>}
     </div>

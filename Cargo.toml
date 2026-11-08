@@ -15,6 +15,7 @@ nodex-core = { path = "crates/nodex-core" }
 nodex-lang-csharp = { path = "crates/nodex-lang-csharp" }
 nodex-lang-typescript = { path = "crates/nodex-lang-typescript" }
 nodex-lang-rust = { path = "crates/nodex-lang-rust" }
+nodex-dap = { path = "crates/nodex-dap" }
 nodex-trace = { path = "crates/nodex-trace" }
 
 anyhow = "1"

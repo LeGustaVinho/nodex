@@ -1,11 +1,12 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { SHAPE_ICON, conceptColor, conceptInfo, flavorLabel, operationInfo, typeColor, useCatalog } from "../catalog";
 import { pointerBadge } from "../graph/pointers";
 import type { Pin } from "../gen/Pin";
 import type { BlueprintData } from "../graph/flowGraph";
 import { useUi } from "../store";
 import { useTrace } from "../trace";
+import { hasBreakpoint, toggleBreakpoint, useDebug } from "../debug";
 
 function PinView({ pin, side, value }: { pin: Pin; side: "in" | "out"; value?: string }) {
   const exec = pin.kind === "Exec";
@@ -54,6 +55,27 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
   const isReplayNode = replayStep?.node === node.id;
   const shownValue = replaying ? (isReplayNode && replayStep.values.length ? replayStep.values.join(", ") : undefined) : liveValue;
   const toggle = useUi((s) => s.toggleExpanded);
+  // Debugger: breakpoints by the statement's first line; the node the program is paused at.
+  const file = node.span.file;
+  const line = node.span.start_line;
+  const breakable = node.concept !== "Entry" && node.concept !== "EventEntry";
+  const breakpoint = useDebug((s) => breakable && hasBreakpoint(s.breakpoints, file, line));
+  const pausedHere = useDebug((s) => {
+    const f = s.stopped?.frames.find((x) => x.id === s.frame) ?? s.stopped?.frames.find((x) => x.flow);
+    return !!f && f.flow === flow && f.node === node.id;
+  });
+  // Selected as stable references; the name → value map is derived (a selector returning a new
+  // object each call would make zustand re-render forever).
+  const stopped = useDebug((s) => s.stopped);
+  const frameId = useDebug((s) => s.frame);
+  const pausedVars = useMemo(() => {
+    if (!stopped) return undefined;
+    const f = stopped.frames.find((x) => x.id === frameId);
+    if (f && f.flow !== flow) return undefined;
+    const out: Record<string, string> = {};
+    for (const scope of stopped.scopes) for (const v of scope.variables) out[v.name] ??= v.value;
+    return out;
+  }, [stopped, frameId, flow]);
   const info = conceptInfo(catalog, node.concept);
   const color = conceptColor(catalog, node.concept);
   // Compact levels: the call's arguments are the statement's own pins, values inline.
@@ -69,10 +91,22 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`bp shape-${info.shape} ${selected ? "selected" : ""} ${unreachable ? "unreachable" : ""} ${active && !replaying ? "active" : ""} ${isReplayNode ? "replay-current" : ""} ${count && !replaying ? "visited" : ""} ${replaying && !isReplayNode ? "dimmed" : ""} ${throws && !replaying ? "threw" : ""}`}
+      className={`bp shape-${info.shape} ${selected ? "selected" : ""} ${pausedHere ? "paused-here" : ""} ${breakpoint ? "has-breakpoint" : ""} ${unreachable ? "unreachable" : ""} ${active && !replaying ? "active" : ""} ${isReplayNode ? "replay-current" : ""} ${count && !replaying ? "visited" : ""} ${replaying && !isReplayNode ? "dimmed" : ""} ${throws && !replaying ? "threw" : ""}`}
       style={{ "--accent": color } as React.CSSProperties}
     >
       <div className="bp-head">
+        {breakable && (
+          <button
+            className={`bp-break nodrag ${breakpoint ? "on" : ""}`}
+            title={breakpoint ? "Remove the breakpoint (F9)" : `Stop here when debugging (line ${line}, F9)`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void toggleBreakpoint(file, line);
+            }}
+          >
+            ●
+          </button>
+        )}
         <span className="bp-icon">{SHAPE_ICON[info.shape] ?? "▸"}</span>
         <span className="bp-title" title={op?.explain}>
           {op ? op.title : info.title}
@@ -112,7 +146,7 @@ function BlueprintNodeImpl({ data, selected }: NodeProps) {
             <div className="pin-cell">{inputs[i] && <PinView pin={inputs[i]} side="in" value={argValues.get(inputs[i].id)} />}</div>
             <div className="pin-cell right">
               {node.outputs[i] && (
-                <PinView pin={node.outputs[i]} side="out" value={replaying ? undefined : vars?.[node.outputs[i].label]} />
+                <PinView pin={node.outputs[i]} side="out" value={replaying ? undefined : (pausedVars?.[node.outputs[i].label] ?? vars?.[node.outputs[i].label])} />
               )}
             </div>
           </div>

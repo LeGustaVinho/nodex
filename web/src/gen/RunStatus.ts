@@ -5,4 +5,8 @@ export type RunStatus = { state: RunState,
 /**
  * What runs, or why it failed.
  */
-detail: string, exit_code: number | null, };
+detail: string, exit_code: number | null, 
+/**
+ * The app's address, for dev servers (browser apps).
+ */
+url: string | null, };

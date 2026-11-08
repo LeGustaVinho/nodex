@@ -5,8 +5,11 @@
 //! a per-session token plus `Host`/`Origin` checks (DNS-rebinding defense), because later
 //! milestones let it start processes.
 
+pub mod adapters;
 pub mod api;
 pub mod assets;
+pub mod debugger;
+pub mod projects;
 pub mod runner;
 pub mod security;
 pub mod semantic_worker;
@@ -14,12 +17,14 @@ pub mod watch;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, mpsc};
 
 use axum::Router;
 use axum::middleware;
 use axum::routing::{get, post};
 use nodex_core::{Catalog, Project};
+use nodex_lang_api::LanguageFrontend;
 use serde::Serialize;
 use tokio::sync::broadcast;
 
@@ -37,43 +42,71 @@ pub enum ServerEvent {
     RunOutput { lines: Vec<runner::OutputLine> },
     /// Live execution changes since the previous frame.
     TraceFrame(Box<nodex_trace::TraceFrame>),
+    /// Another project is being loaded (from the Open dialog).
+    ProjectLoading { path: String },
+    /// The project changed: everything shown must be fetched again.
+    ProjectChanged,
+    /// Loading another project failed; the current one stays.
+    ProjectFailed { error: String },
+    /// A debug adapter is being downloaded (or finished).
+    AdapterProgress(adapters::AdapterProgress),
+    /// The debugger's state changed.
+    DebugStatus(debugger::DebugStatus),
+    /// The program paused: where, and its variables.
+    DebugStopped(Box<debugger::DebugStopped>),
+    /// The program runs again after a pause.
+    DebugContinued,
 }
 
 pub struct AppState {
     pub project: Mutex<Project>,
+    /// Every language frontend of this binary (to open other projects).
+    pub frontends: Vec<Arc<dyn LanguageFrontend>>,
+    /// Bumped when another project is opened; work started for an older project is dropped.
+    pub generation: AtomicU64,
+    /// Watches the current project's folder.
+    pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
     pub token: String,
     pub port: u16,
     /// Extra origins allowed to call the API (the Vite dev server during development).
     pub dev_origins: Vec<String>,
     pub events: broadcast::Sender<ServerEvent>,
     pub catalog: Catalog,
-    pub layout_file: PathBuf,
     pub layout_lock: Mutex<()>,
     /// Channels to the semantic workers (changed absolute paths).
     pub semantic_tx: Mutex<Vec<mpsc::Sender<Vec<PathBuf>>>>,
     pub run: runner::RunManager,
+    pub debug: debugger::DebugManager,
 }
 
 impl AppState {
     pub fn new(project: Project, token: String, port: u16, dev_origins: Vec<String>) -> Arc<Self> {
         let (events, _) = broadcast::channel(64);
-        let layout_file = project.root().join(".nodex").join("layout.json");
+        let frontends = project.frontends();
         Arc::new(Self {
             project: Mutex::new(project),
+            frontends,
+            generation: AtomicU64::new(0),
+            watcher: Mutex::new(None),
             token,
             port,
             dev_origins,
             events,
             catalog: Catalog::embedded(),
-            layout_file,
             layout_lock: Mutex::new(()),
             semantic_tx: Mutex::new(Vec::new()),
             run: runner::RunManager::default(),
+            debug: debugger::DebugManager::default(),
         })
     }
 
+    /// Saved node positions of the current project.
+    pub fn layout_file(&self) -> PathBuf {
+        self.project.lock().map(|p| p.root().join(".nodex").join("layout.json")).unwrap_or_default()
+    }
+
     pub fn read_layouts(&self) -> BTreeMap<String, serde_json::Value> {
-        std::fs::read_to_string(&self.layout_file)
+        std::fs::read_to_string(self.layout_file())
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default()
@@ -84,6 +117,9 @@ impl AppState {
 pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/api/project", get(api::project))
+        .route("/api/project/open", post(api::project_open))
+        .route("/api/fs/list", get(api::fs_list))
+        .route("/api/recent", get(api::recent))
         .route("/api/structure", get(api::structure))
         .route("/api/knowledge", get(api::knowledge))
         .route("/api/flow", get(api::flow))
@@ -94,11 +130,22 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/run/stop", post(api::run_stop))
         .route("/api/trace/steps", get(api::trace_steps))
         .route("/api/trace/calls", get(api::trace_calls))
+        .route("/api/debug", get(api::debug_snapshot))
+        .route("/api/debug/start", post(api::debug_start))
+        .route("/api/debug/command", post(api::debug_command))
+        .route("/api/debug/breakpoints", get(api::get_breakpoints).put(api::put_breakpoints))
+        .route("/api/debug/variables", get(api::debug_variables))
+        .route("/api/debug/scopes", get(api::debug_scopes))
+        .route("/api/debug/evaluate", post(api::debug_evaluate))
+        .route("/api/debug/adapters", get(api::debug_adapters))
+        .route("/api/debug/adapters/install", post(api::debug_adapter_install))
         .route("/ws", get(api::ws))
         .route_layer(middleware::from_fn_with_state(state.clone(), security::require_token));
 
     Router::new()
         .merge(api)
+        // Browser apps under trace send events here; the run token authorizes them.
+        .route("/trace", get(api::trace_ws))
         .fallback(assets::serve)
         .layer(middleware::from_fn_with_state(state.clone(), security::check_host_and_origin))
         .with_state(state)

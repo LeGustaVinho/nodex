@@ -53,6 +53,37 @@ pub async fn source(State(state): State<Arc<AppState>>, Query(q): Query<SourceQu
     Ok(([("content-type", "text/plain; charset=utf-8")], text).into_response())
 }
 
+#[derive(Deserialize)]
+pub struct OpenRequest {
+    path: String,
+}
+
+/// Opens another project; browsers get `project-loading`, then `project-changed`.
+pub async fn project_open(State(state): State<Arc<AppState>>, Json(req): Json<OpenRequest>) -> ApiResult {
+    crate::projects::open(&state, req.path).await.map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
+    let summary = state.project.lock().map_err(poisoned)?.summary();
+    Ok(Json(summary).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct ListQuery {
+    #[serde(default)]
+    path: String,
+}
+
+/// Subfolders of a folder for the Open dialog (drives and home when `path` is empty).
+pub async fn fs_list(Query(q): Query<ListQuery>) -> ApiResult {
+    let listing = tokio::task::spawn_blocking(move || crate::projects::list(&q.path))
+        .await
+        .map_err(internal)?
+        .map_err(|e| (StatusCode::NOT_FOUND, e))?;
+    Ok(Json(listing).into_response())
+}
+
+pub async fn recent() -> ApiResult {
+    Ok(Json(crate::projects::recent()).into_response())
+}
+
 pub async fn catalog(State(state): State<Arc<AppState>>) -> ApiResult {
     Ok(Json(&state.catalog).into_response())
 }
@@ -80,11 +111,12 @@ pub async fn put_layout(
     } else {
         layouts.insert(q.key, serde_json::to_value(positions).map_err(internal)?);
     }
-    if let Some(dir) = state.layout_file.parent() {
+    let file = state.layout_file();
+    if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(internal)?;
     }
     let text = serde_json::to_string_pretty(&layouts).map_err(internal)?;
-    std::fs::write(&state.layout_file, text).map_err(internal)?;
+    std::fs::write(&file, text).map_err(internal)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -143,6 +175,132 @@ pub async fn trace_calls(State(state): State<Arc<AppState>>, Query(q): Query<Cal
     let recorder = state.run.recorder().ok_or_else(|| not_found("recording"))?;
     let page = recorder.lock().map_err(poisoned)?.calls(q.limit.min(200_000));
     Ok(Json(page).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct TraceQuery {
+    run: String,
+}
+
+/// Trace events from browser pages: binary messages, each a frame of the trace protocol.
+/// Authorized by the current run's token (pages are served by the app's own dev server, so
+/// their origin is not the Nodex UI).
+pub async fn trace_ws(State(state): State<Arc<AppState>>, Query(q): Query<TraceQuery>, upgrade: WebSocketUpgrade) -> Response {
+    let Some(recorder) = state.run.recorder_for(&q.run) else {
+        return (StatusCode::UNAUTHORIZED, "no run with this token").into_response();
+    };
+    upgrade.on_upgrade(move |mut socket| async move {
+        let mut decoder = nodex_trace::Decoder::default();
+        while let Some(Ok(message)) = socket.recv().await {
+            let bytes = match message {
+                Message::Binary(b) => b,
+                Message::Close(_) => break,
+                _ => continue,
+            };
+            match decoder.feed(&bytes) {
+                Ok(records) => {
+                    if let Ok(mut r) = recorder.lock() {
+                        for rec in &records {
+                            r.record(rec);
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct DebugSnapshot {
+    status: crate::debugger::DebugStatus,
+    stopped: Option<crate::debugger::DebugStopped>,
+}
+
+pub async fn debug_snapshot(State(state): State<Arc<AppState>>) -> ApiResult {
+    Ok(Json(DebugSnapshot { status: state.debug.status(), stopped: state.debug.last_stop() }).into_response())
+}
+
+/// Builds the project for debugging and starts it under its debug adapter.
+pub async fn debug_start(State(state): State<Arc<AppState>>) -> ApiResult {
+    crate::debugger::start(&state).map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(StatusCode::ACCEPTED.into_response())
+}
+
+#[derive(Deserialize)]
+pub struct CommandRequest {
+    command: crate::debugger::DebugCommand,
+}
+
+pub async fn debug_command(State(state): State<Arc<AppState>>, Json(req): Json<CommandRequest>) -> ApiResult {
+    tokio::task::spawn_blocking(move || state.debug.command(req.command)).await.map_err(internal)?.map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(StatusCode::ACCEPTED.into_response())
+}
+
+pub async fn get_breakpoints(State(state): State<Arc<AppState>>) -> ApiResult {
+    Ok(Json(crate::debugger::breakpoints(&state)).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct BreakpointsRequest {
+    file: String,
+    lines: Vec<u32>,
+}
+
+/// Replaces the breakpoints of one file.
+pub async fn put_breakpoints(State(state): State<Arc<AppState>>, Json(req): Json<BreakpointsRequest>) -> ApiResult {
+    let all = crate::debugger::set_breakpoints(&state, &req.file, req.lines).map_err(internal)?;
+    Ok(Json(all).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct VariablesQuery {
+    reference: i64,
+}
+
+pub async fn debug_variables(State(state): State<Arc<AppState>>, Query(q): Query<VariablesQuery>) -> ApiResult {
+    let vars = tokio::task::spawn_blocking(move || state.debug.variables(q.reference)).await.map_err(internal)?.map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(Json(vars).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct ScopesQuery {
+    frame: i64,
+}
+
+pub async fn debug_scopes(State(state): State<Arc<AppState>>, Query(q): Query<ScopesQuery>) -> ApiResult {
+    let scopes = tokio::task::spawn_blocking(move || state.debug.scopes(q.frame)).await.map_err(internal)?.map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(Json(scopes).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct EvaluateRequest {
+    expression: String,
+    frame: Option<i64>,
+}
+
+pub async fn debug_evaluate(State(state): State<Arc<AppState>>, Json(req): Json<EvaluateRequest>) -> ApiResult {
+    let v = tokio::task::spawn_blocking(move || state.debug.evaluate(&req.expression, req.frame))
+        .await
+        .map_err(internal)?
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
+    Ok(Json(v).into_response())
+}
+
+pub async fn debug_adapters(State(state): State<Arc<AppState>>) -> ApiResult {
+    let frontends = state.project.lock().map_err(poisoned)?.active_frontends();
+    Ok(Json(crate::adapters::statuses(&frontends)).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct InstallRequest {
+    language: nodex_ir::Language,
+}
+
+/// Downloads a debug adapter (the user asked for it); progress arrives over the WebSocket.
+pub async fn debug_adapter_install(State(state): State<Arc<AppState>>, Json(req): Json<InstallRequest>) -> ApiResult {
+    crate::adapters::start_install(&state, req.language).map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(StatusCode::ACCEPTED.into_response())
 }
 
 pub async fn ws(State(state): State<Arc<AppState>>, upgrade: WebSocketUpgrade) -> Response {

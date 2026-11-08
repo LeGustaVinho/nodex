@@ -31,6 +31,11 @@ interface UiState {
   detail: DetailLevel;
   /** localStorage key for `detail` (per project root). */
   detailKey: string | null;
+  /** Folder being opened from the Open dialog. */
+  projectLoading: string | null;
+  setProjectLoading: (path: string | null) => void;
+  /** Another project was opened: forget everything about the old one. */
+  resetForProject: () => void;
   connected: boolean;
   /** Containers open in the Hierarchy view. */
   treeExpanded: Record<string, boolean>;
@@ -95,6 +100,22 @@ export const useUi = create<UiState>((set) => ({
   showUses: true,
   detail: "statements",
   detailKey: null,
+  projectLoading: null,
+  setProjectLoading: (projectLoading) => set({ projectLoading }),
+  resetForProject: () => {
+    writeHash("architecture", null);
+    set({
+      view: "architecture",
+      flowSymbol: null,
+      namespace: null,
+      callFocus: null,
+      selection: null,
+      codeFocus: null,
+      expanded: {},
+      detailKey: null,
+      projectLoading: null,
+    });
+  },
   connected: false,
   treeExpanded: {},
   relations: ["calls", "types", "knowledge"],

@@ -58,6 +58,13 @@
       "url": "http://127.0.0.1:7492"
     },
     {
+      "name": "nodex-react",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nodex-server", "--", "open", "fixtures/web/react-vite", "--no-browser", "--port", "7480"],
+      "port": 7480,
+      "url": "http://127.0.0.1:7480"
+    },
+    {
       "name": "web-dev",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "web", "dev"],

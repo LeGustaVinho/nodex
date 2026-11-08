@@ -43,6 +43,7 @@ pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher>
                     Err(_) => break,
                 };
                 semantic_worker::notify(&state, &changed_paths);
+                state.run.files_changed(&state, &changed_paths);
                 if !changed.is_empty() {
                     tracing::info!(files = ?changed, "re-lowered");
                     let _ = state.events.send(ServerEvent::GraphChanged { files: changed });

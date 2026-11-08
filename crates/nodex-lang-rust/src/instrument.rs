@@ -21,7 +21,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use nodex_lang_api::{RunCommand, TraceInstrumenter, kit::LineIndex};
+use nodex_lang_api::{RunCommand, RunEnv, RunKind, TraceInstrumenter, kit::LineIndex};
 use serde_json::{Value, json};
 use tree_sitter::Node;
 
@@ -50,7 +50,7 @@ fn runtime_dir() -> Option<PathBuf> {
 }
 
 impl TraceInstrumenter for RustInstrumenter {
-    fn prepare(&self, root: &Path, out_dir: &Path, log: &mut dyn FnMut(&str)) -> Result<RunCommand, String> {
+    fn prepare(&self, root: &Path, out_dir: &Path, _env: &RunEnv, log: &mut dyn FnMut(&str)) -> Result<RunCommand, String> {
         let runtime = runtime_dir().ok_or("the Rust trace runtime (sidecars/rust/nodex-trace-rt) was not found; set NODEX_RUST_TRACE_RT")?;
         let packages = crate::project::cargo_packages(root);
         let (package, (bin, _)) = packages
@@ -136,6 +136,8 @@ impl TraceInstrumenter for RustInstrumenter {
             cwd: root.to_path_buf(),
             trace_map: map,
             description: format!("{bin} (instrumented debug build)"),
+            kind: RunKind::Program,
+            env: Vec::new(),
         })
     }
 }

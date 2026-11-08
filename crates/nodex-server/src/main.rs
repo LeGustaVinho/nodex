@@ -22,7 +22,9 @@ enum Command {
     /// Open a project folder in the Nodex web UI.
     Open {
         /// Project folder: a .NET solution or project, a Unity project, a TypeScript/JavaScript
-        /// project or a Cargo package/workspace.
+        /// project or a Cargo package/workspace. Defaults to the current folder; another one can
+        /// be opened from the web interface.
+        #[arg(default_value = ".")]
         path: PathBuf,
         /// Port to listen on (127.0.0.1 only). The next free port is used if it is taken.
         #[arg(long, default_value_t = 7420)]
@@ -70,8 +72,15 @@ async fn open(path: PathBuf, port: u16, no_browser: bool, dev_origins: Vec<Strin
     let (listener, port) = bind(port).await?;
     let token = new_token();
     let state = AppState::new(project, token.clone(), port, dev_origins);
-    let _watcher = watch::spawn(state.clone()).context("cannot watch the project folder")?;
+    let watcher = watch::spawn(state.clone()).context("cannot watch the project folder")?;
+    if let Ok(mut w) = state.watcher.lock() {
+        *w = Some(watcher);
+    }
     semantic_worker::spawn(&state);
+    {
+        let project = state.project.lock().map_err(|_| anyhow::anyhow!("project lock poisoned"))?;
+        nodex_server::projects::remember(&project);
+    }
 
     let url = format!("http://127.0.0.1:{port}/?token={token}");
     println!("Nodex is running at {url}");

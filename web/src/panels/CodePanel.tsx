@@ -1,3 +1,4 @@
+import { toggleBreakpoint, useDebug } from "../debug";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
@@ -41,6 +42,12 @@ export function CodePanel() {
   const flow = useQuery({ queryKey: ["flow", flowSymbol], queryFn: () => api.flow(flowSymbol!), enabled: !!flowSymbol });
   const editorRef = useRef<Editor | null>(null);
   const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const debugDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const breakpoints = useDebug((s) => s.breakpoints);
+  const stopped = useDebug((s) => s.stopped);
+  const frameId = useDebug((s) => s.frame);
+  const fileRef = useRef<string | null>(null);
+  fileRef.current = codeFocus?.file ?? null;
   const suppressCursor = useRef(false);
   // The cursor listener is registered once; read the latest data through refs.
   const flowRef = useRef(flow.data);
@@ -66,8 +73,30 @@ export function CodePanel() {
     suppressCursor.current = false;
   }, [codeFocus, source.data]);
 
+  // Breakpoints in the margin and the line the program is paused at.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !file) return;
+    const frame = stopped?.frames.find((f) => f.id === frameId) ?? stopped?.frames.find((f) => f.file);
+    const list: monaco.editor.IModelDeltaDecoration[] = breakpoints
+      .filter((b) => b.file === file)
+      .map((b) => ({ range: new monaco.Range(b.line, 1, b.line, 1), options: { glyphMarginClassName: "glyph-breakpoint", glyphMarginHoverMessage: { value: "Breakpoint (click to remove)" } } }));
+    if (frame?.file === file) {
+      list.push({ range: new monaco.Range(frame.line, 1, frame.line, 1), options: { isWholeLine: true, className: "code-paused", glyphMarginClassName: "glyph-paused" } });
+    }
+    debugDecorations.current?.clear();
+    debugDecorations.current = editor.createDecorationsCollection(list);
+  }, [breakpoints, stopped, frameId, file, source.data]);
+
   const onMount: OnMount = (editor) => {
     editorRef.current = editor;
+    // A click in the margin toggles a breakpoint on that line.
+    editor.onMouseDown((e) => {
+      const t = e.target.type;
+      if (t !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && t !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) return;
+      const line = e.target.position?.lineNumber;
+      if (line && fileRef.current) void toggleBreakpoint(fileRef.current, line);
+    });
     // Clicking in the code selects the matching node (code → graph sync).
     editor.onDidChangeCursorPosition((e) => {
       if (suppressCursor.current || e.reason !== monaco.editor.CursorChangeReason.Explicit) return;
@@ -121,6 +150,7 @@ export function CodePanel() {
         onMount={onMount}
         options={{
           readOnly: true,
+          glyphMargin: true,
           minimap: { enabled: false },
           fontSize: 12.5,
           scrollBeyondLastLine: false,

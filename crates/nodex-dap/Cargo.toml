@@ -1,0 +1,10 @@
+[package]
+name = "nodex-dap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A Debug Adapter Protocol client for Nodex"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
