@@ -6,6 +6,9 @@ import type { DebugFrame } from "./gen/DebugFrame";
 import type { DebugScope } from "./gen/DebugScope";
 import type { DebugStatus } from "./gen/DebugStatus";
 import type { DebugStopped } from "./gen/DebugStopped";
+import { classMembers } from "./graph/classBlueprint";
+import { isTypeKind, type StructureIndex } from "./graph/structureGraph";
+import { useUi } from "./store";
 
 /** Debugger state shared by the toolbar, the Blueprint, the code panel and the debug panel. */
 interface DebugStore {
@@ -56,6 +59,22 @@ export const useDebug = create<DebugStore>((set) => ({
 /** The frame whose scopes a stop carries: the first one in the project (as the server picks it). */
 export function topFrame(stopped: DebugStopped | null): number | null {
   return stopped?.frames.find((f) => f.file)?.id ?? stopped?.frames[0]?.id ?? null;
+}
+
+/** Reveal a frame in the current class when it belongs to one of its methods or accessors. */
+export function showDebugFrame(frame: DebugFrame, index?: StructureIndex): void {
+  const { flow, node, file, line } = frame;
+  if (!flow) return;
+  const ui = useUi.getState();
+  const current = ui.view === "blueprint" ? ui.flowSymbol : null;
+  const owner = current ? index?.byId.get(current) : undefined;
+  if (index && owner && isTypeKind(owner.kind) && classMembers(index, owner.id).some((member) => member.id === flow)) {
+    ui.setClassOpen([flow], true);
+  } else if (current !== flow) {
+    ui.openFlow(flow);
+  }
+  const span = file && line > 0 ? { file, start_line: line, end_line: line, start_col: 1, end_col: 1, start_byte: 0, end_byte: 0 } : undefined;
+  ui.select(node ? { kind: "flow-node", flow, id: node } : { kind: "symbol", id: flow }, span);
 }
 
 export function debugActive(state: DebugStatus["state"]): boolean {

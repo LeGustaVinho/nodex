@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlowGraph } from "../gen/FlowGraph";
+import type { Expr } from "../gen/Expr";
 import type { FlowNode } from "../gen/FlowNode";
 import type { Symbol } from "../gen/Symbol";
 import { classBlueprintGraph, classMembers } from "./classBlueprint";
@@ -27,15 +28,22 @@ const node = (id: string, concept: FlowNode["concept"], extra: Partial<FlowNode>
 });
 const target = { symbol: "Audit", display: "Audit()", external: false };
 const body = node("n1", "Call", {
-  writes: ["count", "local"], calls: [target, target],
+  calls: [target, target],
   expr: { concept: "Call", label: "Audit", span, flavors: [], children: [], symbol: "Audit", target: null, op: null, ty: null, params: [] },
 });
+const expr = (concept: Expr["concept"], label: string, children: Expr[] = [], flavors: string[] = []): Expr =>
+  ({ concept, label, children, flavors, span, symbol: null, target: null, op: null, ty: null, params: [] });
+const increment = (target: Expr) => expr("UnaryOp", "++", [target], ["postfix"]);
+const fieldWrite = node("n2", "SetMember", { expr: increment(expr("GetMember", ".count", [expr("Var", "this")])) });
+const localWrite = node("n3", "Assign", { writes: ["count"], expr: increment(expr("Var", "count")) });
+const implicitWrite = node("n4", "Assign", { writes: ["count"], flavors: ["implicit-this"], expr: increment(expr("Var", "count")) });
+const otherWrite = node("n5", "SetMember", { expr: increment(expr("GetMember", ".count", [expr("Var", "other")])) });
 const flow = (symbol: string, nodes: FlowNode[]): FlowGraph => ({
   symbol, name: symbol, language: "csharp", span, nodes,
   edges: [{ from: "entry", to: "n1", from_pin: "out", to_pin: "in", kind: "Exec", access: null }],
 });
 const flows = [
-  flow("Submit", [node("entry", "Entry"), body]),
+  flow("Submit", [node("entry", "Entry"), body, fieldWrite, localWrite, implicitWrite, otherWrite]),
   flow("Audit", [node("entry", "Entry"), { ...body, calls: [], writes: [] }]),
 ];
 const makeGraph = (open: string[], expanded: Record<string, boolean> = {}) =>
@@ -70,7 +78,10 @@ describe("class Blueprint", () => {
     expect(makeGraph(["Submit"]).edges.find((e) => e.kind === "calls")).toMatchObject({ source: "Submit::n1", target: "Audit" });
     const open = makeGraph(["Submit", "Audit"]);
     expect(open.edges.find((e) => e.kind === "calls")).toMatchObject({ source: "Submit::n1", target: "Audit::entry" });
-    expect(open.edges.find((e) => e.kind === "changes")).toMatchObject({ source: "Submit::n1", target: "fields:Order" });
+    expect(open.edges.filter((e) => e.kind === "changes")).toEqual([
+      expect.objectContaining({ source: "Submit::n2", target: "fields:Order" }),
+      expect.objectContaining({ source: "Submit::n4", target: "fields:Order" }),
+    ]);
     expect(open.nodes.find((n) => n.id === "fields:Order")?.data).toEqual({ fields: [expect.objectContaining({ id: "count" })] });
   });
 });

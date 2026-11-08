@@ -391,7 +391,10 @@ impl<'a> Lowering<'a> {
                     _ => src.norm(e),
                 };
                 let concept = if target.is_some_and(|t| t.kind() == "identifier") { Concept::Assign } else { Concept::SetMember };
-                let flow = self.simple(s, concept, label, Some(e), Vec::new(), cur);
+                let implicit_member = matches!(op.as_str(), "++" | "--")
+                    && target.is_some_and(|t| t.kind() == "identifier" && self.b.lookup(src.text(t)).is_none());
+                let flavors = if implicit_member { vec!["implicit-this".to_owned()] } else { Vec::new() };
+                let flow = self.simple(s, concept, label, Some(e), flavors, cur);
                 if let (Some(t), Some((id, _))) = (target, &flow)
                     && t.kind() == "identifier" {
                         let id = id.clone();

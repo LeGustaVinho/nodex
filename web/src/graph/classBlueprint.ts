@@ -1,4 +1,5 @@
 import type { FlowGraph } from "../gen/FlowGraph";
+import type { FlowNode } from "../gen/FlowNode";
 import type { OperationInfo } from "../gen/OperationInfo";
 import type { Symbol } from "../gen/Symbol";
 import type { SymbolInfo } from "../gen/SymbolInfo";
@@ -11,6 +12,17 @@ export const CLASS_OUT = "class-out";
 export const flowNodePrefix = (flow: string) => `${flow}::`;
 
 const isAccessorOwner = (s: Symbol) => s.kind === "Property" || s.kind === "Event";
+
+function writtenMember(node: FlowNode, receiverName: "this" | "self"): string | undefined {
+  const expr = node.expr;
+  if (!expr || (expr.concept !== "Assign" && !expr.flavors.some((f) => f === "prefix" || f === "postfix"))) return;
+  const target = expr.children[0];
+  if (target?.concept === "Var" && node.flavors.includes("implicit-this")) return target.label;
+  if (target?.concept === "GetMember" && target.label.startsWith(".")) {
+    const receiver = target.children[0];
+    if (receiver?.concept === "Var" && receiver.label === receiverName) return target.label.slice(1);
+  }
+}
 
 export function classMembers(index: StructureIndex, typeId: string): Symbol[] {
   return index.members(typeId)
@@ -124,7 +136,7 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
     seen.add(id);
     edges.push({ id, source, target, sourceHandle: CLASS_OUT, targetHandle: CLASS_IN, kind, layout: false });
   };
-  for (const { id } of members) {
+  for (const { id, language } of members) {
     for (const node of byMember.get(id)?.nodes ?? []) {
       const source = renderedFlows.has(id) ? flowNodePrefix(id) + node.id : id;
       for (const { symbol } of node.calls) {
@@ -132,7 +144,8 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
         const target = entries.get(symbol);
         if (target) wire(source, target, "calls");
       }
-      if (node.writes.some((name) => fieldNames.has(name) || fieldNames.has(name.replace(/^(this\.|self\.)/, "")))) {
+      const field = writtenMember(node, language === "rust" ? "self" : "this");
+      if (field && fieldNames.has(field)) {
         wire(source, fieldsId, "changes");
       }
     }

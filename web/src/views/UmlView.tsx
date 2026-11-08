@@ -199,7 +199,14 @@ export function UmlView() {
   const pickedRelations = data && picked ? data.relations.filter((r) => r.from === picked || r.to === picked) : [];
 
   if (availability.isError) {
-    return <div className="empty">{String(availability.error).replace(/^Error: \d+ /, "")}</div>;
+    return (
+      <div className="empty">
+        <div>
+          <p>{String(availability.error).replace(/^Error: \d+ /, "")}</p>
+          {ui.umlExplicitScope && <button onClick={() => ui.showUml()}>Use the project context</button>}
+        </div>
+      </div>
+    );
   }
   if (available && !available.available) {
     return (
@@ -208,7 +215,7 @@ export function UmlView() {
           <b>{kindLabel(kind)}</b> for {scopeLabel(scope, (id) => index?.byId.get(id)?.name)}: {available.reason}.
         </p>
         {availability.data?.suggested && availability.data.suggested !== kind && (
-          <button onClick={() => ui.showUml(scope, availability.data!.suggested!)}>Show {kindLabel(availability.data.suggested)} instead</button>
+          <button onClick={() => ui.showUml(undefined, availability.data!.suggested!)}>Show {kindLabel(availability.data.suggested)} instead</button>
         )}
       </div>
     );

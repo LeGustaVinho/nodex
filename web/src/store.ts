@@ -7,6 +7,7 @@ import type { UmlScope } from "./gen/UmlScope";
 import type { StructEdgeKind } from "./gen/StructEdgeKind";
 import { expansionKey, type DetailLevel } from "./graph/flowGraph";
 import { contextKey, toUmlScope, type ContextItem } from "./graph/context";
+import type { StructureIndex } from "./graph/structureGraph";
 
 /** Which edges the explorer views draw: all, or only those of the selected node. */
 export type EdgeMode = "all" | "selection" | "in" | "out";
@@ -114,7 +115,7 @@ interface UiState {
   contextKey: string | null;
   contextPickerOpen: boolean;
   setContextPickerOpen: (open: boolean) => void;
-  loadContext: (root: string) => void;
+  loadContext: (root: string, index: StructureIndex) => void;
   setContext: (items: ContextItem[]) => void;
   addToContext: (item: ContextItem) => void;
   removeFromContext: (item: ContextItem) => void;
@@ -223,23 +224,23 @@ function initialFlow(): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-/** Deep link: `#uml=<kind>&scope=<json>` opens a UML diagram. */
-export function parseUmlHash(hash: string): { kind: UmlKind; scope: UmlScope } | null {
+/** A kind alone inherits the project context. A link with a scope pins it. */
+export function parseUmlHash(hash: string): { kind: UmlKind; scope?: UmlScope } | null {
   const m = /^#uml=([A-Za-z]+)(?:&scope=(.+))?$/.exec(hash);
   if (!m) return null;
   try {
-    const scope = m[2] ? (JSON.parse(decodeURIComponent(m[2])) as UmlScope) : { kind: "Project" as const };
-    return { kind: m[1] as UmlKind, scope };
+    const kind = m[1] as UmlKind;
+    return m[2] ? { kind, scope: JSON.parse(decodeURIComponent(m[2])) as UmlScope } : { kind };
   } catch {
     return null;
   }
 }
 
-export function umlHash(kind: UmlKind, scope: UmlScope): string {
-  return `#uml=${kind}&scope=${encodeURIComponent(JSON.stringify(scope))}`;
+export function umlHash(kind: UmlKind, scope?: UmlScope): string {
+  return scope ? `#uml=${kind}&scope=${encodeURIComponent(JSON.stringify(scope))}` : `#uml=${kind}`;
 }
 
-function writeHash(view: View, flowSymbol: string | null, uml?: { kind: UmlKind; scope: UmlScope }) {
+function writeHash(view: View, flowSymbol: string | null, uml?: { kind: UmlKind; scope?: UmlScope }) {
   const hash = view === "blueprint" && flowSymbol ? `#flow=${encodeURIComponent(flowSymbol)}` : view === "uml" && uml ? umlHash(uml.kind, uml.scope) : "";
   if (window.location.hash !== hash) window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
 }
@@ -271,19 +272,27 @@ export const useUi = create<UiState>((set, get) => {
   contextKey: null,
   contextPickerOpen: false,
   setContextPickerOpen: (contextPickerOpen) => set({ contextPickerOpen }),
-  loadContext: (root) => {
+  loadContext: (root, index) => {
     const key = `nodex.context:${root}`;
-    if (get().contextKey === key) return;
-    let items: ContextItem[] = [];
-    try {
-      const saved: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-      if (Array.isArray(saved)) items = saved.filter((i) => i &&
-        ((i.kind === "folder" && typeof i.path === "string") || (i.kind === "symbol" && typeof i.id === "string")));
-    } catch {
-      // Storage is optional.
+    const state = get();
+    const sameProject = state.contextKey === key;
+    let items = sameProject ? state.context : [];
+    if (!sameProject) {
+      try {
+        const saved: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+        if (Array.isArray(saved)) items = saved.filter((i) => i &&
+          ((i.kind === "folder" && typeof i.path === "string") || (i.kind === "symbol" && typeof i.id === "string")));
+      } catch {
+        // Storage is optional.
+      }
+      set({ contextKey: key });
     }
-    set({ contextKey: key });
-    get().setContext(items);
+    const valid = items.filter((item) => {
+      if (item.kind === "folder" || item.id.startsWith("dir:") || item.id.startsWith("grp:ns:")) return true;
+      const symbol = index.byId.get(item.id);
+      return symbol && !symbol.external;
+    });
+    if (!sameProject || valid.length !== items.length) state.setContext(valid);
   },
   setContext: (context) => set((s) => {
     try {
@@ -292,7 +301,6 @@ export const useUi = create<UiState>((set, get) => {
       // The context still applies for this visit.
     }
     const umlScope = s.umlExplicitScope ? s.umlScope : toUmlScope(context);
-    if (s.view === "uml") writeHash("uml", null, { kind: s.umlKind, scope: umlScope });
     return {
       context, umlScope, treeAnchor: null,
       umlOpts: s.umlExplicitScope ? s.umlOpts : { ...s.umlOpts, focus: null },
@@ -356,13 +364,13 @@ export const useUi = create<UiState>((set, get) => {
   knowledgeDepth: 2,
   umlKind: startUml?.kind ?? "Class",
   umlScope: startUml?.scope ?? { kind: "Project" },
-  umlExplicitScope: !!startUml,
+  umlExplicitScope: !!startUml?.scope,
   umlOpts: {},
   showUml: (scope, kind) =>
     set((s) => {
       const umlExplicitScope = !!scope || (!!kind && s.view === "uml" && s.umlExplicitScope);
       const next = { kind: kind ?? s.umlKind, scope: scope ?? (umlExplicitScope ? s.umlScope : toUmlScope(s.context)) };
-      writeHash("uml", null, next);
+      writeHash("uml", null, { kind: next.kind, scope: umlExplicitScope ? next.scope : undefined });
       // The function a diagram starts from belongs to the old scope.
       const umlOpts = JSON.stringify(next.scope) !== JSON.stringify(s.umlScope) ? { ...s.umlOpts, focus: null } : s.umlOpts;
       return { view: "uml", umlKind: next.kind, umlScope: next.scope, umlExplicitScope, umlOpts };
@@ -410,7 +418,7 @@ export const useUi = create<UiState>((set, get) => {
   setPaletteOpen: (paletteOpen, paletteQuery = "") => set({ paletteOpen, paletteQuery }),
   setView: (view) =>
     set((s) => {
-      writeHash(view, s.flowSymbol, { kind: s.umlKind, scope: s.umlScope });
+      writeHash(view, s.flowSymbol, { kind: s.umlKind, scope: s.umlExplicitScope ? s.umlScope : undefined });
       return { view };
     }),
   openFlow: (flowSymbol) => {
@@ -437,6 +445,7 @@ export const useUi = create<UiState>((set, get) => {
     }),
   loadDetail: (root) => {
     const detailKey = `nodex.detail:${root}`;
+    if (get().detailKey === detailKey) return;
     let detail: DetailLevel = "statements";
     try {
       const saved = window.localStorage.getItem(detailKey);

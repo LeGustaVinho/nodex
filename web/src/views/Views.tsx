@@ -21,7 +21,7 @@ import { Loading } from "../components/Loading";
 /** One index per structure graph, shared by every component that shows it. */
 const indexes = new WeakMap<StructureGraph, StructureIndex>();
 
-function indexOf(graph: StructureGraph): StructureIndex {
+export function indexOf(graph: StructureGraph): StructureIndex {
   let index = indexes.get(graph);
   if (!index) {
     index = perf.timed("StructureIndex", () => new StructureIndex(graph));

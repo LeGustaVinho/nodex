@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { api } from "../api";
 import { useCatalog } from "../catalog";
+import { useDebug } from "../debug";
 import type { Symbol } from "../gen/Symbol";
 import { classBlueprintGraph, classMembers, flowNodePrefix, type ClassBoxData, type MethodCardData } from "../graph/classBlueprint";
 import type { BlueprintData, ExprData } from "../graph/flowGraph";
@@ -27,7 +28,10 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
     ? classBlueprintGraph(index, symbol.id, flows.data ?? [], { open, expanded, detail, showDataWires, operations: catalog?.operations, symbolInfo })
     : undefined, [index, symbol.id, ids.length, flows.data, open, expanded, detail, showDataWires, catalog, symbolInfo]);
   const replay = useTrace((s) => s.replay);
-  const replayFlow = replay && open.has(replay.flow) ? replay.flow : null;
+  const debugFrame = useDebug((s) => s.stopped?.frames.find((f) => f.id === s.frame));
+  const atDebugFrame = !!debugFrame?.flow && selection?.kind === "flow-node" &&
+    selection.flow === debugFrame.flow && selection.id === debugFrame.node;
+  const replayFlow = !atDebugFrame && replay && open.has(replay.flow) ? replay.flow : null;
   const replayNode = replayFlow && replay ? replay.page.steps[replay.index]?.node : undefined;
   const selectionFlow = selection && (selection.kind === "flow-node" || selection.kind === "expr") ? selection.flow : null;
   const activeMember = selection?.kind === "symbol" ? selection.id : selectionFlow;
@@ -56,7 +60,7 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
         layoutKey={`class-flow:${symbol.id}:${detail}`}
         savePositions={false}
         refit
-        fitSelection={false}
+        fitSelection={atDebugFrame}
         selectedId={selectedId}
         loadingText="Loading the class Blueprint…"
         error={flows.error}

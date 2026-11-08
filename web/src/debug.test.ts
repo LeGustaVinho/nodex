@@ -1,13 +1,40 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 
 // The helpers are pure; the API module reads the page URL when imported.
 vi.mock("./api", () => ({ api: {} }));
-import { hasBreakpoint, hiddenFrames, topFrame, useDebug, visibleFrames } from "./debug";
+import { hasBreakpoint, hiddenFrames, showDebugFrame, topFrame, useDebug, visibleFrames } from "./debug";
 import type { DebugFrame } from "./gen/DebugFrame";
+import type { Symbol } from "./gen/Symbol";
+import { StructureIndex } from "./graph/structureGraph";
+import { useUi } from "./store";
 
 const frame = (id: number, file: string | null): DebugFrame => ({ id, name: `f${id}`, file, line: 1, flow: null, node: null });
 
 describe("debugger helpers", () => {
+  it("opens the paused member inside its class and still navigates to unrelated frames", () => {
+    const symbol = (id: string, kind: Symbol["kind"], parent: string | null, has_flow = false): Symbol => ({
+      id, name: id, qualified_name: id, kind, parent, has_flow, language: "csharp",
+      origins: [], flavors: [], signature: null, type_text: null, doc: null, external: false,
+    });
+    const index = new StructureIndex({ symbols: [
+      symbol("Counter", "Class", null),
+      symbol("Counter.Value", "Property", "Counter"),
+      symbol("Counter.Value.get", "Method", "Counter.Value", true),
+      symbol("other", "Function", null, true),
+    ], edges: [] });
+    useUi.getState().openFlow("Counter");
+    showDebugFrame({ ...frame(1, "Counter.cs"), flow: "Counter.Value.get", node: "step" }, index);
+    expect(useUi.getState()).toMatchObject({
+      flowSymbol: "Counter",
+      classOpen: { "Counter.Value.get": true },
+      selection: { kind: "flow-node", flow: "Counter.Value.get", id: "step" },
+      codeFocus: { file: "Counter.cs", start_line: 1 },
+    });
+    showDebugFrame({ ...frame(2, "Other.cs"), flow: "other", node: null }, index);
+    expect(useUi.getState().flowSymbol).toBe("other");
+  });
+
   it("keeps frames down to the outermost project frame", () => {
     const frames = [frame(0, "a.ts"), frame(1, null), frame(2, "main.ts"), frame(3, null), frame(4, null)];
     expect(visibleFrames(frames, false).map((f) => f.id)).toEqual([0, 1, 2]);

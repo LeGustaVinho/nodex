@@ -107,5 +107,6 @@ async fn serves_a_batch_of_flows_and_skips_symbols_without_bodies() {
         "Shop.Services.OrderService.PlaceOrderAsync(Order, int)",
         "Shop.Services.OrderService.Audit(Order, string)",
     ]);
-    assert!(flows[0].nodes.iter().any(|n| n.writes.iter().any(|w| w == "_placedCount")));
+    let increment = flows[0].nodes.iter().find(|n| n.writes.iter().any(|w| w == "_placedCount")).unwrap();
+    assert!(increment.flavors.iter().any(|flavor| flavor == "implicit-this"));
 }

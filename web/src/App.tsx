@@ -6,14 +6,15 @@ import { ConsolePanel, RunButton } from "./panels/RunPanel";
 import { OpenDialog } from "./panels/OpenDialog";
 import { DebugControls, DebugPanel } from "./panels/DebugPanel";
 import { UnityCard } from "./panels/UnityCard";
-import { loadDebug, useDebug } from "./debug";
+import { loadDebug, showDebugFrame, useDebug } from "./debug";
+import type { StructureGraph } from "./gen/StructureGraph";
 import { useTrace } from "./trace";
 import { Inspector } from "./panels/Inspector";
 import { Palette } from "./panels/Palette";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
 import { Splitter } from "./components/Splitter";
-import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
+import { ArchitectureView, BlueprintView, CallsView, TypesView, indexOf, useStructure } from "./views/Views";
 import { ConfidenceToggles } from "./components/ConfidenceToggles";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { ContextPicker } from "./panels/ContextPicker";
@@ -94,13 +95,9 @@ function useLiveUpdates() {
             if (event.data.done) void queryClient.invalidateQueries({ queryKey: ["adapters"] });
           } else if (event.type === "debug-stopped") {
             useDebug.getState().setStopped(event.data);
-            // Show where it stopped: the Blueprint of the top project frame, at its node.
             const top = event.data.frames.find((f) => f.flow);
-            if (top?.flow) {
-              const ui = useUi.getState();
-              if (ui.flowSymbol !== top.flow || ui.view !== "blueprint") ui.openFlow(top.flow);
-              if (top.node) ui.select({ kind: "flow-node", flow: top.flow, id: top.node });
-            }
+            const structure = queryClient.getQueryData<StructureGraph>(["structure"]);
+            if (top) showDebugFrame(top, structure ? indexOf(structure) : undefined);
             void queryClient.invalidateQueries({ queryKey: ["debug-scopes"] });
             void queryClient.invalidateQueries({ queryKey: ["debug-watch"] });
           } else if (event.type === "project-changed") {
@@ -146,124 +143,131 @@ function TopBar() {
   const root = project.data?.root;
   const [opening, setOpening] = useState(false);
   useEffect(() => {
-    if (root) {
-      useUi.getState().loadDetail(root);
-      useUi.getState().loadContext(root);
-    }
-  }, [root, ui.contextKey]);
+    if (root) useUi.getState().loadDetail(root);
+  }, [root, ui.detailKey]);
+  useEffect(() => {
+    if (root && index) useUi.getState().loadContext(root, index);
+  }, [root, index, ui.contextKey]);
   return (
     <header className="topbar">
-      <div className="brand">
-        <span className="logo">◆</span> Nodex
-        {project.data && (
-          <span className="project-name" title={project.data.root}>
-            {project.data.name}
-          </span>
-        )}
-        <button className="open-btn" onClick={() => setOpening(true)} title="Open another project or folder">
-          Open…
-        </button>
-        {opening && <OpenDialog onClose={() => setOpening(false)} />}
-        {project.data?.flavors.includes("unity") && <span className="badge badge-unity">Unity</span>}
-      </div>
-      <nav className="tabs">
-        {VIEWS.map((v) => (
-          <button key={v.id} className={ui.view === v.id ? "active" : ""} title={v.hint} onClick={() => ui.setView(v.id)}>
-            {v.label}
+      <div className="topbar-primary">
+        <div className="brand">
+          <span className="logo">◆</span> Nodex
+          {project.data && (
+            <span className="project-name" title={project.data.root}>
+              {project.data.name}
+            </span>
+          )}
+          <button className="open-btn" onClick={() => setOpening(true)} title="Open another project or folder">
+            Open…
           </button>
-        ))}
-      </nav>
-      <span className="chip project-context-chip">
-        <button className="chip-x" onClick={() => ui.setContextPickerOpen(true)} title="Choose project folders and symbols">
-          Context · {contextLabel(ui.context, (id) => index?.byId.get(id)?.name)}
-        </button>
-        {!!ui.context.length && <button className="chip-x" aria-label="Clear context" onClick={ui.clearContext}>×</button>}
-      </span>
-      {ui.contextPickerOpen && <ContextPicker />}
-      <div className={`context${classMode ? " class-context" : ""}`}>
-        {/* Hierarchy and Knowledge keep their controls in their own stage bar. */}
-        {ui.view === "uml" && <ConfidenceToggles />}
-        {ui.view === "types" && (
-          <>
-            <span className="chip">
-              {ui.namespace ?? "all namespaces"}
-              {ui.namespace && (
-                <button className="chip-x" onClick={() => ui.setNamespace(null)} title="Show all namespaces">
-                  ×
+          {opening && <OpenDialog onClose={() => setOpening(false)} />}
+          {project.data?.flavors.includes("unity") && <span className="badge badge-unity">Unity</span>}
+        </div>
+        <span className="chip project-context-chip">
+          <button className="chip-x" disabled={!ui.contextKey} onClick={() => ui.setContextPickerOpen(true)} title="Choose project folders and symbols">
+            Context · {contextLabel(ui.context, (id) => index?.byId.get(id)?.name)}
+          </button>
+          {!!ui.context.length && <button className="chip-x" aria-label="Clear context" onClick={ui.clearContext}>×</button>}
+        </span>
+        {ui.contextPickerOpen && <ContextPicker />}
+        <div className="topbar-actions">
+          <button className="palette-button" onClick={() => ui.setPaletteOpen(true)} title="Search symbols and commands (Ctrl+K)">
+            Search <kbd>Ctrl K</kbd>
+          </button>
+          <RunButton />
+          <DebugControls />
+          <SemanticBadge />
+          <span className={`status ${ui.connected ? "on" : "off"}`} title={ui.connected ? "Live: updates on save" : "Disconnected"}>
+            ●
+          </span>
+          <button className="icon-button" onClick={() => ui.setSettingsOpen(true)} title="Settings (Ctrl+,)" aria-label="Settings">
+            ⚙
+          </button>
+        </div>
+      </div>
+      <div className="topbar-navigation">
+        <nav className="tabs">
+          {VIEWS.map((v) => (
+            <button key={v.id} className={ui.view === v.id ? "active" : ""} title={v.hint} onClick={() => ui.setView(v.id)}>
+              {v.label}
+            </button>
+          ))}
+        </nav>
+        <div className={`context${classMode ? " class-context" : ""}`}>
+          {/* Hierarchy and Knowledge keep their controls in their own stage bar. */}
+          {ui.view === "uml" && <ConfidenceToggles />}
+          {ui.view === "types" && (
+            <>
+              <span className="chip">
+                {ui.namespace ?? "all namespaces"}
+                {ui.namespace && (
+                  <button className="chip-x" onClick={() => ui.setNamespace(null)} title="Show all namespaces">
+                    ×
+                  </button>
+                )}
+              </span>
+              <label className="toggle">
+                <input type="checkbox" checked={ui.showUses} onChange={(e) => ui.setShowUses(e.target.checked)} /> uses
+              </label>
+            </>
+          )}
+          {ui.view === "calls" && (
+            <label className="toggle" title="How many steps of callers and callees to show">
+              depth
+              <select value={ui.callDepth} onChange={(e) => ui.setCallDepth(Number(e.target.value))}>
+                {[1, 2, 3, 4].map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {ui.view === "blueprint" && flowSymbol && (
+            <>
+              <span className="crumb" title={flowSymbol.signature ?? ""}>
+                {classMode ? flowSymbol.name : flowSymbol.qualified_name}
+              </span>
+              {classIds.length > 0 && (
+                <div className="segmented" role="group" aria-label="Class methods">
+                  <button onClick={() => ui.setClassOpen(classIds, true)}>Open all</button>
+                  <button onClick={() => ui.setClassOpen(classIds, false)}>Close all</button>
+                </div>
+              )}
+              {classMode ? (
+                <label className="toggle">
+                  Detail
+                  <select aria-label="Detail" value={ui.detail} onChange={(e) => ui.setDetail(e.target.value as typeof ui.detail)}>
+                    {DETAIL_LEVELS.map((l) => <option key={l.id} value={l.id} title={l.explain}>{l.label}</option>)}
+                  </select>
+                </label>
+              ) : <div className="segmented" role="group" aria-label="Detail">
+                {DETAIL_LEVELS.map((l) => (
+                  <button
+                    key={l.id}
+                    className={ui.detail === l.id ? "on" : ""}
+                    title={l.explain}
+                    aria-pressed={ui.detail === l.id}
+                    onClick={() => ui.setDetail(l.id)}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>}
+              <label className="toggle" title="Wires from where a variable is created to where it is used">
+                <input type="checkbox" checked={ui.showDataWires} onChange={(e) => ui.setShowDataWires(e.target.checked)} /> data wires
+              </label>
+              {ui.detail === "statements" && (
+                <button onClick={ui.collapseAll} title="Hide all expression details">
+                  Collapse
                 </button>
               )}
-            </span>
-            <label className="toggle">
-              <input type="checkbox" checked={ui.showUses} onChange={(e) => ui.setShowUses(e.target.checked)} /> uses
-            </label>
-          </>
-        )}
-        {ui.view === "calls" && (
-          <label className="toggle" title="How many steps of callers and callees to show">
-            depth
-            <select value={ui.callDepth} onChange={(e) => ui.setCallDepth(Number(e.target.value))}>
-              {[1, 2, 3, 4].map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {ui.view === "blueprint" && flowSymbol && (
-          <>
-            <span className="crumb" title={flowSymbol.signature ?? ""}>
-              {classMode ? flowSymbol.name : flowSymbol.qualified_name}
-            </span>
-            {classIds.length > 0 && (
-              <div className="segmented" role="group" aria-label="Class methods">
-                <button onClick={() => ui.setClassOpen(classIds, true)}>Open all</button>
-                <button onClick={() => ui.setClassOpen(classIds, false)}>Close all</button>
-              </div>
-            )}
-            {classMode ? (
-              <label className="toggle">
-                Detail
-                <select aria-label="Detail" value={ui.detail} onChange={(e) => ui.setDetail(e.target.value as typeof ui.detail)}>
-                  {DETAIL_LEVELS.map((l) => <option key={l.id} value={l.id} title={l.explain}>{l.label}</option>)}
-                </select>
-              </label>
-            ) : <div className="segmented" role="group" aria-label="Detail">
-              {DETAIL_LEVELS.map((l) => (
-                <button
-                  key={l.id}
-                  className={ui.detail === l.id ? "on" : ""}
-                  title={l.explain}
-                  aria-pressed={ui.detail === l.id}
-                  onClick={() => ui.setDetail(l.id)}
-                >
-                  {l.label}
-                </button>
-              ))}
-            </div>}
-            <label className="toggle" title="Wires from where a variable is created to where it is used">
-              <input type="checkbox" checked={ui.showDataWires} onChange={(e) => ui.setShowDataWires(e.target.checked)} /> data wires
-            </label>
-            {ui.detail === "statements" && (
-              <button onClick={ui.collapseAll} title="Hide all expression details">
-                Collapse
-              </button>
-            )}
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
-      <button className="palette-button" onClick={() => ui.setPaletteOpen(true)} title="Search symbols and commands (Ctrl+K)">
-        Search <kbd>Ctrl K</kbd>
-      </button>
-      <RunButton />
-      <DebugControls />
-      <SemanticBadge />
-      <span className={`status ${ui.connected ? "on" : "off"}`} title={ui.connected ? "Live: updates on save" : "Disconnected"}>
-        ●
-      </span>
-      <button className="icon-button" onClick={() => ui.setSettingsOpen(true)} title="Settings (Ctrl+,)" aria-label="Settings">
-        ⚙
-      </button>
+      <ActivityBar />
     </header>
   );
 }
@@ -328,7 +332,6 @@ export function App() {
       <SettingsDialog />
       <Toasts />
       <ConnectionOverlay />
-      <ActivityBar />
     </>
   );
 
@@ -336,6 +339,7 @@ export function App() {
     return (
       <>
         <Welcome />
+        <ActivityBar />
         {overlays}
       </>
     );

@@ -1,13 +1,13 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { debugActive, hiddenFrames, toggleBreakpoint, topFrame, useDebug, visibleFrames } from "../debug";
+import { debugActive, hiddenFrames, showDebugFrame, toggleBreakpoint, topFrame, useDebug, visibleFrames } from "../debug";
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { AdapterStatus } from "../gen/AdapterStatus";
-import type { DebugFrame } from "../gen/DebugFrame";
 import type { DebugVariable } from "../gen/DebugVariable";
 import { useUi } from "../store";
 import { useTrace } from "../trace";
+import { useStructure } from "../views/Views";
 
 type Command = "continue" | "next" | "stepIn" | "stepOut" | "pause" | "stop";
 
@@ -125,13 +125,6 @@ function Variable({ v, depth }: { v: DebugVariable; depth: number }) {
   );
 }
 
-function openFrame(f: DebugFrame) {
-  if (!f.flow) return;
-  const ui = useUi.getState();
-  ui.openFlow(f.flow);
-  if (f.node) ui.select({ kind: "flow-node", flow: f.flow, id: f.node });
-}
-
 /** Starts a download; the button shows progress at once (no second click while it starts). */
 function installAdapter(language: AdapterStatus["language"], size: number) {
   const { setProgress } = useDebug.getState();
@@ -181,6 +174,7 @@ function InstallCard({ language }: { language: string }) {
 /** Call stack, variables and watch expressions while debugging. */
 export function DebugPanel() {
   const { status, stopped, frame, setFrame, setFrameScopes, scopes: frameScopes } = useDebug();
+  const { index } = useStructure();
   const [watches, setWatches] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [allFrames, setAllFrames] = useState(false);
@@ -218,7 +212,7 @@ export function DebugPanel() {
                 className={`dbg-frame ${f.id === frame ? "on" : ""} ${f.file ? "" : "external"}`}
                 onClick={() => {
                   setFrame(f.id);
-                  openFrame(f);
+                  showDebugFrame(f, index);
                 }}
                 title={f.file ? `${f.file}:${f.line}` : "outside the project"}
               >
