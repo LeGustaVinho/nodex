@@ -13,6 +13,7 @@ import { Palette } from "./panels/Palette";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
 import { RELATION_GROUPS } from "./graph/hierarchy";
+import { Splitter } from "./components/Splitter";
 import { ArchitectureView, BlueprintView, CallsView, TypesView, useStructure } from "./views/Views";
 import { ConfidenceToggles } from "./components/ConfidenceToggles";
 import { ContextMenuHost } from "./components/ContextMenu";
@@ -376,9 +377,11 @@ export function App() {
         <ConsolePanel />
       </main>
       <section className="right">
+        <Splitter size="right-w" axis="x" target="parent" grow={-1} min={240} max={(app) => app.clientWidth * 0.6} label="Resize the right panel" className="edge-left" />
         <UnityCard />
         <DebugPanel />
         <Inspector />
+        <Splitter size="inspector-h" axis="y" target="prev" grow={1} min={60} max={(right) => right.clientHeight - 200} label="Resize the inspector and the code" />
         <CodeSlot />
       </section>
       <Palette />

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { api } from "../api";
+import { Splitter } from "../components/Splitter";
 import { useUi } from "../store";
 import { useTrace } from "../trace";
 import { errorText, toast } from "../toast";
@@ -55,6 +56,7 @@ export function ConsolePanel() {
   }
   return (
     <div className="console">
+      <Splitter size="console-h" axis="y" target="parent" grow={-1} min={80} max={(main) => main.clientHeight - 60} label="Resize the console" className="edge-top" />
       <div className="console-head">
         <span>Console</span>
         <span className="muted">

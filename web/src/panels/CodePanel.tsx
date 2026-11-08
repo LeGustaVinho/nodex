@@ -187,6 +187,8 @@ export function CodePanel() {
         loading={<Loading label="Loading the code editor…" />}
         options={{
           readOnly: true,
+          // Follow the panel when a splitter or the window changes its size.
+          automaticLayout: true,
           glyphMargin: true,
           minimap: { enabled: false },
           fontSize: 12.5,

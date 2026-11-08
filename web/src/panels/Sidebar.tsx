@@ -3,6 +3,7 @@ import { Fragment, type ReactNode, useLayoutEffect, useMemo, useRef, useState } 
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { openMenu } from "../components/ContextMenu";
+import { Splitter } from "../components/Splitter";
 import type { Symbol } from "../gen/Symbol";
 import { type FileNode, fileTree } from "../graph/fileTree";
 import { umlMenuItems } from "../uml/menu";
@@ -194,6 +195,7 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
+      <Splitter size="sidebar-w" axis="x" target="parent" grow={1} min={150} max={(app) => app.clientWidth * 0.45} label="Resize the sidebar" className="edge-right" />
       <div className="segmented sidebar-tabs" role="tablist">
         <button className={tab === "symbols" ? "on" : ""} aria-selected={tab === "symbols"} onClick={() => setTab("symbols")}>
           Symbols
@@ -209,6 +211,9 @@ export function Sidebar() {
         onChange={(e) => setQuery(e.target.value)}
       />
       <VirtualList rows={tab === "files" ? fileRows : symbolRows} />
+      {problems.length > 0 && (
+        <Splitter size="problems-h" axis="y" target="next" grow={-1} min={40} max={(sidebar) => sidebar.clientHeight - 140} label="Resize the problems list" />
+      )}
       {problems.length > 0 && (
         <div className="problems">
           <div className="section-title">Problems</div>
