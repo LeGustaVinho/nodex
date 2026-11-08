@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use nodex_lang_api::{RunCommand, RunEnv, RunKind, TraceInstrumenter, kit::LineIndex};
 use serde_json::{Value, json};
@@ -36,7 +36,7 @@ pub struct RustInstrumenter;
 
 /// The `nodex-trace-rt` crate: `NODEX_RUST_TRACE_RT` (its folder or `Cargo.toml`), next to the
 /// executable, or in the repository.
-fn runtime_dir() -> Option<PathBuf> {
+pub fn runtime_dir() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("NODEX_RUST_TRACE_RT").map(PathBuf::from) {
         let dir = if p.is_dir() { p } else { p.parent()?.to_path_buf() };
         return dir.join("Cargo.toml").is_file().then_some(dir);
@@ -95,7 +95,7 @@ impl TraceInstrumenter for RustInstrumenter {
         let rel_manifest = package.manifest.strip_prefix(root).unwrap_or(&package.manifest);
         let target = work.join("target");
         log(&format!("cargo build --bin {bin} …"));
-        let mut child = Command::new("cargo")
+        let mut child = nodex_lang_api::process::command("cargo")
             .arg("build")
             .arg("--manifest-path")
             .arg(copy.join(rel_manifest))

@@ -11,6 +11,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::OnceLock;
 
 use nodex_ir::semantic::SemanticFacts;
 use serde_json::{Value, json};
@@ -26,14 +27,25 @@ pub struct LineSidecar {
 }
 
 impl LineSidecar {
-    /// Starts `command` with piped stdin/stdout. Stderr is inherited when `log` is true.
+    /// Starts `command` with piped stdin/stdout and no console window. Stderr is inherited when
+    /// `log` is true; otherwise its lines go to the Nodex log.
     pub fn spawn(mut command: Command, name: &'static str, log: bool) -> Result<Self, String> {
+        crate::process::hide_window(&mut command);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(if log { Stdio::inherit() } else { Stdio::null() })
+            .stderr(if log { Stdio::inherit() } else { Stdio::piped() })
             .spawn()
             .map_err(|e| format!("cannot start the {name} sidecar ({e})"))?;
+        if let Some(stderr) = child.stderr.take() {
+            let _ = std::thread::Builder::new().name(format!("nodex-{name}-stderr")).spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if !line.trim().is_empty() {
+                        tracing::info!(target: "nodex_sidecar", sidecar = name, "{line}");
+                    }
+                }
+            });
+        }
         let stdin = child.stdin.take().ok_or("sidecar stdin unavailable")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("sidecar stdout unavailable")?);
         Ok(Self { child, stdin, stdout, next_id: 1, name })
@@ -83,15 +95,41 @@ impl Drop for LineSidecar {
     }
 }
 
-/// Finds a sidecar entry file: the `env` variable, `installed` relative to the executable's
-/// folder, or one of `source_tree` relative to any ancestor of the executable or of this crate
-/// (a build in the repository).
+/// The installed app's resource folder, set once by the desktop host at start-up.
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Tells the locators where the installed app keeps its resources (the Tauri resource folder,
+/// which is not the executable's folder on every system). Later calls are ignored.
+pub fn set_resource_dir(dir: impl Into<PathBuf>) {
+    let _ = RESOURCE_DIR.set(dir.into());
+}
+
+/// Folders an installed Nodex keeps its sidecars in: the resource folder, then the
+/// executable's folder.
+pub fn install_dirs() -> Vec<PathBuf> {
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+    RESOURCE_DIR.get().cloned().into_iter().chain(exe_dir).collect()
+}
+
+/// Folders whose ancestors may hold a source checkout: the executable's folder and, in debug
+/// builds only, this crate (so a release binary never carries the build machine's paths).
+fn source_roots() -> Vec<PathBuf> {
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+    let mut roots: Vec<PathBuf> = exe_dir.into_iter().collect();
+    if cfg!(debug_assertions) {
+        roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    }
+    roots
+}
+
+/// Finds a sidecar entry file: the `env` variable, `installed` relative to the resource or
+/// executable folder, or one of `source_tree` relative to any ancestor of the executable (or, in
+/// debug builds, of this crate: a build in the repository).
 pub fn locate(env: &str, installed: &[&str], source_tree: &[&str]) -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(env).map(PathBuf::from) {
         return p.is_file().then_some(p);
     }
-    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
-    if let Some(dir) = &exe_dir {
+    for dir in install_dirs() {
         for rel in installed {
             let candidate = dir.join(rel);
             if candidate.is_file() {
@@ -99,8 +137,7 @@ pub fn locate(env: &str, installed: &[&str], source_tree: &[&str]) -> Option<Pat
             }
         }
     }
-    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for start in exe_dir.into_iter().chain(std::iter::once(repo)) {
+    for start in source_roots() {
         for dir in start.ancestors() {
             for rel in source_tree {
                 let candidate = dir.join(rel);

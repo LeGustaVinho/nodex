@@ -26,12 +26,12 @@ impl TraceInstrumenter for DotnetInstrumenter {
         }
 
         log(&format!("Building {} …", project.file_name().unwrap_or_default().to_string_lossy()));
-        let mut cmd = Command::new("dotnet");
+        let mut cmd = nodex_lang_api::process::command("dotnet");
         cmd.arg("build").arg(&project).args(["-c", "Debug", "-nologo", "-v", "minimal", "-o"]).arg(&build);
         run_logged(cmd, log).map_err(|e| format!("build failed: {e}"))?;
 
         log("Instrumenting (Nodex.Weaver) …");
-        let mut cmd = Command::new("dotnet");
+        let mut cmd = nodex_lang_api::process::command("dotnet");
         cmd.arg(&weaver).arg("--root").arg(root).arg("--input").arg(&build).arg("--output").arg(&traced);
         run_logged(cmd, log).map_err(|e| format!("instrumentation failed: {e}"))?;
 

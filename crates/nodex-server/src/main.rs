@@ -1,14 +1,9 @@
 //! `nodex` command-line entry point.
 
-use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use anyhow::Context;
 use clap::{Parser, Subcommand};
-use nodex_core::Project;
-use nodex_lang_api::LanguageFrontend;
-use nodex_server::{AppState, new_token, router, semantic_worker, watch};
+use nodex_server::{ServerOptions, logging, start};
 
 #[derive(Parser)]
 #[command(name = "nodex", version, about = "Visualize code as language-agnostic node graphs")]
@@ -38,20 +33,10 @@ enum Command {
     },
 }
 
-/// Every language frontend compiled into this binary.
-fn frontends() -> Vec<Arc<dyn LanguageFrontend>> {
-    vec![
-        Arc::new(nodex_lang_csharp::CSharpFrontend),
-        Arc::new(nodex_lang_typescript::TypeScriptFrontend),
-        Arc::new(nodex_lang_rust::RustFrontend),
-    ]
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "nodex=info,nodex_server=info".into()))
-        .init();
+    let _log = logging::init(true);
+    nodex_lang_api::process::kill_children_on_exit();
 
     match Cli::parse().command {
         Command::Open { path, port, no_browser, dev_origin } => open(path, port, no_browser, dev_origin).await,
@@ -59,45 +44,22 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn open(path: PathBuf, port: u16, no_browser: bool, dev_origins: Vec<String>) -> anyhow::Result<()> {
-    let started = std::time::Instant::now();
-    let project = tokio::task::spawn_blocking(move || Project::open(&path, frontends())).await??;
-    let summary = project.summary();
-    tracing::info!(
-        "loaded {} ({} files) in {:?}",
-        summary.name,
-        summary.files.len(),
-        started.elapsed()
-    );
-
-    let (listener, port) = bind(port).await?;
-    let token = new_token();
-    let state = AppState::new(project, token.clone(), port, dev_origins);
-    let watcher = watch::spawn(state.clone()).context("cannot watch the project folder")?;
-    if let Ok(mut w) = state.watcher.lock() {
-        *w = Some(watcher);
-    }
-    semantic_worker::spawn(&state);
-    {
-        let project = state.project.lock().map_err(|_| anyhow::anyhow!("project lock poisoned"))?;
-        nodex_server::projects::remember(&project);
-    }
-
-    let url = format!("http://127.0.0.1:{port}/?token={token}");
+    let mut server = start(ServerOptions { project: Some(path), port, dev_origins }).await?;
+    let url = server.url_with_token();
     println!("Nodex is running at {url}");
-    println!("Dev UI (with --dev-origin http://localhost:5173): http://localhost:5173/?token={token}");
+    println!("Dev UI (with --dev-origin http://localhost:5173): http://localhost:5173/?token={}", server.token);
     if !no_browser {
         let _ = open::that(&url);
     }
-    axum::serve(listener, router(state)).await?;
-    Ok(())
-}
-
-async fn bind(port: u16) -> anyhow::Result<(tokio::net::TcpListener, u16)> {
-    for candidate in port..port.saturating_add(20) {
-        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, candidate));
-        if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-            return Ok((listener, candidate));
+    let ended = tokio::select! {
+        result = server.wait() => Some(result),
+        _ = tokio::signal::ctrl_c() => None,
+    };
+    match ended {
+        Some(result) => result,
+        None => {
+            server.shutdown().await;
+            Ok(())
         }
     }
-    anyhow::bail!("no free port between {port} and {}", port.saturating_add(19))
 }

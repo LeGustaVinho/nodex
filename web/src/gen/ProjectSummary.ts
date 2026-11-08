@@ -4,7 +4,11 @@ import type { Language } from "./Language";
 import type { PackageRef } from "./PackageRef";
 import type { SemanticStatus } from "./SemanticStatus";
 
-export type ProjectSummary = { name: string, root: string, languages: Array<Language>, flavors: Array<string>, packages: Array<PackageRef>, files: Array<FileSummary>, 
+export type ProjectSummary = { 
+/**
+ * False until a folder is opened (the desktop app starts on its welcome screen).
+ */
+open: boolean, name: string, root: string, languages: Array<Language>, flavors: Array<string>, packages: Array<PackageRef>, files: Array<FileSummary>, 
 /**
  * Semantic analysis progress per language.
  */

@@ -34,11 +34,11 @@ export function UnityCard() {
             only while Nodex runs them.
           </p>
           <div className="unity-actions">
-            <button className="primary" disabled={busy} onClick={() => act.mutate("link")} title="Adds one line to Packages/manifest.json that points at Nodex's copy of the package. Nothing is copied; the path is this computer's.">
-              Link
+            <button className="primary" disabled={busy} onClick={() => act.mutate("embed")} title="Copies the package into Packages/com.nodex.trace, so it travels with the project and keeps working after Nodex updates.">
+              Install
             </button>
-            <button disabled={busy} onClick={() => act.mutate("embed")} title="Copies the package into Packages/com.nodex.trace, so it travels with the project.">
-              Embed
+            <button disabled={busy} onClick={() => act.mutate("link")} title="Adds one line to Packages/manifest.json that points at Nodex's copy of the package. Nothing is copied; the path is this computer's and changes when Nodex is updated or moved.">
+              Link instead
             </button>
           </div>
         </>

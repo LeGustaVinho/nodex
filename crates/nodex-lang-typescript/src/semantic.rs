@@ -5,7 +5,6 @@
 //! ranges (it converts TypeScript's UTF-16 positions).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use nodex_ir::semantic::SemanticFacts;
 use nodex_lang_api::SemanticProvider;
@@ -23,7 +22,7 @@ impl TsSidecar {
     /// Starts the sidecar and loads the project at `root`.
     pub fn start(root: &Path) -> Result<Self, String> {
         let entry = locate().ok_or_else(|| format!("TypeScript sidecar not found; {BUILD_HINT}"))?;
-        let mut command = Command::new(node());
+        let mut command = nodex_lang_api::process::command(node());
         command.arg(&entry);
         let log = std::env::var_os("NODEX_TS_LOG").is_some();
         let mut process = LineSidecar::spawn(command, "TypeScript", log).map_err(|e| format!("{e}; is Node.js installed?"))?;

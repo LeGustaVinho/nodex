@@ -4,7 +4,6 @@
 //! project with MSBuild (or as loose files) and reports semantic facts keyed by byte ranges.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use nodex_ir::semantic::SemanticFacts;
 use nodex_lang_api::SemanticProvider;
@@ -23,11 +22,11 @@ impl RoslynSidecar {
     pub fn start(root: &Path) -> Result<Self, String> {
         let entry = locate().ok_or_else(|| format!("Roslyn sidecar not found; {BUILD_HINT}"))?;
         let command = if entry.extension().is_some_and(|e| e == "dll") {
-            let mut c = Command::new("dotnet");
+            let mut c = nodex_lang_api::process::command("dotnet");
             c.arg(&entry);
             c
         } else {
-            Command::new(&entry)
+            nodex_lang_api::process::command(&entry)
         };
         let log = std::env::var_os("NODEX_ROSLYN_LOG").is_some();
         let mut process = LineSidecar::spawn(command, "Roslyn", log)

@@ -38,6 +38,8 @@ pub struct FileSummary {
 #[derive(Serialize, TS, Clone, Debug)]
 #[ts(export)]
 pub struct ProjectSummary {
+    /// False until a folder is opened (the desktop app starts on its welcome screen).
+    pub open: bool,
     pub name: String,
     pub root: String,
     pub languages: Vec<Language>,
@@ -103,6 +105,26 @@ impl Project {
             .collect();
         project.files.extend(lowered);
         Ok(project)
+    }
+
+    /// No folder yet: an empty project whose root is empty. The server starts with it when it
+    /// is launched without a folder; every graph is empty until one is opened.
+    pub fn empty(frontends: Vec<Arc<dyn LanguageFrontend>>) -> Self {
+        Self {
+            root: PathBuf::new(),
+            frontends,
+            descriptors: Vec::new(),
+            files: BTreeMap::new(),
+            structure: None,
+            knowledge: None,
+            semantic: BTreeMap::new(),
+            locator: None,
+        }
+    }
+
+    /// True once a folder is open (false for [`Project::empty`]).
+    pub fn is_open(&self) -> bool {
+        !self.root.as_os_str().is_empty()
     }
 
     /// Every language frontend the project was opened with.
@@ -197,6 +219,7 @@ impl Project {
             .or_else(|| self.root.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_default();
         ProjectSummary {
+            open: self.is_open(),
             name,
             root: self.root.display().to_string(),
             languages,

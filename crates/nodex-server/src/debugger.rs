@@ -343,11 +343,13 @@ fn start_adapter(spec: &AdapterSpec, program: &Path) -> Result<StartedAdapter, S
     let args: Vec<String> = spec.args.iter().map(|a| a.replace("{port}", &port.to_string())).collect();
     let mut cmd = match spec.interpreter {
         Some(i) => {
-            let mut c = std::process::Command::new(i);
+            // `node` honours NODEX_NODE, as the TypeScript sidecar and Run do.
+            let interpreter = if i == "node" { nodex_lang_typescript::semantic::node() } else { i.into() };
+            let mut c = nodex_lang_api::process::command(interpreter);
             c.arg(program);
             c
         }
-        None => std::process::Command::new(program),
+        None => nodex_lang_api::process::command(program),
     };
     cmd.args(&args);
     if let Some(dir) = program.parent() {
@@ -581,7 +583,7 @@ impl Drop for Cleanup {
     fn drop(&mut self) {
         if let Some(mut c) = self.0.take() {
             #[cfg(windows)]
-            let _ = std::process::Command::new("taskkill")
+            let _ = nodex_lang_api::process::command("taskkill")
                 .args(["/PID", &c.id().to_string(), "/T", "/F"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

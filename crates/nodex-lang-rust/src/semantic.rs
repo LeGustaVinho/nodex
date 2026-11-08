@@ -12,7 +12,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use nodex_ir::semantic::{ByteRange, LocalTypeFact, RefKind, SemanticFacts, SemanticRef, SemanticTarget};
 use nodex_lang_api::SemanticProvider;
@@ -31,19 +30,19 @@ pub struct RustAnalyzer {
 }
 
 /// The rust-analyzer binary: `NODEX_RUST_ANALYZER`, the rustup component, or `PATH`.
-fn find_binary() -> Option<(PathBuf, String)> {
+pub fn find_binary() -> Option<(PathBuf, String)> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(p) = std::env::var("NODEX_RUST_ANALYZER") {
         candidates.push(PathBuf::from(p));
     }
-    if let Ok(out) = Command::new("rustup").args(["which", "rust-analyzer"]).output()
+    if let Ok(out) = nodex_lang_api::process::command("rustup").args(["which", "rust-analyzer"]).output()
         && out.status.success()
     {
         candidates.push(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
     }
     candidates.push(PathBuf::from("rust-analyzer"));
     for c in candidates {
-        if let Ok(out) = Command::new(&c).arg("--version").output()
+        if let Ok(out) = nodex_lang_api::process::command(&c).arg("--version").output()
             && out.status.success()
         {
             return Some((c, String::from_utf8_lossy(&out.stdout).trim().to_owned()));
@@ -82,7 +81,7 @@ impl RustAnalyzer {
         let out_dir = self.root.join(".nodex").join("semantic");
         std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
         let out = out_dir.join(format!("rust-{n}.scip"));
-        let result = Command::new(&self.binary)
+        let result = nodex_lang_api::process::command(&self.binary)
             .arg("scip")
             .arg(crate_root)
             .arg("--output")

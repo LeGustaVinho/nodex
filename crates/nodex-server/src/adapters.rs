@@ -54,14 +54,7 @@ pub fn cache_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("NODEX_ADAPTERS_DIR") {
         return PathBuf::from(d);
     }
-    let base = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches"))
-    } else {
-        std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-    };
-    base.unwrap_or_else(std::env::temp_dir).join("nodex").join("adapters")
+    crate::projects::data_dir().join("adapters")
 }
 
 fn install_dir(spec: &AdapterSpec) -> PathBuf {

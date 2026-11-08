@@ -5,6 +5,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Run on any newer .NET installed on the user's machine, not only .NET 10. -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 
   <ItemGroup>

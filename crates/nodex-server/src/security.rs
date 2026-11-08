@@ -45,6 +45,15 @@ pub async fn require_token(State(state): State<Arc<AppState>>, req: Request, nex
     }
 }
 
+/// Answers 409 while no folder is open (the welcome screen).
+pub async fn require_project(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    let open = state.project.lock().map(|p| p.is_open()).unwrap_or(false);
+    if !open {
+        return (StatusCode::CONFLICT, "no project is open").into_response();
+    }
+    next.run(req).await
+}
+
 fn token_from(headers: &HeaderMap, query: Option<&str>) -> Option<String> {
     if let Some(t) = headers.get(TOKEN_HEADER).and_then(|v| v.to_str().ok()) {
         return Some(t.to_owned());

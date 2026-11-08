@@ -9,10 +9,13 @@ pub mod adapters;
 pub mod api;
 pub mod assets;
 pub mod debugger;
+pub mod environment;
+pub mod logging;
 pub mod projects;
 pub mod runner;
 pub mod security;
 pub mod semantic_worker;
+pub mod server;
 pub mod uml;
 pub mod unity;
 pub mod watch;
@@ -29,6 +32,8 @@ use nodex_core::{Catalog, Project};
 use nodex_lang_api::LanguageFrontend;
 use serde::Serialize;
 use tokio::sync::broadcast;
+
+pub use server::{ServerHandle, ServerOptions, frontends, start};
 
 /// Events pushed to every connected browser.
 #[derive(Serialize, Clone, Debug)]
@@ -110,6 +115,21 @@ impl AppState {
         self.project.lock().map(|p| p.root().join(".nodex").join("layout.json")).unwrap_or_default()
     }
 
+    /// Stops everything that works on the project (run, debug session, semantic workers, file
+    /// watcher) before the server exits.
+    pub fn close(&self) {
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.run.stop();
+        let _ = self.debug.command(debugger::DebugCommand::Stop);
+        // Semantic workers end (and stop their sidecars) when their channel closes.
+        if let Ok(mut senders) = self.semantic_tx.lock() {
+            senders.clear();
+        }
+        if let Ok(mut w) = self.watcher.lock() {
+            *w = None;
+        }
+    }
+
     pub fn read_layouts(&self) -> BTreeMap<String, serde_json::Value> {
         std::fs::read_to_string(self.layout_file())
             .ok()
@@ -120,19 +140,29 @@ impl AppState {
 
 /// Builds the application router.
 pub fn router(state: Arc<AppState>) -> Router {
-    let api = Router::new()
-        .route("/api/project", get(api::project))
-        .route("/api/project/open", post(api::project_open))
-        .route("/api/fs/list", get(api::fs_list))
-        .route("/api/recent", get(api::recent))
+    // Routes about the open folder answer 409 on the welcome screen (no folder yet).
+    let project = Router::new()
         .route("/api/structure", get(api::structure))
         .route("/api/knowledge", get(api::knowledge))
         .route("/api/uml", get(uml::diagram))
         .route("/api/uml/availability", get(uml::availability))
         .route("/api/flow", get(api::flow))
         .route("/api/source", get(api::source))
-        .route("/api/catalog", get(api::catalog))
         .route("/api/layout", get(api::get_layout).put(api::put_layout))
+        .route("/api/debug/breakpoints", get(api::get_breakpoints).put(api::put_breakpoints))
+        .route("/api/unity", get(api::unity_status))
+        .route("/api/unity/package", post(api::unity_package))
+        .route("/api/unity/trace-off", post(api::unity_trace_off))
+        .route_layer(middleware::from_fn_with_state(state.clone(), security::require_project));
+
+    let api = Router::new()
+        .merge(project)
+        .route("/api/project", get(api::project))
+        .route("/api/project/open", post(api::project_open))
+        .route("/api/fs/list", get(api::fs_list))
+        .route("/api/recent", get(api::recent))
+        .route("/api/catalog", get(api::catalog))
+        .route("/api/environment", get(api::environment))
         .route("/api/run", get(api::run_snapshot).post(api::run_start))
         .route("/api/run/stop", post(api::run_stop))
         .route("/api/trace/steps", get(api::trace_steps))
@@ -141,15 +171,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/debug", get(api::debug_snapshot))
         .route("/api/debug/start", post(api::debug_start))
         .route("/api/debug/command", post(api::debug_command))
-        .route("/api/debug/breakpoints", get(api::get_breakpoints).put(api::put_breakpoints))
         .route("/api/debug/variables", get(api::debug_variables))
         .route("/api/debug/scopes", get(api::debug_scopes))
         .route("/api/debug/evaluate", post(api::debug_evaluate))
         .route("/api/debug/adapters", get(api::debug_adapters))
         .route("/api/debug/adapters/install", post(api::debug_adapter_install))
-        .route("/api/unity", get(api::unity_status))
-        .route("/api/unity/package", post(api::unity_package))
-        .route("/api/unity/trace-off", post(api::unity_trace_off))
         .route("/ws", get(api::ws))
         .route_layer(middleware::from_fn_with_state(state.clone(), security::require_token));
 

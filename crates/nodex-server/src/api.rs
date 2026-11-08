@@ -84,6 +84,12 @@ pub async fn recent() -> ApiResult {
     Ok(Json(crate::projects::recent()).into_response())
 }
 
+/// Toolchains and bundled helpers on this machine (each check starts a process).
+pub async fn environment() -> ApiResult {
+    let report = tokio::task::spawn_blocking(crate::environment::report).await.map_err(internal)?;
+    Ok(Json(report).into_response())
+}
+
 pub async fn catalog(State(state): State<Arc<AppState>>) -> ApiResult {
     Ok(Json(&state.catalog).into_response())
 }

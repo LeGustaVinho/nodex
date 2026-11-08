@@ -71,7 +71,7 @@ impl DebugLauncher for DotnetDebugger {
             std::fs::remove_dir_all(&build).map_err(|e| format!("cannot clean {}: {e}", build.display()))?;
         }
         log(&format!("Building {} for debugging …", project.file_name().unwrap_or_default().to_string_lossy()));
-        let mut cmd = std::process::Command::new("dotnet");
+        let mut cmd = nodex_lang_api::process::command("dotnet");
         cmd.arg("build").arg(&project).args(["-c", "Debug", "-nologo", "-v", "minimal", "-o"]).arg(&build);
         run_logged(cmd, log).map_err(|e| format!("build failed: {e}"))?;
         let app = entry_assembly(&build, &project)?;

@@ -15,7 +15,7 @@ mod knowledge;
 mod prepare;
 mod project;
 pub mod roslyn;
-mod sidecar;
+pub mod sidecar;
 mod structure;
 mod syntax;
 mod unity;

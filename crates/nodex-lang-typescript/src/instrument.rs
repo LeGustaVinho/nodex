@@ -8,7 +8,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use nodex_lang_api::{RunCommand, RunEnv, RunKind, TraceInstrumenter};
 use serde_json::Value;
@@ -22,7 +22,7 @@ pub struct NodeInstrumenter;
 /// Runs `nodex-ts instrument <args>` and returns its `NODEX-RESULT` JSON.
 fn sidecar(args: &[&std::ffi::OsStr], log: &mut dyn FnMut(&str)) -> Result<Value, String> {
     let sidecar = locate().ok_or_else(|| format!("TypeScript sidecar not found; {BUILD_HINT}"))?;
-    let mut child = Command::new(node())
+    let mut child = nodex_lang_api::process::command(node())
         .arg(&sidecar)
         .arg("instrument")
         .args(args)

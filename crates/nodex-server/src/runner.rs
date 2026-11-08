@@ -345,7 +345,7 @@ async fn run(
     let intake = tokio::spawn(accept_traces(listener, trace_token.clone(), recorder.clone(), out.clone(), None));
 
     // 4. Launch.
-    let mut cmd = tokio::process::Command::new(&command.program);
+    let mut cmd = tokio::process::Command::from(nodex_lang_api::process::command(&command.program));
     cmd.args(&command.args)
         .current_dir(&command.cwd)
         .env("NODEX_TRACE", endpoint.to_string())
@@ -557,9 +557,9 @@ impl Drop for TreeGuard {
 /// Synchronous tree kill, for drops.
 fn kill_tree_now(pid: u32) {
     #[cfg(windows)]
-    let _ = std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = nodex_lang_api::process::command("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
     #[cfg(unix)]
-    let _ = std::process::Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
+    let _ = nodex_lang_api::process::command("kill").args(["-TERM", &format!("-{pid}")]).status();
 }
 
 /// Ends the process and everything it started (a dev server runs `npm` → `node` → workers).
@@ -567,7 +567,7 @@ async fn kill_tree(child: &mut tokio::process::Child) {
     if let Some(pid) = child.id() {
         #[cfg(windows)]
         {
-            let _ = tokio::process::Command::new("taskkill")
+            let _ = tokio::process::Command::from(nodex_lang_api::process::command("taskkill"))
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -576,7 +576,7 @@ async fn kill_tree(child: &mut tokio::process::Child) {
         }
         #[cfg(unix)]
         {
-            let _ = tokio::process::Command::new("kill").args(["-TERM", &format!("-{pid}")]).status().await;
+            let _ = tokio::process::Command::from(nodex_lang_api::process::command("kill")).args(["-TERM", &format!("-{pid}")]).status().await;
         }
     }
     let _ = child.kill().await;

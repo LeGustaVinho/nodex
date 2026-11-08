@@ -68,7 +68,7 @@ pub fn editor(root: &Path) -> Option<EditorInstance> {
 fn process_alive(pid: u32) -> bool {
     #[cfg(windows)]
     {
-        std::process::Command::new("tasklist")
+        nodex_lang_api::process::command("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")))
@@ -76,7 +76,7 @@ fn process_alive(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        std::process::Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+        nodex_lang_api::process::command("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
     }
 }
 

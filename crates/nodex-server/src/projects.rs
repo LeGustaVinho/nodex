@@ -140,6 +140,19 @@ pub fn config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home_dir().map(|h| h.join(".config"))).map(|c| c.join("nodex"))
 }
 
+/// Where Nodex keeps downloads, logs and other data that can be rebuilt: `%LOCALAPPDATA%\nodex`,
+/// `~/Library/Caches/nodex`, `$XDG_CACHE_HOME/nodex` or `~/.cache/nodex` (the temp folder if none).
+pub fn data_dir() -> PathBuf {
+    let base = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        home_dir().map(|h| h.join("Library/Caches"))
+    } else {
+        std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| home_dir().map(|h| h.join(".cache")))
+    };
+    base.unwrap_or_else(std::env::temp_dir).join("nodex")
+}
+
 fn recent_file() -> Option<PathBuf> {
     config_dir().map(|d| d.join("recent.json"))
 }

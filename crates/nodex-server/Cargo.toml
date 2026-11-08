@@ -32,6 +32,7 @@ open.workspace = true
 notify.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 nodex-dap.workspace = true
 ureq = "3"
 sha2 = "0.11"

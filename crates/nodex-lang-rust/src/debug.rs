@@ -2,7 +2,7 @@
 //! (into Nodex's own target folder) and an `lldb` launch.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use nodex_lang_api::{AdapterDownload, AdapterSpec, AdapterTransport, DebugLaunch, DebugLauncher};
 use serde_json::json;
@@ -80,7 +80,7 @@ impl DebugLauncher for RustDebugger {
             .ok_or("no binary to debug: add src/main.rs or a [[bin]] target")?;
         let target = out_dir.join("debug-target");
         log(&format!("cargo build --bin {bin} …"));
-        let mut child = Command::new("cargo")
+        let mut child = nodex_lang_api::process::command("cargo")
             .arg("build")
             .arg("--manifest-path")
             .arg(&package.manifest)

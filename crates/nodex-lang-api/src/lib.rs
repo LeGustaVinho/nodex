@@ -10,6 +10,7 @@
 pub mod kit;
 pub mod knowledge;
 pub mod ops;
+pub mod process;
 pub mod sidecar;
 pub mod syntax;
 

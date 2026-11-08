@@ -9,3 +9,7 @@ description = "Extension contract (LanguageFrontend) and lowering kit for Nodex 
 nodex-ir.workspace = true
 tree-sitter.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
