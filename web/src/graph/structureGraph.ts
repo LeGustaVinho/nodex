@@ -73,6 +73,18 @@ export class StructureIndex {
     }
     return ns === null ? this.allTypes : (this.typesByNs.get(ns) ?? []);
   }
+
+  /** A unique outer type, or the unique outer type named after the file. */
+  primaryTypeInFile(file: string): Symbol | undefined {
+    const types = this.typesIn(null).filter((s) =>
+      !s.flavors.includes("synthesized") && s.origins.some((o) => o.file === file) &&
+      !(s.parent && this.owningType(s.parent)),
+    );
+    if (types.length <= 1) return types[0];
+    const stem = file.split("/").at(-1)?.replace(/(?:\.d)?\.[^.]+$/, "").toLowerCase();
+    const named = types.filter((s) => s.name.toLowerCase() === stem);
+    return named.length === 1 ? named[0] : undefined;
+  }
 }
 
 export interface NamespaceData {

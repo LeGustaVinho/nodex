@@ -86,25 +86,39 @@ export function Sidebar() {
   const isOpen = (id: string) => (q ? true : !!open[id]);
   const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }));
 
+  const selectType = (type: Symbol, origin = type.origins[0]) => {
+    ui.setNamespace(index.namespaceOf(type.id));
+    ui.select({ kind: "symbol", id: type.id }, origin ?? null);
+    if (ui.view === "blueprint" && !type.external) {
+      if (ui.flowSymbol !== type.id) ui.openFlow(type.id);
+    } else if (ui.view !== "types") {
+      ui.setView("types");
+    }
+  };
+
+  const openFileBlueprint = (file: string) => {
+    if (ui.view !== "blueprint") return false;
+    const type = index.primaryTypeInFile(file);
+    if (!type) return false;
+    selectType(type, type.origins.find((origin) => origin.file === file));
+    return true;
+  };
+
   const clickSymbol = (s: Symbol) => {
+    const origin = s.origins[0];
     if (isScopeKind(s.kind)) {
+      if (s.kind === "Module" && origin && !s.flavors.includes("inline-module") && openFileBlueprint(origin.file)) return;
       ui.setNamespace(s.qualified_name);
       ui.setView("types");
-      ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
+      ui.select({ kind: "symbol", id: s.id }, origin ?? null);
       toggle(s.id);
       return;
     }
     if (isTypeKind(s.kind)) {
-      ui.setNamespace(index.namespaceOf(s.id));
-      ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
-      if (ui.view === "blueprint" && !s.external) {
-        if (ui.flowSymbol !== s.id) ui.openFlow(s.id);
-      } else if (ui.view !== "types") {
-        ui.setView("types");
-      }
+      selectType(s);
       return;
     }
-    ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
+    ui.select({ kind: "symbol", id: s.id }, origin ?? null);
     if (s.has_flow) ui.openFlow(s.id);
   };
 
@@ -173,11 +187,12 @@ export function Sidebar() {
           <button
             className="row-main"
             title={`${node.path} — right-click for UML diagrams`}
-            onClick={() =>
-              node.folder
-                ? toggle(key)
-                : ui.focusCode({ file: node.path, start_byte: 0, end_byte: 0, start_line: 1, start_col: 1, end_line: 1, end_col: 1 })
-            }
+            onClick={() => {
+              if (node.folder) toggle(key);
+              else if (!openFileBlueprint(node.path)) {
+                ui.focusCode({ file: node.path, start_byte: 0, end_byte: 0, start_line: 1, start_col: 1, end_line: 1, end_col: 1 });
+              }
+            }}
           >
             <span className="sym-icon">{node.folder ? "▣" : "▤"}</span>
             <span className="sym-name">{node.name}</span>

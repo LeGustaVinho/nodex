@@ -228,6 +228,23 @@ const structure: StructureGraph = {
 };
 
 describe("structure graphs", () => {
+  it("picks an unambiguous outer type for a file Blueprint", () => {
+    const inFiles = (...files: string[]) => ({ origins: files.map((file) => ({ ...span, file })) });
+    const index = new StructureIndex({ ...structure, symbols: [
+      sym("App.Order", "Class", null, inFiles("src/Order.cs", "src/Order.Partial.cs")),
+      sym("App.Order.Line", "Class", "App.Order", inFiles("src/Order.cs", "src/Order.Partial.cs")),
+      sym("App.Helper", "Struct", null, inFiles("src/Order.cs", "src/Mixed.cs")),
+      sym("App.Contract", "Interface", null, inFiles("src/Mixed.cs")),
+      sym("App.Program", "Class", null, { ...inFiles("src/Program.cs"), flavors: ["synthesized"] }),
+      sym("App.External", "Class", null, { ...inFiles("src/External.cs"), external: true }),
+    ] });
+    expect(index.primaryTypeInFile("src/Order.cs")?.id).toBe("App.Order");
+    expect(index.primaryTypeInFile("src/Order.Partial.cs")?.id).toBe("App.Order");
+    expect(index.primaryTypeInFile("src/Mixed.cs")).toBeUndefined();
+    expect(index.primaryTypeInFile("src/Program.cs")).toBeUndefined();
+    expect(index.primaryTypeInFile("src/External.cs")).toBeUndefined();
+  });
+
   const index = new StructureIndex(structure);
 
   it("architecture shows namespaces and imports", () => {

@@ -40,7 +40,7 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
     if (!span || openedClass.current === symbol.id) return;
     openedClass.current = symbol.id;
     const ui = useUi.getState();
-    if (ui.codeFocus?.file !== span.file) ui.focusCode(span);
+    if (!symbol.origins.some((origin) => origin.file === ui.codeFocus?.file)) ui.focusCode(span);
   }, [symbol]);
 
   const selectedId = replayFlow && replayNode
