@@ -149,13 +149,17 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   }, [query, project.data?.root, index, ui.selection]);
   const symbols: Symbol[] = useMemo(() => (index ? rankSymbols(index.graph.symbols, query) : []), [index, query]);
   const total = symbols.length + commands.length;
+  const opensTypeBlueprint = (symbol?: Symbol) => ui.view === "blueprint" && !!symbol && !symbol.external && isTypeKind(symbol.kind);
 
   const choose = (i: number, alt: boolean) => {
     if (i < 0 || i >= total) return;
     if (i < symbols.length) {
       const s = symbols[i];
       onClose();
-      if (alt && s.has_flow) ui.openFlow(s.id);
+      if (opensTypeBlueprint(s)) {
+        ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
+        if (ui.flowSymbol !== s.id) ui.openFlow(s.id);
+      } else if (alt && s.has_flow) ui.openFlow(s.id);
       else if (h && index && !s.external) revealInHierarchy(h, index, s.id);
       else ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
       return;
@@ -218,7 +222,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
           {total === 0 && <li className="palette-empty">Nothing matches.</li>}
         </ul>
         <div className="palette-foot">
-          <kbd>↑↓</kbd> move · <kbd>Enter</kbd> show in Hierarchy · <kbd>Shift</kbd>+<kbd>Enter</kbd> open Blueprint · <kbd>Esc</kbd> close
+          <kbd>↑↓</kbd> move · <kbd>Enter</kbd> {opensTypeBlueprint(symbols[active]) ? "open Blueprint" : "show in Hierarchy"} · <kbd>Shift</kbd>+<kbd>Enter</kbd> open Blueprint · <kbd>Esc</kbd> close
         </div>
       </div>
     </div>

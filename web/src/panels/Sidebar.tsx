@@ -96,8 +96,12 @@ export function Sidebar() {
     }
     if (isTypeKind(s.kind)) {
       ui.setNamespace(index.namespaceOf(s.id));
-      if (ui.view !== "types") ui.setView("types");
       ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
+      if (ui.view === "blueprint" && !s.external) {
+        if (ui.flowSymbol !== s.id) ui.openFlow(s.id);
+      } else if (ui.view !== "types") {
+        ui.setView("types");
+      }
       return;
     }
     ui.select({ kind: "symbol", id: s.id }, s.origins[0] ?? null);
