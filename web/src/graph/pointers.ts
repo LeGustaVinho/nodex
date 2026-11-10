@@ -10,7 +10,7 @@ const POINTERS: [RegExp, string, string][] = [
   [/^RwLock</, "RwLock", "Many readers or one writer at a time."],
   [/^(MutexGuard|RwLock\w*Guard)</, "lock", "Holds the lock: released when this value goes out of scope."],
   [/^RefMut</, "borrow", "A runtime mutable borrow of a RefCell: released when it goes out of scope."],
-  [/^&mut /, "&mut", "An exclusive reference: the only way to the value while it exists."],
+  [/^&(?:'\w+ )?mut /, "&mut", "This exclusive reference lets you write through it. Reassigning the name that holds the reference is a separate rule."],
 ];
 
 /** Badge for a Rust smart pointer or guard type, if the pin has one. */

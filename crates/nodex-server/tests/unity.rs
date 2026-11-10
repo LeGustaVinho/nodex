@@ -119,8 +119,15 @@ async fn traces_unity_play_mode() {
     };
     let snap = state.run.snapshot();
     let trace = snap.trace.unwrap();
-    assert_eq!(trace.vars[&flow].get("total").map(String::as_str), Some("195"), "{:?}", trace.vars.get(&flow));
     assert!(trace.calls.keys().any(|f| f.ends_with("Update()")), "{:?}", trace.calls);
+    let steps = state.run.recorder().unwrap().lock().unwrap().steps(&flow, 0, 100);
+    // A live snapshot can already be inside the next call, whose total starts at zero.
+    assert!(steps.steps.iter().any(|step| {
+        step.values.iter().any(|value| value == "total = 195")
+            && step.observations.iter().flatten().any(|observation| {
+                observation.name == "total" && observation.shape == nodex_ir::types::TypeShape::scalar("Int32")
+            })
+    }), "{steps:?}");
 
     // Stop leaves Play Mode; the Editor keeps running.
     assert!(state.run.stop());

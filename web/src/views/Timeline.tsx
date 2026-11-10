@@ -99,7 +99,10 @@ export function TimelineView() {
 
   const openAt = async (span: CallSpan) => {
     openFlow(span.flow);
+    const { codeIntent } = useUi.getState();
     const steps = await api.traceSteps(span.flow);
+    const current = useUi.getState();
+    if (current.view !== "blueprint" || current.flowSymbol !== span.flow || current.codeIntent !== codeIntent) return;
     const i = steps.steps.findIndex((st) => st.micros >= span.start && st.thread === span.thread);
     if (steps.total > 0) useTrace.getState().setReplay({ flow: span.flow, page: steps, index: Math.max(0, i) });
   };

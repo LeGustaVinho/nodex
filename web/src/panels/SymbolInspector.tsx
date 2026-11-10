@@ -8,6 +8,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useState } from "react";
 import { api } from "../api";
+import { ValueExplanation } from "../components/ValueBadge";
+import { TypeDetails } from "./TypeInspector";
+import { SyntaxInspector } from "./SyntaxInspector";
+import { flavorInfo, useCatalog } from "../catalog";
+import { declarationDetailFlavors } from "../graph/blueprintExplanation";
 import { openMenu } from "../components/ContextMenu";
 import { ICON, kindLabel } from "../components/HierarchyNodes";
 import type { Confidence } from "../gen/Confidence";
@@ -108,7 +113,7 @@ function SymbolLink({ id, index, children }: { id: string; index: StructureIndex
   );
 }
 
-export function SymbolInspector({ symbol, index }: { symbol: Symbol; index: StructureIndex }) {
+export function SymbolInspector({ symbol, index, syntax, embedded }: { symbol: Symbol; index: StructureIndex; syntax?: string; embedded?: boolean }) {
   const [tab, setTabState] = useState<Tab>(loadTab);
   const setTab = (t: Tab) => {
     setTabState(t);
@@ -119,6 +124,8 @@ export function SymbolInspector({ symbol, index }: { symbol: Symbol; index: Stru
     }
   };
   const knowledge = useKnowledge();
+  const catalog = useCatalog();
+  const details = declarationDetailFlavors(symbol).flatMap((flavor) => flavorInfo(catalog, flavor, symbol.language) ?? []);
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
   const h = useHierarchy();
   const unity = useUnity();
@@ -130,7 +137,7 @@ export function SymbolInspector({ symbol, index }: { symbol: Symbol; index: Stru
   const coords = coordsOf(symbol);
 
   return (
-    <div className="inspector">
+    <div className={embedded ? undefined : "inspector"}>
       <div className="insp-head">
         <span className="insp-concept">{symbol.name}</span>
         <span className="muted">
@@ -191,6 +198,18 @@ export function SymbolInspector({ symbol, index }: { symbol: Symbol; index: Stru
           </a>
         )}
       </div>
+      {(symbol.type_info || symbol.value_info || symbol.kind === "Field" || symbol.kind === "Property") && <div className="insp-section">
+        <TypeDetails info={symbol.type_info} native={symbol.type_text} />
+        <ValueExplanation info={symbol.value_info} language={symbol.language} />
+      </div>}
+      {!!symbol.syntax_sites?.length && <SyntaxInspector key={syntax ?? symbol.id} sites={symbol.syntax_sites} language={symbol.language}
+        revision={(file) => index.graph.source_revisions?.[file]} active={syntax} />}
+      {details.length > 0 && <div className="insp-section">
+        <div className="section-title">Language details</div>
+        {details.map((detail) => <div className="flavor" key={detail.label}>
+          <span className="badge">{detail.label}</span><span className="flavor-explain">{detail.explain}</span>
+        </div>)}
+      </div>}
       <nav className="insp-tabs" role="tablist">
         {TABS.map((t) => (
           <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "on" : ""} title={t.hint} onClick={() => setTab(t.id)}>
@@ -780,7 +799,7 @@ function ActionsTab({ symbol, index, url }: { symbol: Symbol; index: StructureIn
 // ---------------------------------------------------------------------------- containers
 
 /** A folder or namespace box: what it holds, and opening it. */
-export function ContainerInspector({ id }: { id: string }) {
+export function ContainerInspector({ id, embedded }: { id: string; embedded?: boolean }) {
   const h = useHierarchy();
   const { index } = useStructure();
   const { scope } = useContextSet(index);
@@ -791,7 +810,7 @@ export function ContainerInspector({ id }: { id: string }) {
   const vendor = useMemo(() => (h && !ui.includeVendor ? h.vendorItems((p) => isVendorPath(p, unity)) : undefined), [h, ui.includeVendor, unity]);
   const scoped = useMemo(() => scope ? h?.scoped(scope, vendor) : undefined, [h, scope, vendor]);
   const hidden = scoped?.hidden ?? vendor;
-  if (!h || !item) return <div className="inspector">…</div>;
+  if (!h || !item) return <div className={embedded ? undefined : "inspector"}>…</div>;
   const kids = h.shownChildren(id, hidden).map((k) => h.get(k)!);
   const byKind = new Map<string, number>();
   for (const k of kids) byKind.set(k.kind, (byKind.get(k.kind) ?? 0) + 1);
@@ -804,7 +823,7 @@ export function ContainerInspector({ id }: { id: string }) {
     else ui.select({ kind: "container", id: childId }, null);
   };
   return (
-    <div className="inspector">
+    <div className={embedded ? undefined : "inspector"}>
       <div className="insp-head">
         <span className="insp-concept">{item.label}</span>
         <span className="muted">{kindLabel(item.kind)}</span>

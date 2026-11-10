@@ -1,7 +1,7 @@
 import type { MenuItem } from "../components/ContextMenu";
 import type { Symbol } from "../gen/Symbol";
 import type { ContextItem } from "../graph/context";
-import { isTypeKind } from "../graph/structureGraph";
+import { isBlueprintContainer } from "../graph/structureGraph";
 import { useUi } from "../store";
 
 export function contextMenuItems(item: ContextItem): MenuItem[] {
@@ -13,8 +13,8 @@ export function contextMenuItems(item: ContextItem): MenuItem[] {
 
 export function blueprintMenuItems(symbol: Symbol | null | undefined): MenuItem[] {
   if (!symbol || symbol.external) return [];
-  const type = isTypeKind(symbol.kind);
-  return type || symbol.has_flow
-    ? [{ label: type ? "Open as Blueprint" : "Open Blueprint", run: () => useUi.getState().openFlow(symbol.id) }]
+  const container = isBlueprintContainer(symbol);
+  return container || symbol.has_flow
+    ? [{ label: container ? "Open as Blueprint" : "Open Blueprint", run: () => useUi.getState().openFlow(symbol.id) }]
     : [];
 }

@@ -1,4 +1,4 @@
-//! Binary trace protocol (see `sidecars/dotnet/Nodex.Trace/T.cs`).
+//! Binary trace protocol (see the Unity package's shared runtime `T.cs`).
 //!
 //! After a handshake line `NODEX1 <token>\n`, the program sends frames: `u32 length` followed by
 //! records. Each record (little-endian): `u8 kind, i32 thread, i64 micros, i32 method, i32 arg,
@@ -23,6 +23,10 @@ pub enum RecordKind {
     /// First record of a frame: `thread` is the process id, `arg` the frame number. Lets Nodex
     /// skip frames it already received when it reads a crash tail file.
     Sequence,
+    /// Type of a local/argument in the indicated slot. The text is a portable
+    /// descriptor, newline, and native spelling. A blank descriptor is Rust native text.
+    LocalType,
+    ArgType,
     Unknown(u8),
 }
 
@@ -38,6 +42,8 @@ impl From<u8> for RecordKind {
             7 => Self::Throw,
             9 => Self::Dropped,
             10 => Self::Sequence,
+            11 => Self::LocalType,
+            12 => Self::ArgType,
             other => Self::Unknown(other),
         }
     }
@@ -120,6 +126,8 @@ pub fn encode_frame(records: &[Record]) -> Vec<u8> {
             RecordKind::Throw => 7,
             RecordKind::Dropped => 9,
             RecordKind::Sequence => 10,
+            RecordKind::LocalType => 11,
+            RecordKind::ArgType => 12,
             RecordKind::Unknown(k) => k,
         };
         payload.push(kind);

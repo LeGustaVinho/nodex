@@ -205,6 +205,9 @@ impl<'a, 't> Collector<'a, 't> {
             module_flavors.push("vue:component".to_owned());
         }
         self.symbols.push(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: self.module_id.clone(),
             kind: SymbolKind::Module,
             name: file_name,
@@ -222,6 +225,13 @@ impl<'a, 't> Collector<'a, 't> {
 
         let mut commonjs = false;
         self.scan_imports(root, &mut commonjs);
+        let type_imports = named_children(root).into_iter().any(|node| {
+            node.kind() == "import_statement" && (children(node).iter().any(|part| part.kind() == "type") ||
+                first_child_of_kind(node, "import_clause").and_then(|clause| first_child_of_kind(clause, "named_imports"))
+                    .is_some_and(|imports| named_children(imports).iter().any(|part| {
+                        part.kind() == "import_specifier" && children(*part).iter().any(|token| token.kind() == "type")
+                    })))
+        });
 
         let mut top = Vec::new();
         let mut effectful = false;
@@ -246,12 +256,18 @@ impl<'a, 't> Collector<'a, 't> {
         if commonjs {
             module.flavors.push("commonjs".into());
         }
+        if type_imports {
+            module.flavors.push("type-import".into());
+        }
         if self.vue_setup && !top.is_empty() {
             effectful = true;
         }
         if effectful && !self.is_dts {
             let id = format!("{}.(module)", self.modpath);
             self.symbols.push(Symbol {
+                syntax_sites: None,
+                type_info: None,
+                value_info: None,
                 id: id.clone(),
                 kind: SymbolKind::Function,
                 name: "Module top-level".into(),
@@ -269,7 +285,7 @@ impl<'a, 't> Collector<'a, 't> {
             for s in &top {
                 self.local_functions(*s, &id);
             }
-            let (name, flavors, event) = if self.vue_setup {
+            let (name, mut flavors, event) = if self.vue_setup {
                 (
                     "setup".to_owned(),
                     vec!["top-level".to_owned(), "vue:setup".to_owned()],
@@ -278,6 +294,9 @@ impl<'a, 't> Collector<'a, 't> {
             } else {
                 ("Module top-level".to_owned(), vec!["top-level".to_owned()], None)
             };
+            if type_imports {
+                flavors.push("type-import".into());
+            }
             self.bodies.push(BodyJob {
                 symbol: id,
                 name,
@@ -481,6 +500,9 @@ impl<'a, 't> Collector<'a, 't> {
         let src = self.src;
         let id = format!("{qual}.{name}");
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Field,
             name: name.to_owned(),
@@ -599,6 +621,9 @@ impl<'a, 't> Collector<'a, 't> {
                     f.push("object".into());
                 }
                 self.push_or_merge(Symbol {
+                    syntax_sites: None,
+                    type_info: None,
+                    value_info: None,
                     id: id.clone(),
                     kind: SymbolKind::Field,
                     name: field.clone(),
@@ -717,6 +742,9 @@ impl<'a, 't> Collector<'a, 't> {
         let src = self.src;
         let id = format!("{qual}.global");
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Namespace,
             name: "global".into(),
@@ -792,6 +820,9 @@ impl<'a, 't> Collector<'a, 't> {
             _ => header,
         };
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Function,
             name: name.clone(),
@@ -937,6 +968,9 @@ impl<'a, 't> Collector<'a, 't> {
             flavors.push("declare".into());
         }
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Class,
             name: name.clone(),
@@ -1039,8 +1073,9 @@ impl<'a, 't> Collector<'a, 't> {
         flavors.extend(decorators);
         let ng = frameworks::angular_flavors(&flavors);
         flavors.extend(ng);
-        if name.starts_with('#') && !flavors.iter().any(|f| f == "private") {
+        if name.starts_with('#') {
             flavors.push("private".into());
+            flavors.push("runtime-private".into());
         }
         let event = self.pending_event.take().or_else(|| self.template_event(&name));
         let body = m.child_by_field_name("body");
@@ -1067,6 +1102,9 @@ impl<'a, 't> Collector<'a, 't> {
             let keyword = if is_getter { "get" } else { "set" };
             let acc_id = format!("{prop_id}.{keyword}");
             self.push_or_merge(Symbol {
+                syntax_sites: None,
+                type_info: None,
+                value_info: None,
                 id: acc_id.clone(),
                 kind: SymbolKind::Method,
                 name: format!("{name}.{keyword}"),
@@ -1105,6 +1143,9 @@ impl<'a, 't> Collector<'a, 't> {
         };
         let signature = src.header(m, body);
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind,
             name: if kind == SymbolKind::Constructor { class_name.to_owned() } else { name.clone() },
@@ -1173,8 +1214,9 @@ impl<'a, 't> Collector<'a, 't> {
         flavors.extend(decorators);
         let ng = frameworks::angular_flavors(&flavors);
         flavors.extend(ng);
-        if name.starts_with('#') && !flavors.iter().any(|f| f == "private") {
+        if name.starts_with('#') {
             flavors.push("private".into());
+            flavors.push("runtime-private".into());
         }
         let value = m.child_by_field_name("value").map(crate::expr::unparen);
         // `private http = inject(HttpClient)`, `count = signal(0)`, `selected = ref(null)`.
@@ -1210,6 +1252,9 @@ impl<'a, 't> Collector<'a, 't> {
         let mut flavors = flavors;
         flavors.push("type-only".into());
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Interface,
             name,
@@ -1283,6 +1328,9 @@ impl<'a, 't> Collector<'a, 't> {
             None => SymbolKind::TypeAlias,
         };
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind,
             name,
@@ -1313,6 +1361,9 @@ impl<'a, 't> Collector<'a, 't> {
         let mut flavors = flavors;
         flavors.extend(modifiers(src, decl));
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Enum,
             name,
@@ -1352,6 +1403,9 @@ impl<'a, 't> Collector<'a, 't> {
         let name = src.norm(name_node);
         let id = format!("{qual}.{name}");
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Namespace,
             name: name.clone(),
@@ -1380,6 +1434,9 @@ impl<'a, 't> Collector<'a, 't> {
         let id = format!("{owner}.{name}");
         let body = node.child_by_field_name("body").or_else(|| node.child_by_field_name("value"));
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind,
             name: name.to_owned(),

@@ -47,7 +47,28 @@ explain = "No other type may inherit from it."
 
 [readonly]
 label = "read-only"
-explain = "Can only be set during construction."
+explain = "Restricts writes to a field, a struct's state, or the receiver of a struct member, depending on where it is used."
+
+[readonly-field]
+label = "Read-only field"
+explain = "The field can be assigned at its declaration or in the appropriate constructor. If it holds a reference, the referenced object may still have writable members."
+cue = "readonly"
+phase = "Compile time"
+effects = [["Field initializer or appropriate constructor", "Can assign field"], ["Later assignment", "Rejected by the compiler"]]
+
+[readonly-struct]
+label = "Read-only struct"
+explain = "The struct cannot change its own state after construction. Objects referenced by its fields can still change."
+cue = "readonly"
+phase = "Compile time"
+effects = [["Assign a field in the constructor", "Allowed"], ["Change a field from an instance method", "Rejected by the compiler"]]
+
+[readonly-member]
+label = "Read-only member"
+explain = "This struct member receives a read-only receiver. It can read its fields and can still modify state outside the receiver, such as a referenced object."
+cue = "readonly"
+phase = "Compile time"
+effects = [["Read a field through this", "Allowed"], ["Assign a field through this", "Rejected by the compiler"]]
 
 [async-void]
 label = "async void"
@@ -63,12 +84,135 @@ explain = "Visible only inside this source file."
 
 [required]
 label = "required"
-explain = "Must be set when the object is created (in its initializer)."
+explain = "The caller must supply this member when creating an object unless the constructor declares that it sets the required members."
+cue = "required"
+phase = "Compile time"
+effects = [["Create an object", "Supply required members or use a constructor that declares it sets them"]]
 
 [init]
 label = "init-only"
 explain = "Can only be set while the object is being created."
+cue = "init"
+phase = "Compile time"
+effects = [["Object initialization", "Can set the property"], ["Later assignment", "Rejected by the compiler"]]
 
 [synthesized]
 label = "generated"
 explain = "Created by the compiler; it does not appear in the source."
+
+[checked]
+label = "Check overflow"
+explain = "For supported integral operations written inside this region, overflow throws at runtime. Calls made here keep their own overflow context."
+
+[unchecked]
+label = "Wrap on overflow"
+explain = "Supported integral operations written here can wrap or truncate. Calls made here keep their own overflow context."
+
+[yield-item]
+label = "Yield item"
+explain = "Give the current item to the consumer and suspend the iterator. It can resume when the consumer requests another item."
+
+[dynamic]
+label = "Resolve at runtime"
+explain = "Operations on a dynamic value are bound when the program runs, using the actual value."
+phase = "Runtime"
+effects = [["Execute the call", "Resolve the operation from the runtime values"]]
+
+[boxing]
+label = "Box value"
+explain = "Put a copy of the value in an object so it can be used through an object or interface reference."
+phase = "Runtime"
+effects = [["Assign a value type to object", "Create a box containing a copy of the value"]]
+
+[value-copy]
+label = "Copy value"
+explain = "This operation copies the value type. References inside the copy can still refer to the same objects."
+phase = "Runtime"
+effects = [["Assign the struct", "Copy the struct and its fields"], ["Field holds a reference", "Both copies can access the same object"]]
+
+[reference-copy]
+label = "Copy reference"
+explain = "The destination refers to the same object. Changes to that object can be visible through both references."
+phase = "Runtime"
+effects = [["Assign the reference", "Both names can access the same object"]]
+
+[copy-with]
+label = "Copy with changes"
+explain = "Create a copy and set the listed members on it. Reference members can still point to objects shared with the original."
+
+[safe-access]
+label = "Safe access"
+explain = "Access a member only if the receiver has a value."
+cue = "?."
+phase = "Runtime"
+effects = [["Receiver is null", "Return null without accessing the member"], ["Receiver has a value", "Access the member"]]
+
+[conditional-index]
+label = "Conditional index"
+explain = "Look up an element only if the receiver has a value."
+cue = "?[]"
+phase = "Runtime"
+effects = [["Array is null", "Return null"], ["Array has a value", "Evaluate the index and look up the element"]]
+
+[fallback]
+label = "Fallback"
+explain = "Evaluate the right side only when the left side is null."
+cue = "??"
+phase = "Runtime"
+effects = [["0 ?? 10", "0"], ["null ?? 10", "10"]]
+
+[null-forgiving]
+label = "Null forgiving"
+explain = "Tell the compiler to treat the operand as non-null for nullable warnings. The runtime value passes through."
+cue = "!"
+phase = "Compile time"
+effects = [["value!", "Same runtime value"]]
+
+[index-from-end]
+label = "Index from end"
+explain = "Count the index back from the end of the sequence."
+cue = "^"
+phase = "Runtime"
+effects = [["[10, 20, 30][^1]", "30"]]
+
+[range]
+label = "Range"
+explain = "The range includes its start index and excludes its end index."
+cue = ".."
+phase = "Runtime"
+effects = [["[10, 20, 30, 40][1..^1]", "[20, 30]"]]
+
+[collection-spread]
+label = "Collection spread"
+explain = "Insert the source collection's elements in order."
+cue = ".."
+phase = "Runtime"
+effects = [["[..items, 4] with items = [1, 2]", "[1, 2, 4]"]]
+
+[pass-in]
+label = "Pass in"
+explain = "Pass a read-only reference to the argument or to a temporary created for the call."
+cue = "in"
+phase = "Runtime"
+effects = [["Read parameter", "Read the referenced value"], ["Assign through parameter", "Rejected by the compiler"]]
+
+[pass-ref]
+label = "Pass ref"
+explain = "Access a storage location through a reference. A writable alias lets a write update that location."
+cue = "ref"
+phase = "Runtime"
+effects = [["Call with ref n", "Parameter refers to n"], ["Write through writable alias", "n receives the new value"]]
+
+[pass-out]
+label = "Pass out"
+explain = "The parameter refers to the supplied storage location. A normal return requires the method to assign it."
+cue = "out"
+phase = "Runtime"
+effects = [["Enter method", "Caller may supply an uninitialized variable"], ["Normal return", "Caller can read the assigned value"]]
+
+[pass-readonly]
+label = "Pass readonly"
+explain = "Access the storage location through a read-only alias."
+cue = "ref readonly"
+phase = "Runtime"
+effects = [["Read through alias", "Get the stored value"], ["Assign through alias", "Rejected by the compiler"]]

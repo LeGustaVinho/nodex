@@ -80,6 +80,7 @@ pub struct Project {
     semantic: BTreeMap<Language, SemanticEntry>,
     locator: Option<Arc<semantic::Locator>>,
     navigation: Option<crate::navigation::NavigationIndex>,
+    borrow_calls: Option<crate::borrow_origin::CallIndex>,
     /// Bumped whenever the structure graph must be built again (files, semantic facts).
     version: u64,
     /// Changes when tracked files change, independently of semantic provider results.
@@ -102,6 +103,10 @@ struct SemanticFileFacts {
     refs: Vec<usize>,
     locals: Vec<usize>,
     navigation: Vec<usize>,
+    expressions: Vec<usize>,
+    values: Vec<usize>,
+    types: Vec<usize>,
+    binding_uses: Vec<usize>,
 }
 
 /// How far opening a project got, for a progress bar: `phase` is `scanning` (files found so
@@ -130,6 +135,7 @@ pub struct Built {
     knowledge: Arc<ProjectKnowledge>,
     locator: Arc<semantic::Locator>,
     navigation: crate::navigation::NavigationIndex,
+    borrow_calls: crate::borrow_origin::CallIndex,
 }
 
 impl BuildInput {
@@ -164,6 +170,8 @@ impl BuildInput {
             }
         }
         for (language, facts) in &self.semantic {
+            semantic::annotate_member_values(&mut graph, &facts.values, &locator);
+            semantic::annotate_member_types(&mut graph, &facts.types, &locator);
             let derived = semantic::edges(facts, &locator, *language);
             for (site, owner, target) in derived.calls {
                 calls.push(knowledge::RawCallSite { file: site.file, start: site.start, end: site.end, owner, target });
@@ -227,7 +235,10 @@ impl BuildInput {
 
         let structure = Arc::new(graph);
         let navigation = crate::navigation::NavigationIndex::new(structure.clone(), &locator, &self.semantic);
-        Built { version: self.version, structure, knowledge: Arc::new(derived.project), locator, navigation }
+        let nominal_types = self.semantic.iter().filter(|(language, _)| *language == Language::Rust)
+            .flat_map(|(_, facts)| &facts.rust_nominal_types);
+        let borrow_calls = crate::borrow_origin::CallIndex::new(&calls, &structure, &locator, nominal_types);
+        Built { version: self.version, structure, knowledge: Arc::new(derived.project), locator, navigation, borrow_calls }
     }
 
 }
@@ -270,6 +281,7 @@ impl Project {
             semantic: BTreeMap::new(),
             locator: None,
             navigation: None,
+            borrow_calls: None,
             version: 0,
             source_revision: 0,
             semantic_configs: HashMap::new(),
@@ -412,6 +424,7 @@ impl Project {
             semantic: BTreeMap::new(),
             locator: None,
             navigation: None,
+            borrow_calls: None,
             version: 0,
             source_revision: 0,
             semantic_configs: HashMap::new(),
@@ -487,8 +500,15 @@ impl Project {
             return Some(Lowered { rel, entry: FileEntry { language, ir, stat: Some(stat) }, blob: Blob::Cached });
         }
         let bytes = std::fs::read(path).ok()?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let ir = frontend.lower_file(&SourceFile { rel_path: rel.clone(), text });
+        let source = SourceFile { rel_path: rel.clone(), text: String::from_utf8_lossy(&bytes).into_owned() };
+        let mut ir = frontend.lower_file(&source);
+        if !ir.flows.is_empty() || ir.symbols.iter().any(|s| s.syntax_sites.is_some()) {
+            let revision = crate::navigation::source_revision(&source.text);
+            ir.source_revision = Some(revision.clone());
+            for flow in &mut ir.flows {
+                flow.source_revision = Some(revision.clone());
+            }
+        }
         let blob = match cache.and(stat).and_then(|_| cache::encode(&ir)) {
             Some(bytes) => Blob::Fresh(bytes),
             None => Blob::None,
@@ -618,6 +638,7 @@ impl Project {
         self.knowledge = Some(built.knowledge);
         self.locator = Some(built.locator);
         self.navigation = Some(built.navigation);
+        self.borrow_calls = Some(built.borrow_calls);
         true
     }
 
@@ -642,9 +663,8 @@ impl Project {
         self.knowledge.clone().unwrap_or_default()
     }
 
-    /// The flow graph of `symbol`, enriched with semantic facts when available.
-    pub fn flow(&mut self, symbol: &str) -> Option<FlowGraph> {
-        let index = self.flow_index.get_or_insert_with(|| {
+    fn ensure_flow_index(&mut self) {
+        self.flow_index.get_or_insert_with(|| {
             let mut index = HashMap::new();
             for (rel, f) in &self.files {
                 for (i, g) in f.ir.flows.iter().enumerate() {
@@ -653,11 +673,46 @@ impl Project {
             }
             index
         });
-        let (rel, i) = index.get(symbol)?;
+    }
+
+    pub(crate) fn borrow_model(&self, symbol: &str) -> Option<(&FlowGraph, &nodex_ir::borrow::BorrowModel)> {
+        let (rel, i) = self.flow_index.as_ref()?.get(symbol)?;
+        let entry = self.files.get(rel)?;
+        Some((entry.ir.flows.get(*i)?, entry.ir.borrow_models.get(symbol)?))
+    }
+
+    pub(crate) fn borrow_binding_type(&self, span: &nodex_ir::Span) -> Option<nodex_ir::ValueInfo> {
+        use nodex_ir::semantic::ValueFactTarget;
+        let entry = self.semantic.get(&Language::Rust)?;
+        let facts = entry.facts.as_ref()?;
+        let file = entry.by_file.get(&span.file)?;
+        let mut at_site = file.values.iter().map(|&i| &facts.values[i]).filter(|value|
+            value.target == ValueFactTarget::Binding && value.site.start == span.start_byte && value.site.end == span.end_byte);
+        if let Some(first) = at_site.next() {
+            return at_site.all(|other| other.info == first.info).then_some(first.info);
+        }
+        let local = file.locals.iter().map(|&i| &facts.locals[i]).find(|local|
+            local.site.start == span.start_byte && local.site.end == span.end_byte)?;
+        nodex_lang_api::value_shapes::written_type(Language::Rust, &local.ty)
+    }
+
+    pub fn borrow_origin(&mut self, flow: &str, node: &str, pin: Option<&str>, expr_path: Option<&str>, offset: usize)
+        -> Option<crate::borrow_origin::BorrowOrigins>
+    {
+        self.structure();
+        self.ensure_flow_index();
+        crate::borrow_origin::resolve(self, self.borrow_calls.as_ref()?, flow, node, pin, expr_path, offset)
+    }
+
+    /// The flow graph of `symbol`, enriched with semantic facts when available.
+    pub fn flow(&mut self, symbol: &str) -> Option<FlowGraph> {
+        self.ensure_flow_index();
+        let (rel, i) = self.flow_index.as_ref()?.get(symbol)?;
         let entry = self.files.get(rel)?;
         let (language, raw) = (entry.language, entry.ir.flows.get(*i)?.clone());
-        let Some((facts, by_file, ready)) = self.semantic.get(&language)
-            .and_then(|e| Some((e.facts.clone()?, e.by_file.clone(), e.status.state == SemanticState::Ready))) else {
+        let Some((facts, by_file)) = self.semantic.get(&language)
+            .filter(|entry| entry.status.state == SemanticState::Ready)
+            .and_then(|entry| Some((entry.facts.clone()?, entry.by_file.clone()))) else {
             let mut raw = raw;
             crate::operations::recognize_flow(&mut raw);
             return Some(raw);
@@ -670,10 +725,17 @@ impl Project {
         let refs: Vec<_> = file.into_iter().flat_map(|f| &f.refs).map(|&i| &facts.refs[i]).collect();
         let locals: Vec<_> = file.into_iter().flat_map(|f| &f.locals).map(|&i| &facts.locals[i]).collect();
         let mut flow = semantic::enrich_flow_with(&raw, &refs, &locals, &locator);
-        if ready && let (Some(file), Some(navigation)) = (file, &facts.navigation) {
+        if let Some(file) = file {
+            semantic::annotate_expression_facts(&mut flow, file.expressions.iter().map(|&i| &facts.expressions[i]));
+            semantic::annotate_value_facts(&mut flow, file.values.iter().map(|&i| &facts.values[i]), &locals);
+            semantic::annotate_types(&mut flow, file.types.iter().map(|&i| &facts.types[i]), &locals);
+        }
+        if let (Some(file), Some(navigation)) = (file, &facts.navigation) {
             semantic::annotate_navigation(&mut flow, file.navigation.iter().map(|&i| &navigation[i]), &locator);
         }
         crate::operations::recognize_flow(&mut flow);
+        let binding_uses = file.into_iter().flat_map(|file| &file.binding_uses).map(|&i| &facts.binding_uses[i]);
+        semantic::annotate_collection_roles(&mut flow, &refs, binding_uses);
         Some(flow)
     }
 
@@ -733,6 +795,18 @@ impl Project {
         for (i, l) in facts.locals.iter().enumerate() {
             by_file.entry(l.site.file.clone()).or_default().locals.push(i);
         }
+        for (i, value) in facts.values.iter().enumerate() {
+            by_file.entry(value.site.file.clone()).or_default().values.push(i);
+        }
+        for (i, fact) in facts.types.iter().enumerate() {
+            by_file.entry(fact.site.file.clone()).or_default().types.push(i);
+        }
+        for (i, fact) in facts.binding_uses.iter().enumerate() {
+            by_file.entry(fact.declaration.file.clone()).or_default().binding_uses.push(i);
+        }
+        for (i, expression) in facts.expressions.iter().enumerate() {
+            by_file.entry(expression.site.file.clone()).or_default().expressions.push(i);
+        }
         for (i, fact) in facts.navigation.iter().flatten().enumerate().filter(|(_, fact)| !fact.implementation) {
             by_file.entry(fact.site.file.clone()).or_default().navigation.push(i);
         }
@@ -745,6 +819,7 @@ impl Project {
         self.knowledge = None;
         self.locator = None;
         self.navigation = None;
+        self.borrow_calls = None;
         self.flow_index = None;
         self.version += 1;
     }

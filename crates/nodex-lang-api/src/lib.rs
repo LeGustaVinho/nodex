@@ -13,6 +13,9 @@ pub mod ops;
 pub mod process;
 pub mod sidecar;
 pub mod syntax;
+pub mod syntax_sites;
+pub mod value_shapes;
+pub mod blueprint_types;
 
 use std::path::{Path, PathBuf};
 

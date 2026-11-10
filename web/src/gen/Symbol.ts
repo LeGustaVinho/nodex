@@ -2,6 +2,9 @@
 import type { Language } from "./Language";
 import type { Span } from "./Span";
 import type { SymbolKind } from "./SymbolKind";
+import type { SyntaxSite } from "./SyntaxSite";
+import type { TypeInfo } from "./TypeInfo";
+import type { ValueInfo } from "./ValueInfo";
 
 /**
  * A declared symbol: namespace, type or member.
@@ -10,7 +13,7 @@ import type { SymbolKind } from "./SymbolKind";
  * has hundreds of thousands of symbols. Readers fill them back in (`serde(default)` here,
  * `normalizeStructure` in the web UI, which is why the TypeScript type keeps them required).
  */
-export type Symbol = { id: string, kind: SymbolKind, 
+export type Symbol = { syntax_sites?: Array<SyntaxSite>, value_info?: ValueInfo, type_info?: TypeInfo, id: string, kind: SymbolKind, 
 /**
  * Short display name (`OrderService`).
  */

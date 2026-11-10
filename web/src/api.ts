@@ -1,3 +1,4 @@
+import type { BorrowOrigins } from "./gen/BorrowOrigins";
 import type { UnityStatus } from "./gen/UnityStatus";
 import type { CallsPage } from "./gen/CallsPage";
 import type { Catalog } from "./gen/Catalog";
@@ -126,12 +127,19 @@ export const api = {
     (await request(`/api/navigation?symbol=${encodeURIComponent(symbol)}&kind=${kind}`, { signal })).json(),
   knowledge: () => bigJson<ProjectKnowledge>("/api/knowledge"),
   catalog: () => json<Catalog>("/api/catalog"),
+  borrowOrigin: async (flow: string, node: string, pin: string | undefined, path: string | undefined, offset: number, signal: AbortSignal) => {
+    const query = new URLSearchParams({ flow, node, offset: String(offset) });
+    if (pin !== undefined) query.set("pin", pin);
+    if (path !== undefined) query.set("expr_path", path);
+    return (await request("/api/borrow-origin?" + query, { signal })).json() as Promise<BorrowOrigins>;
+  },
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
   flows: (symbols: readonly string[]) => json<FlowGraph[]>(`/api/flows?symbols=${symbols.map(encodeURIComponent).join(",")}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),
   sourceFile: async (file: string, signal: AbortSignal) => {
     const response = await request(`/api/source?file=${encodeURIComponent(file)}`, { signal });
-    return { text: await response.text(), revision: response.headers.get("x-nodex-source-revision") };
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return { bytes, text: new TextDecoder().decode(bytes), revision: response.headers.get("x-nodex-source-revision") };
   },
   layout: (key: string) => json<Positions>(`/api/layout?key=${encodeURIComponent(key)}`),
   listFolders: (path: string) => json<FolderListing>(`/api/fs/list?path=${encodeURIComponent(path)}`),

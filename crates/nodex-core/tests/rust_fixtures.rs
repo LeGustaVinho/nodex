@@ -158,7 +158,7 @@ fn syntax_structure_particularities() {
 fn ownership_rides_on_the_wires() {
     let ir = lower_source(
         "src/lib.rs",
-        "pub fn f(name: String, count: u32, list: &mut Vec<u32>) -> String {\n\
+        "pub fn f(name: std::string::String, count: u32, list: &mut Vec<u32>) -> String {\n\
            let copy = count;\n\
            let borrowed = &name;\n\
            list.push(copy);\n\

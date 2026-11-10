@@ -1,12 +1,14 @@
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { FlowNode } from "../gen/FlowNode";
+import { languageDetailFlavors } from "./blueprintExplanation";
 import type { Expr } from "../gen/Expr";
 import type { OperationInfo } from "../gen/OperationInfo";
 import type { Symbol } from "../gen/Symbol";
 import type { SymbolInfo } from "../gen/SymbolInfo";
+import type { BlueprintSources } from "./blueprintSource";
 import { type DetailLevel, flowToGraph } from "./flowGraph";
 import type { GEdge, GGraph, GNode } from "./model";
-import { isTypeKind, type StructureIndex } from "./structureGraph";
+import { isFileModule, isTypeKind, type StructureIndex } from "./structureGraph";
 
 export const CLASS_IN = "class-in";
 export const CLASS_OUT = "class-out";
@@ -62,8 +64,17 @@ function writtenMember(node: FlowNode, owner: Symbol, fields: ReadonlyMap<string
   }
 }
 
+function moduleDeclarations(index: StructureIndex, ownerId: string): Symbol[] {
+  return (index.children.get(ownerId) ?? []).flatMap((s) =>
+    s.kind === "Namespace" || s.kind === "Field" || (s.kind === "Module" && s.flavors.includes("inline-module"))
+      ? [s, ...moduleDeclarations(index, s.id)] : [s],
+  );
+}
+
 export function classMembers(index: StructureIndex, typeId: string): Symbol[] {
-  return index.members(typeId)
+  const owner = index.byId.get(typeId);
+  const declarations = owner && isFileModule(owner) ? moduleDeclarations(index, typeId) : index.members(typeId);
+  return declarations
     .flatMap((s) => [...(s.has_flow ? [s] : []), ...(isAccessorOwner(s) ? (index.children.get(s.id) ?? []).filter((a) => a.has_flow) : [])])
     .sort((a, b) => (a.origins[0]?.start_line ?? Infinity) - (b.origins[0]?.start_line ?? Infinity));
 }
@@ -72,6 +83,8 @@ export interface ClassBoxData {
   symbol: Symbol;
   bases: string[];
   members: string[];
+  declaration?: string;
+  note?: string;
 }
 
 export interface MethodCardData {
@@ -79,19 +92,45 @@ export interface MethodCardData {
   open: boolean;
   complexity?: number;
   calls: number;
+  note?: string;
 }
 
 export interface FieldCardData {
   symbol: Symbol;
+  note?: string;
+  declaration?: string;
+  role?: "contract" | "variant";
+}
+
+function receiverNote(symbol: Symbol): string | undefined {
+  if (symbol.language !== "rust") return undefined;
+  if (symbol.flavors.includes("&mut self")) return "Borrows receiver to change it";
+  if (symbol.flavors.includes("&self")) return "Borrows receiver for shared access";
+  if (symbol.flavors.includes("self")) return "Receives receiver by value";
+}
+
+function declarationNote(symbol: Symbol): string | undefined {
+  const flavors = new Set(symbol.flavors);
+  const labels: string[] = [];
+  if (symbol.kind === "Property" && symbol.language === "csharp") {
+    if (flavors.has("accessor:get") || flavors.has("computed")) labels.push("Read");
+    if (flavors.has("accessor:set")) labels.push("Set");
+  }
+  if (symbol.language === "typescript" && (symbol.kind === "Property" || symbol.kind === "Field")) {
+    labels.push(flavors.has("optional") ? "Optional" : "Required");
+  }
+  return labels.length ? labels.join(" · ") : undefined;
 }
 
 interface ClassBlueprintOptions {
   open: ReadonlySet<string>;
   expanded: Record<string, boolean>;
   showDataWires: boolean;
+  explanations?: boolean;
   detail?: DetailLevel;
   operations?: Record<string, OperationInfo>;
   symbolInfo?: ReadonlyMap<string, SymbolInfo>;
+  sources?: BlueprintSources;
 }
 
 /** Prefix canvas IDs and reparent the flow, preserving IDs used by runtime and source overlays. */
@@ -130,17 +169,39 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
   // accessors have separate accessor symbols, so the declaration gets a card as well.
   const fields = index.members(typeId).filter((s) => !s.has_flow && (s.kind === "Field" || isAccessorOwner(s)));
   const fieldsByName = new Map(fields.map((s) => [s.name, s]));
+  const declaredTypes = isFileModule(type)
+    ? moduleDeclarations(index, typeId).filter((s) => isTypeKind(s.kind) && !s.external && !s.flavors.includes("synthesized"))
+    : [];
+  const contracts = (index.children.get(typeId) ?? []).filter((s) => !s.has_flow && (
+    s.kind === "EnumMember" || s.flavors.includes("associated-type") ||
+    (["Method", "Function", "Constructor"].includes(s.kind) &&
+      (type.kind === "Interface" || type.kind === "Trait" || s.flavors.some((f) => ["abstract", "declare", "extern", "required"].includes(f))))
+  ));
+  const discriminant = type.flavors.find((f) => f.startsWith("discriminated:"))?.slice("discriminated:".length);
+  const declaration = type.kind === "Delegate" || type.kind === "TypeAlias" || discriminant ? type.signature ?? type.type_text ?? undefined : undefined;
+  const typeNote = opts.explanations === false ? undefined
+    : discriminant ? `Variant identified by ${discriminant}` : members.length === 0 ? "Declarations and contracts" : undefined;
+  const headerHeight = 46 + (typeNote ? 20 : 0)
+    + (opts.explanations !== false && (type.syntax_sites?.length || languageDetailFlavors(type.flavors).length) ? 20 : 0);
   const qualifiers = typeQualifiers(index, type);
   const ordered = members.map((s) => s.id);
   graph.layoutLinks = ordered.slice(1).map((target, i) => ({ source: ordered[i], target }));
   nodes.push({
-    id: typeId, type: "classBox", container: true, direction: "DOWN", headerHeight: 46, width: 380, height: 76, ports: [],
-    data: { symbol: type, bases, members: members.map((s) => s.id) } satisfies ClassBoxData,
+    id: typeId, type: "classBox", container: true, direction: "DOWN", headerHeight, width: 380, height: Math.max(76, headerHeight), ports: [],
+    data: { symbol: type, bases, members: members.map((s) => s.id), declaration, note: typeNote } satisfies ClassBoxData,
   });
-  for (const symbol of fields) {
+  for (const symbol of [...fields, ...declaredTypes, ...contracts]) {
+    const isContract = contracts.includes(symbol);
+    const role = isContract ? (symbol.kind === "EnumMember" ? "variant" : "contract") : undefined;
+    const contractKind = symbol.flavors.includes("associated-type") ? "Associated type"
+      : symbol.flavors.includes("required") ? "Required contract" : "Declaration";
+    const note = opts.explanations === false || role === "variant" ? undefined : isContract
+      ? [contractKind, receiverNote(symbol)].filter(Boolean).join(" · ") : declarationNote(symbol);
+    const declaration = isContract ? symbol.signature ?? symbol.type_text ?? undefined : undefined;
     nodes.push({
       id: symbol.id, parent: typeId, type: "fieldCard", layoutSide: "right",
-      width: 260, height: 48, ports: [], data: { symbol } satisfies FieldCardData,
+      width: 260, height: 48 + (note ? 17 : 0) + (opts.explanations !== false && (symbol.syntax_sites?.length || languageDetailFlavors(symbol.flavors).length) ? 20 : 0),
+      ports: [], data: { symbol, note, declaration, role } satisfies FieldCardData,
     });
   }
 
@@ -149,20 +210,27 @@ export function classBlueprintGraph(index: StructureIndex, typeId: string, flows
   for (const symbol of members) {
     const flow = byMember.get(symbol.id);
     const open = !!flow?.nodes.length && opts.open.has(symbol.id);
+    const notes = [symbol.language === "rust" && symbol.flavors.includes("default") ? "Default implementation" : undefined,
+      receiverNote(symbol) ?? declarationNote(symbol)].filter(Boolean);
+    const note = opts.explanations === false || notes.length === 0 ? undefined : notes.join(" · ");
     const data: MethodCardData = {
       symbol, open, complexity: opts.symbolInfo?.get(symbol.id)?.complexity,
       calls: flow?.nodes.reduce((n, step) => n + step.calls.length, 0) ?? 0,
+      note,
     };
+    const detailsHeight = opts.explanations !== false && (symbol.syntax_sites?.length || languageDetailFlavors(symbol.flavors).length) ? 20 : 0;
     nodes.push({
       id: symbol.id, parent: typeId, type: open ? "methodBox" : "methodCard", container: open,
-      direction: open ? "RIGHT" : undefined, headerHeight: 38,
-      width: 320, height: open ? 52 : 64, ports: [], data,
+      direction: open ? "RIGHT" : undefined, headerHeight: 38 + (note ? 17 : 0) + detailsHeight,
+      width: 320, height: (open ? 52 : 64) + (note ? 17 : 0) + detailsHeight, ports: [], data,
     });
     let entry = symbol.id;
     if (open && flow) {
       renderedFlows.add(symbol.id);
       const prefix = flowNodePrefix(symbol.id);
-      const inner = prefixGraph(flowToGraph(flow, opts.expanded, opts.showDataWires, { level: opts.detail, operations: opts.operations }), prefix, symbol.id);
+      const inner = prefixGraph(flowToGraph(flow, opts.expanded, opts.showDataWires, {
+        level: opts.detail, operations: opts.operations, explanations: opts.explanations, source: opts.sources?.[flow.span.file], structure: index,
+      }), prefix, symbol.id);
       nodes.push(...inner.nodes);
       edges.push(...inner.edges);
       entry = prefix + (flow.nodes.find((n) => n.concept === "Entry" || n.concept === "EventEntry") ?? flow.nodes[0]).id;

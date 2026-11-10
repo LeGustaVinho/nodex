@@ -1,9 +1,11 @@
 import { create } from "zustand";
 import { openMenu, type MenuItem } from "./components/ContextMenu";
+import { symbolFileMenuItems } from "./fileMenu";
 import type { Span } from "./gen/Span";
 import type { Symbol } from "./gen/Symbol";
 import type { BlueprintData, ExprData } from "./graph/flowGraph";
 import type { StructureIndex } from "./graph/structureGraph";
+import { useUi } from "./store";
 
 export type NavigationKind = "usages" | "declaration" | "implementations";
 
@@ -23,6 +25,7 @@ export interface NavigationResult {
 interface NavigationRequest {
   symbol: Symbol;
   kind: NavigationKind;
+  codeIntent: number;
 }
 
 export const useNavigation = create<{ request: NavigationRequest | null; close: () => void }>((set) => ({
@@ -47,15 +50,18 @@ function canHaveImplementations(symbol: Symbol, owner?: Symbol): boolean {
 }
 
 export function navigationMenuItems(symbol: Symbol | null | undefined, owner?: Symbol | StructureIndex): MenuItem[] {
-  if (!symbol || symbol.external || !symbol.origins.length || ["Namespace", "Module", "Package"].includes(symbol.kind)) return [];
+  if (!symbol || symbol.external || !symbol.origins.length) return [];
+  const fileItems = symbolFileMenuItems(symbol);
+  if (["Namespace", "Module", "Package"].includes(symbol.kind)) return fileItems;
   const ownerSymbol = owner && "byId" in owner ? owner.byId.get(symbol.parent ?? "") : owner;
   const item = (label: string, kind: NavigationKind): MenuItem => ({
-    label, run: () => useNavigation.setState({ request: { symbol, kind } }),
+    label, run: () => useNavigation.setState({ request: { symbol, kind, codeIntent: useUi.getState().codeIntent } }),
   });
   return [
     item("Find usages", "usages"),
     item("Go to declaration", "declaration"),
     ...(canHaveImplementations(symbol, ownerSymbol) ? [item("Go to implementation", "implementations")] : []),
+    ...fileItems,
   ];
 }
 

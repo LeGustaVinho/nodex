@@ -7,4 +7,8 @@ import type { Span } from "./Span";
 /**
  * The Blueprint graph of one function, method, constructor or accessor body.
  */
-export type FlowGraph = { symbol: string, name: string, language: Language, span: Span, nodes: Array<FlowNode>, edges: Array<FlowEdge>, };
+export type FlowGraph = { symbol: string, name: string, language: Language, span: Span, 
+/**
+ * Identifies the source revision that these spans refer to.
+ */
+source_revision?: string, nodes: Array<FlowNode>, edges: Array<FlowEdge>, };

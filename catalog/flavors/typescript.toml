@@ -33,6 +33,13 @@ explain = "The module's default export: importers choose the name (import Anythi
 label = "type only"
 explain = "Exists only while compiling. TypeScript erases it; at run time there is nothing to call or create."
 
+[type-import]
+label = "Type-only imports"
+explain = "Imports or imported names marked type are for the type checker. The imported names do not become runtime values."
+cue = "import type"
+phase = "Compile time"
+effects = [["Type checker", "Resolve the imported type name"], ["Emit JavaScript", "Erase the type-only import or specifier"]]
+
 [declare]
 label = "declared"
 explain = "Declared without an implementation (declare): the code that provides it lives elsewhere, often in JavaScript."
@@ -60,12 +67,18 @@ explain = "May be missing (undefined)."
 [satisfies]
 label = "satisfies"
 explain = "Checked against a type while compiling without changing the value's own type. Does nothing at run time."
+cue = "satisfies"
+phase = "Compile time"
+effects = [["value satisfies T", "Check compatibility with T"], ["At runtime", "Pass through value"]]
 
 [non-null]
 label = "non-null assertion"
 explain = "The author asserts the value is not null or undefined (x!). Nothing is checked at run time."
 
 # --- Functions -----------------------------------------------------------------------------
+cue = "!"
+phase = "Compile time"
+effects = [["value!", "Remove null and undefined from its type at this use"], ["At runtime", "Pass through value"]]
 
 [generator]
 label = "generator"
@@ -103,7 +116,10 @@ explain = "Declared with var: visible in the whole function (hoisted), not only 
 
 [keys]
 label = "property names"
-explain = "for ... in: walks the names of an object's properties (including inherited ones), not its values."
+explain = "Iterate over enumerable string property names, including inherited ones."
+cue = "in"
+phase = "Runtime"
+effects = [["for (const k in { a: 10 })", "k receives \"a\""]]
 
 [fallthrough]
 label = "falls through"
@@ -142,10 +158,48 @@ explain = "Tests a value as true/false: 0, \"\", null, undefined, NaN and false 
 [loose-equality]
 label = "loose =="
 explain = "== and != convert types before comparing (0 == \"\" is true). === and !== do not."
+cue = "=="
+phase = "Runtime"
+effects = [["0 == \"0\"", "true"], ["0 === \"0\"", "false"]]
 
 [fallback]
-label = "fallback"
-explain = "Uses the right side only when the left is null or undefined (??, ??=)."
+label = "Fallback if missing"
+explain = "The right side of ?? or ??= runs only when the left side is null or undefined. Values like zero, false and the empty string are kept."
+cue = "??"
+phase = "Runtime"
+effects = [["0 ?? 10", "0"], ["undefined ?? 10", "10"]]
+
+[safe-access]
+label = "Skip if missing"
+explain = "If the value to the left of ?. is null or undefined, the optional access or call is skipped and the result is undefined."
+cue = "?."
+phase = "Runtime"
+effects = [["Receiver is null or undefined", "Return undefined without accessing or calling"], ["Receiver has a value", "Perform the access or call"]]
+
+[spread-arguments]
+label = "Spread arguments"
+explain = "Read the iterable and pass its items as separate arguments in order."
+cue = "..."
+phase = "Runtime"
+effects = [["f(...[1, 2])", "f(1, 2)"]]
+
+[spread-items]
+label = "Spread items"
+explain = "Read the iterable and insert its items into the new array in order."
+cue = "..."
+phase = "Runtime"
+effects = [["[0, ...[1, 2]]", "[0, 1, 2]"]]
+
+[spread-properties]
+label = "Spread properties"
+explain = "Copy the source's own enumerable properties into the new object. A later property with the same key replaces an earlier one."
+cue = "..."
+phase = "Runtime"
+effects = [["{ ...{ a: 1 }, a: 2 }", "{ a: 2 }"]]
+
+[const]
+label = "Fixed binding"
+explain = "The name keeps its initial value. If that value is an object, its writable properties can still change."
 
 [array-pipeline]
 label = "array pipeline"
@@ -438,3 +492,87 @@ explain = "Runs a script on another thread, in parallel with this one."
 [event-handler]
 label = "event handler"
 explain = "Code that runs when the object raises this event; it may run many times."
+
+[as-const]
+label = "Const assertion"
+explain = "Keep literal types and mark object literal properties and array items as read-only in the type checker. The assertion does not freeze the object at runtime."
+cue = "as const"
+phase = "Compile time"
+effects = [["[1, 2] as const", "Infer a read-only tuple of literal types"]]
+
+[type-assertion]
+label = "Assume type"
+explain = "Tell the type checker to treat this expression as another type. The value is passed through unchanged at runtime."
+cue = "as"
+phase = "Compile time"
+effects = [["value as T", "Check subsequent uses as T"], ["At runtime", "Pass through value"]]
+
+[falsy-fallback]
+label = "Fallback on falsy"
+explain = "Evaluate the right side for falsy values including null, undefined, false, zero, NaN and the empty string. A truthy left value skips it."
+cue = "||"
+phase = "Runtime"
+effects = [["0 || 10", "10"], ["2 || 10", "2"]]
+
+[readonly]
+label = "Read-only in types"
+explain = "The type checker blocks writes through this property. An object can still be changed through other writable references."
+cue = "readonly"
+phase = "Compile time"
+effects = [["Write through this property type", "Rejected by the checker"]]
+
+[private]
+label = "Private in types"
+explain = "TypeScript checks access to this member. The private modifier itself adds no runtime access check."
+cue = "private"
+phase = "Compile time"
+effects = [["Read outside the allowed class context", "Rejected by the checker"]]
+
+[runtime-private]
+label = "Private at runtime"
+explain = "A member written with # is enforced by JavaScript at runtime."
+cue = "#"
+phase = "Runtime"
+effects = [["Read through the class's private name", "Check the object's private field at runtime"]]
+
+[runtime-freeze]
+label = "Freeze object"
+explain = "At runtime, prevent changes to this object's own data properties and prevent adding or removing properties. Nested objects are not frozen by this call."
+cue = "Object.freeze"
+phase = "Runtime"
+effects = [["Write a frozen own data property", "The write does not change it"], ["Change a nested object", "Its own mutability rules apply"]]
+
+[strict-equality]
+label = "Strict equality"
+explain = "Compare without converting operands to another type."
+cue = "==="
+phase = "Runtime"
+effects = [["0 === \"0\"", "false"]]
+
+[iterate-values]
+label = "Iterate values"
+explain = "Iterate over values supplied by an iterable."
+cue = "of"
+phase = "Runtime"
+effects = [["for (const n of [10, 20])", "n receives 10, then 20"]]
+
+[rest-arguments]
+label = "Rest arguments"
+explain = "Collect remaining arguments in an array."
+cue = "..."
+phase = "Runtime"
+effects = [["f(first, ...rest), called as f(1, 2, 3)", "rest = [2, 3]"]]
+
+[rest-items]
+label = "Rest items"
+explain = "Collect remaining iterable items into an array."
+cue = "..."
+phase = "Runtime"
+effects = [["[first, ...rest] = [1, 2, 3]", "rest = [2, 3]"]]
+
+[rest-properties]
+label = "Rest properties"
+explain = "Copy the remaining own enumerable properties into an object."
+cue = "..."
+phase = "Runtime"
+effects = [["{ a, ...rest } = { a: 1, b: 2 }", "rest = { b: 2 }"]]

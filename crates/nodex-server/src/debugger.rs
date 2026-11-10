@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nodex_dap::{Client, Incoming, types};
-use nodex_ir::Language;
+use nodex_ir::{Language, types::{TypeShape, native_shape}};
 use nodex_lang_api::{AdapterSpec, AdapterTransport, DebugLauncher};
 use nodex_trace::Resolver;
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,9 @@ pub struct DebugVariable {
     pub name: String,
     pub value: String,
     pub ty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub type_shape: Option<TypeShape>,
     /// Non-zero when it has children (`/api/debug/variables?ref=`).
     #[ts(type = "number")]
     pub reference: i64,
@@ -134,6 +137,7 @@ struct Session {
     /// The connection that runs the program (a js-debug child, or the only one); `None` while
     /// building and starting the adapter.
     client: Option<Arc<Client>>,
+    language: Language,
     tx: Sender<Msg>,
     thread: Option<i64>,
     /// Stop pressed before the adapter was connected: the session ends instead of launching.
@@ -164,8 +168,10 @@ impl DebugManager {
         self.last_stop.lock().ok().and_then(|s| s.clone())
     }
 
-    fn client(&self) -> Option<Arc<Client>> {
-        self.session.lock().ok()?.as_ref().and_then(|s| s.client.clone())
+    fn client(&self) -> Option<(Arc<Client>, Language)> {
+        let session = self.session.lock().ok()?;
+        let session = session.as_ref()?;
+        Some((session.client.clone()?, session.language))
     }
 
     /// Sends a command to the session. While it is still building, only Stop is accepted: the
@@ -185,28 +191,30 @@ impl DebugManager {
 
     /// Children of a variable (or the variables of a scope).
     pub fn variables(&self, reference: i64) -> Result<Vec<DebugVariable>, String> {
-        let client = self.client().ok_or("no debug session")?;
-        variables(&client, reference)
+        let (client, language) = self.client().ok_or("no debug session")?;
+        variables(&client, reference, language)
     }
 
     /// The scopes and variables of another frame of the paused thread.
     pub fn scopes(&self, frame: i64) -> Result<Vec<DebugScope>, String> {
-        let client = self.client().ok_or("no debug session")?;
-        scopes(&client, frame)
+        let (client, language) = self.client().ok_or("no debug session")?;
+        scopes(&client, frame, language)
     }
 
     /// Evaluates an expression in a frame (watch expressions).
     pub fn evaluate(&self, expression: &str, frame: Option<i64>) -> Result<DebugVariable, String> {
-        let client = self.client().ok_or("no debug session")?;
+        let (client, language) = self.client().ok_or("no debug session")?;
         let mut args = json!({ "expression": expression, "context": "watch" });
         if let Some(f) = frame {
             args["frameId"] = json!(f);
         }
         let r = client.request("evaluate", args)?;
+        let ty = r.get("type").and_then(Value::as_str);
         Ok(DebugVariable {
             name: expression.to_owned(),
             value: r.get("result").and_then(Value::as_str).unwrap_or("").to_owned(),
-            ty: r.get("type").and_then(Value::as_str).map(str::to_owned),
+            ty: ty.map(str::to_owned),
+            type_shape: ty.map(|ty| native_shape(language, ty)),
             reference: r.get("variablesReference").and_then(Value::as_i64).unwrap_or(0),
         })
     }
@@ -295,7 +303,7 @@ pub fn start(state: &Arc<AppState>) -> Result<(), String> {
         if session.is_some() {
             return Err("a run or a debug session is already in progress".into());
         }
-        *session = Some(Session { client: None, tx: tx.clone(), thread: None, cancelled: cancelled.clone() });
+        *session = Some(Session { client: None, language, tx: tx.clone(), thread: None, cancelled: cancelled.clone() });
     }
     if let Ok(mut l) = state.debug.last_stop.lock() {
         *l = None;
@@ -307,7 +315,7 @@ pub fn start(state: &Arc<AppState>) -> Result<(), String> {
     std::thread::Builder::new()
         .name("nodex-debug".into())
         .spawn(move || {
-            let result = session(&state, &root, launcher, spec, program, channel);
+            let result = session(&state, &root, launcher, spec, program, channel, language);
             if let Ok(mut s) = state.debug.session.lock() {
                 *s = None;
             }
@@ -398,7 +406,7 @@ fn plain(p: &Path) -> PathBuf {
 
 type Channel = (Sender<Msg>, Receiver<Msg>, Arc<AtomicBool>);
 
-fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>, spec: AdapterSpec, program: PathBuf, channel: Channel) -> Result<(), String> {
+fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>, spec: AdapterSpec, program: PathBuf, channel: Channel, language: Language) -> Result<(), String> {
     let (tx, msgs, cancelled) = channel;
     let stopped_early = || {
         let yes = cancelled.load(Ordering::SeqCst);
@@ -475,7 +483,7 @@ fn session(state: &Arc<AppState>, root: &Path, launcher: Box<dyn DebugLauncher>,
                     {
                         s.thread = Some(thread);
                     }
-                    let stopped = describe_stop(&clients[active], root, thread, reason, description, resolver().as_ref());
+                    let stopped = describe_stop(&clients[active], root, thread, reason, description, resolver().as_ref(), language);
                     if let Ok(mut l) = state.debug.last_stop.lock() {
                         *l = Some(stopped.clone());
                     }
@@ -646,17 +654,20 @@ fn send_file_breakpoints(state: &AppState, client: &Client, root: &Path, file: &
 // ---------------------------------------------------------------------------------------------
 // Reading a stop
 
-fn variables(client: &Client, reference: i64) -> Result<Vec<DebugVariable>, String> {
+fn variables(client: &Client, reference: i64, language: Language) -> Result<Vec<DebugVariable>, String> {
     let body = client.request("variables", json!({ "variablesReference": reference }))?;
     let vars: Vec<types::Variable> = serde_json::from_value(body.get("variables").cloned().unwrap_or(Value::Array(Vec::new()))).map_err(|e| e.to_string())?;
     Ok(vars
         .into_iter()
         .filter(|v| !v.name.starts_with("__nx"))
-        .map(|v| DebugVariable { name: v.name, value: v.value, ty: v.ty, reference: v.variables_reference })
+        .map(|v| DebugVariable {
+            name: v.name, value: v.value, type_shape: v.ty.as_deref().map(|ty| native_shape(language, ty)),
+            ty: v.ty, reference: v.variables_reference,
+        })
         .collect())
 }
 
-fn scopes(client: &Client, frame: i64) -> Result<Vec<DebugScope>, String> {
+fn scopes(client: &Client, frame: i64, language: Language) -> Result<Vec<DebugScope>, String> {
     let body = client.request("scopes", json!({ "frameId": frame }))?;
     let scopes: Vec<types::Scope> = serde_json::from_value(body.get("scopes").cloned().unwrap_or(Value::Array(Vec::new()))).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
@@ -664,7 +675,7 @@ fn scopes(client: &Client, frame: i64) -> Result<Vec<DebugScope>, String> {
         // Cheap scopes near the code (block, locals, arguments) are read at once; globals,
         // registers and the rest when opened.
         let far = s.expensive || ["global", "register", "module", "static"].iter().any(|w| s.name.to_lowercase().contains(w));
-        let vars = if i < 4 && !far { variables(client, s.variables_reference).unwrap_or_default() } else { Vec::new() };
+        let vars = if i < 4 && !far { variables(client, s.variables_reference, language).unwrap_or_default() } else { Vec::new() };
         out.push(DebugScope { name: s.name, reference: s.variables_reference, variables: vars });
     }
     Ok(out)
@@ -699,7 +710,7 @@ fn line_offset(text: &str, line: i64) -> Option<u32> {
     None
 }
 
-fn describe_stop(client: &Client, root: &Path, thread: i64, reason: String, description: Option<String>, resolver: Option<&Resolver>) -> DebugStopped {
+fn describe_stop(client: &Client, root: &Path, thread: i64, reason: String, description: Option<String>, resolver: Option<&Resolver>, language: Language) -> DebugStopped {
     let frames: Vec<types::StackFrame> = client
         .request("stackTrace", json!({ "threadId": thread, "startFrame": 0, "levels": 40 }))
         .ok()
@@ -727,7 +738,7 @@ fn describe_stop(client: &Client, root: &Path, thread: i64, reason: String, desc
         })
         .collect();
     let top = frames.iter().find(|f| f.file.is_some()).or(frames.first()).map(|f| f.id);
-    let scopes = top.and_then(|id| scopes(client, id).ok()).unwrap_or_default();
+    let scopes = top.and_then(|id| scopes(client, id, language).ok()).unwrap_or_default();
     DebugStopped { reason, description, thread, frames, scopes }
 }
 

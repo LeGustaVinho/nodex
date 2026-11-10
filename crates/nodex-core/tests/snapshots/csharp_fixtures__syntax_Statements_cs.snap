@@ -89,11 +89,11 @@ Scope — use var a = new Resource(), then dispose it
       body:
         Call — Console.WriteLine("nested using")
 Var — c = new Resource()
-Scope — checked region: arithmetic overflow fails
+Scope — overflow checking in this block
   body:
     Var — big = int.MaxValue
     Assign — increase big by 1
-Scope — unchecked region: arithmetic overflow wraps around
+Scope — overflow checking disabled in this block
   body:
     Var — wrap = int.MaxValue + 1
 Try — try; handle errors below

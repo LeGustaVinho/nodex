@@ -59,6 +59,18 @@ pub fn unparen(mut node: Node) -> Node {
     node
 }
 
+/// A grouped Rust type is parsed as a one-element tuple without a comma.
+pub fn unparen_type(mut node: Node) -> Node {
+    while node.kind() == "tuple_type" {
+        let parts: Vec<_> = named_children(node).into_iter().filter(|child| !child.is_extra()).collect();
+        if parts.len() != 1 || children(node).iter().any(|child| child.kind() == ",") {
+            break;
+        }
+        node = parts[0];
+    }
+    node
+}
+
 /// True when the statement ends with `;` (an expression statement whose value is discarded).
 pub fn has_semicolon(src: Src, node: Node) -> bool {
     src.text(node).trim_end().ends_with(';')
@@ -255,53 +267,64 @@ fn pattern_text(src: Src, p: Node) -> String {
     }
 }
 
-/// Every name a pattern binds: `(a, Point { x, y: yy }, ref mut z)` → `a`, `x`, `yy`, `z`.
-pub fn pattern_names(src: Src, p: Node, out: &mut Vec<String>) {
-    match p.kind() {
-        "identifier" => {
-            let name = src.text(p).to_owned();
-            // `None`, `Ok` in a pattern are variants, not bindings.
-            if name != "_" && !name.chars().next().is_some_and(char::is_uppercase) && !out.contains(&name) {
-                out.push(name);
-            }
-        }
-        "shorthand_field_identifier" => {
-            let name = src.text(p).to_owned();
-            if !out.contains(&name) {
-                out.push(name);
-            }
-        }
-        "field_pattern" => match p.child_by_field_name("pattern") {
-            Some(inner) => pattern_names(src, inner, out),
-            None => {
-                if let Some(n) = p.child_by_field_name("name") {
-                    let name = src.text(n).to_owned();
-                    if !out.contains(&name) {
-                        out.push(name);
-                    }
-                }
-            }
-        },
+/// Each name in a pattern and whether the binding itself may be reassigned.
+pub fn pattern_bindings(src: Src, pattern: Node, mutable: bool, out: &mut Vec<(String, bool)>) {
+    let name = match pattern.kind() {
+        "identifier" if mutable || !src.text(pattern).chars().next().is_some_and(char::is_uppercase) => Some(pattern),
+        "shorthand_field_identifier" => Some(pattern),
         "captured_pattern" => {
-            if let Some(first) = named_children(p).into_iter().next() {
-                pattern_names(src, first, out);
+            let mut parts = named_children(pattern).into_iter();
+            // The identifier to the left of `@` is always a binding.
+            if let Some(binding) = parts.next().filter(|node| node.kind() == "identifier") {
+                record_binding(src.text(binding), mutable, out);
             }
-            for c in named_children(p).into_iter().skip(1) {
-                pattern_names(src, c, out);
+            if let Some(inner) = parts.next() {
+                pattern_bindings(src, inner, false, out);
             }
+            return;
         }
-        "scoped_identifier" | "type_identifier" | "scoped_type_identifier" | "_literal_pattern" | "integer_literal"
-        | "string_literal" | "char_literal" | "boolean_literal" | "float_literal" | "negative_literal" | "range_pattern" => {}
-        "tuple_struct_pattern" | "struct_pattern" => {
-            for c in named_children(p).into_iter().skip(1) {
-                pattern_names(src, c, out);
+        "field_pattern" => {
+            if let Some(inner) = pattern.child_by_field_name("pattern") {
+                pattern_bindings(src, inner, false, out);
+                return;
             }
+            pattern.child_by_field_name("name")
         }
-        _ => {
-            for c in named_children(p) {
-                pattern_names(src, c, out);
+        "identifier" | "scoped_identifier" | "type_identifier" | "scoped_type_identifier"
+        | "_literal_pattern" | "integer_literal" | "string_literal" | "char_literal"
+        | "boolean_literal" | "float_literal" | "negative_literal" | "range_pattern" => None,
+        kind => {
+            let children = named_children(pattern);
+            let skip = usize::from(matches!(kind, "tuple_struct_pattern" | "struct_pattern"));
+            for child in children.into_iter().skip(skip).filter(|n| n.kind() != "mutable_specifier") {
+                let mutable = match kind {
+                    "mut_pattern" => true,
+                    // A ref binding's access can be mutable while the binding itself is fixed.
+                    "ref_pattern" if child.kind() == "mut_pattern" => {
+                        if let Some(inner) = named_children(child).into_iter().last() {
+                            pattern_bindings(src, inner, false, out);
+                        }
+                        continue;
+                    }
+                    _ => false,
+                };
+                pattern_bindings(src, child, mutable, out);
             }
+            None
         }
+    };
+    if let Some(name) = name {
+        let name = src.text(name);
+        let field_mut = pattern.kind() == "field_pattern"
+            && first_child_of_kind(pattern, "mutable_specifier").is_some()
+            && !children(pattern).iter().any(|n| n.kind() == "ref");
+        record_binding(name, mutable || field_mut, out);
+    }
+}
+
+fn record_binding(name: &str, mutable: bool, out: &mut Vec<(String, bool)>) {
+    if name != "_" && !out.iter().any(|(existing, _)| existing == name) {
+        out.push((name.to_owned(), mutable));
     }
 }
 

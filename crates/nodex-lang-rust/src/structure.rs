@@ -133,8 +133,16 @@ impl<'a, 't> Collector<'a, 't> {
         }
     }
 
-    fn sym(&self, id: &str, kind: SymbolKind, name: &str, parent: Option<&str>, node: Node, flavors: Vec<String>) -> Symbol {
+    fn sym(&self, id: &str, kind: SymbolKind, name: &str, parent: Option<&str>, node: Node, mut flavors: Vec<String>) -> Symbol {
+        if node.child_by_field_name("type_parameters").is_some_and(|params| {
+            named_children(params).iter().any(|p| p.kind() == "lifetime_parameter")
+        }) {
+            flavors.push("lifetime".into());
+        }
         Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.to_owned(),
             kind,
             name: name.to_owned(),
@@ -556,6 +564,7 @@ impl<'a, 't> Collector<'a, 't> {
         let returns = func.child_by_field_name("return_type");
         let signature = src.header(func, body);
         let mut s = self.sym(id, kind, name, Some(parent), func, flavors.clone());
+        flavors.clone_from(&s.flavors);
         s.signature = Some(signature.clone());
         s.type_text = returns.map(|t| src.norm(t));
         self.push(s);

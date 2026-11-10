@@ -7,13 +7,14 @@ import type { DebugScope } from "./gen/DebugScope";
 import type { DebugStatus } from "./gen/DebugStatus";
 import type { DebugStopped } from "./gen/DebugStopped";
 import { classMembers } from "./graph/classBlueprint";
-import { isTypeKind, type StructureIndex } from "./graph/structureGraph";
+import { isBlueprintContainer, type StructureIndex } from "./graph/structureGraph";
 import { useUi } from "./store";
 
 /** Debugger state shared by the toolbar, the Blueprint, the code panel and the debug panel. */
 interface DebugStore {
   status: DebugStatus;
   stopped: DebugStopped | null;
+  stopId: number;
   /** The frame whose variables are shown (the top project frame by default). */
   frame: number | null;
   /** The variables of `frame` (the stop carries the top frame's; others are fetched), or null
@@ -25,7 +26,7 @@ interface DebugStore {
   setStopped: (s: DebugStopped | null) => void;
   setFrame: (id: number | null) => void;
   /** The fetched scopes of a frame other than the top one. */
-  setFrameScopes: (id: number, scopes: DebugScope[]) => void;
+  setFrameScopes: (stopId: number, id: number, scopes: DebugScope[]) => void;
   setBreakpoints: (b: Breakpoint[]) => void;
   setProgress: (p: AdapterProgress) => void;
   reset: () => void;
@@ -36,6 +37,7 @@ const idle: DebugStatus = { state: "idle", detail: "", missing_adapter: null };
 export const useDebug = create<DebugStore>((set) => ({
   status: idle,
   stopped: null,
+  stopId: 0,
   frame: null,
   scopes: null,
   breakpoints: [],
@@ -48,9 +50,9 @@ export const useDebug = create<DebugStore>((set) => ({
       frame: status.state === "paused" ? s.frame : null,
       scopes: status.state === "paused" ? s.scopes : null,
     })),
-  setStopped: (stopped) => set({ stopped, frame: topFrame(stopped), scopes: stopped?.scopes ?? null }),
+  setStopped: (stopped) => set((s) => ({ stopped, stopId: s.stopId + 1, frame: topFrame(stopped), scopes: stopped?.scopes ?? null })),
   setFrame: (frame) => set((s) => ({ frame, scopes: frame !== null && frame === topFrame(s.stopped) ? (s.stopped?.scopes ?? null) : null })),
-  setFrameScopes: (id, scopes) => set((s) => (s.frame === id ? { scopes } : {})),
+  setFrameScopes: (stopId, id, scopes) => set((s) => (s.stopId === stopId && s.frame === id ? { scopes } : {})),
   setBreakpoints: (breakpoints) => set({ breakpoints }),
   setProgress: (p) => set((s) => ({ progress: { ...s.progress, [p.language]: p } })),
   reset: () => set({ status: idle, stopped: null, frame: null, scopes: null, breakpoints: [], progress: {} }),
@@ -68,7 +70,7 @@ export function showDebugFrame(frame: DebugFrame, index?: StructureIndex): void 
   const ui = useUi.getState();
   const current = ui.view === "blueprint" ? ui.flowSymbol : null;
   const owner = current ? index?.byId.get(current) : undefined;
-  if (index && owner && isTypeKind(owner.kind) && classMembers(index, owner.id).some((member) => member.id === flow)) {
+  if (index && owner && isBlueprintContainer(owner) && classMembers(index, owner.id).some((member) => member.id === flow)) {
     ui.setClassOpen([flow], true);
   } else if (current !== flow) {
     ui.openFlow(flow);

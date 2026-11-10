@@ -1,11 +1,65 @@
 //! Expressions → [`Expr`] trees, natural-language text and local-variable reads.
 
-use nodex_ir::{Concept, Expr};
+use nodex_ir::{Concept, Expr, Focus};
 use nodex_lang_api::kit::truncate;
 use nodex_lang_api::ops::{self, Equality};
 use tree_sitter::Node;
 
 use crate::syntax::{Src, bare_type_name, children, first_child_of_kind, named_children};
+
+pub(crate) fn reference_focus(src: Src, node: Node) -> Option<Focus> {
+    let node = unparen(node);
+    let member = match node.kind() {
+        "member_access_expression" | "member_binding_expression" => node.child_by_field_name("name"),
+        "conditional_access_expression" => first_child_of_kind(node, "member_binding_expression")
+            .and_then(|binding| binding.child_by_field_name("name")),
+        _ => None,
+    };
+    member.map_or_else(|| src.focus(node), |member| src.member_focus(node, member))
+}
+
+fn call_focus(src: Src, invocation: Node) -> Option<Focus> {
+    let callee = unparen(invocation.child_by_field_name("function")?);
+    if matches!(callee.kind(), "lambda_expression" | "anonymous_method_expression") {
+        return None;
+    }
+    reference_focus(src, callee)
+}
+
+fn type_focus(src: Src, operand: Node) -> Option<Focus> {
+    let mut ty = operand;
+    while matches!(ty.kind(), "array_type" | "nullable_type" | "pointer_type" | "declaration_pattern" | "recursive_pattern" | "type_pattern") {
+        let Some(inner) = ty.child_by_field_name("type") else { break };
+        ty = inner;
+    }
+    if matches!(ty.kind(), "qualified_name" | "alias_qualified_name")
+        && let Some(name) = ty.child_by_field_name("name")
+    {
+        return src.split_focus(operand.start_byte(), name.start_byte(), operand.end_byte());
+    }
+    src.focus(operand)
+}
+
+fn expression_focus(src: Src, node: Node, concept: Concept) -> Option<Focus> {
+    let operand = match concept {
+        Concept::Var | Concept::GetMember | Concept::Index => return reference_focus(src, node),
+        Concept::SafeAccess if first_child_of_kind(node, "member_binding_expression").is_some()
+            || first_child_of_kind(node, "element_binding_expression").is_some() => return reference_focus(src, node),
+        Concept::Call => return call_focus(src, node),
+        Concept::Construct => return type_focus(src, node.child_by_field_name("type")?),
+        Concept::Assign => return reference_focus(src, node.child_by_field_name("left")?),
+        Concept::UnaryOp if children(node).iter().any(|c| !c.is_named() && matches!(src.text(*c), "++" | "--")) =>
+            return reference_focus(src, named_children(node).into_iter().next()?),
+        Concept::Choose => node.child_by_field_name("condition"),
+        Concept::Convert | Concept::TypeCheck => {
+            let ty = ["type", "pattern", "right"].into_iter().find_map(|field| node.child_by_field_name(field))?;
+            return type_focus(src, ty);
+        }
+        Concept::Await | Concept::Throw | Concept::Match => named_children(node).into_iter().next(),
+        _ => None,
+    };
+    src.focus(unparen(operand?))
+}
 
 /// LINQ operators. A method chain with two or more of these is shown as a `Pipeline`.
 const LINQ: &[&str] = &[
@@ -122,8 +176,12 @@ impl<'a> ExprLowering<'a> {
         let node = unparen(node);
         let span = src.span(node);
         let mk = |concept: Concept, label: String, children: Vec<Expr>| Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept,
             label,
+            focus: expression_focus(src, node, concept),
             span: span.clone(),
             flavors: Vec::new(),
             children,
@@ -132,6 +190,7 @@ impl<'a> ExprLowering<'a> {
             op: None,
             ty: None,
             params: Vec::new(),
+            param_pins: None,
         };
         let text = || truncate(&src.norm(node), 40);
 
@@ -142,8 +201,12 @@ impl<'a> ExprLowering<'a> {
                     for (name, inv) in &p.stages {
                         let args = self.arguments(*inv);
                         let mut stage = Expr {
+                            syntax_sites: None,
+                            type_info: None,
+                            value_info: None,
                             concept: Concept::Call,
                             label: self.stage_label(name, *inv),
+                            focus: call_focus(src, *inv),
                             span: src.span(*inv),
                             flavors: vec!["stage".into()],
                             children: args,
@@ -152,6 +215,7 @@ impl<'a> ExprLowering<'a> {
                             op: None,
                             ty: None,
                             params: Vec::new(),
+                            param_pins: None,
                         };
                         if !is_linq_stage(src, name, *inv) {
                             stage.flavors.push("custom-stage".into());
@@ -428,8 +492,12 @@ impl<'a> ExprLowering<'a> {
                         let pattern = patterns.iter().map(|p| src.norm(*p)).collect::<Vec<_>>().join(" when ");
                         let arm_kids = result.map(|r| vec![self.lower(r)]).unwrap_or_default();
                         kids.push(Expr {
+                            syntax_sites: None,
+                            type_info: None,
+                            value_info: None,
                             concept: Concept::Match,
                             label: truncate(&format!("{pattern} ⇒"), 40),
+                            focus: None,
                             span: src.span(c),
                             flavors: vec!["arm".into()],
                             children: arm_kids,
@@ -438,6 +506,7 @@ impl<'a> ExprLowering<'a> {
                             op: None,
                             ty: None,
                             params: Vec::new(),
+                            param_pins: None,
                         });
                     } else {
                         kids.push(self.lower(c));
@@ -449,8 +518,12 @@ impl<'a> ExprLowering<'a> {
                 let kids = named_children(node)
                     .into_iter()
                     .map(|clause| Expr {
+                        syntax_sites: None,
+                        type_info: None,
+                        value_info: None,
                         concept: Concept::Call,
                         label: truncate(&src.norm(clause), 48),
+                        focus: None,
                         span: src.span(clause),
                         flavors: vec!["stage".into()],
                         children: Vec::new(),
@@ -459,6 +532,7 @@ impl<'a> ExprLowering<'a> {
                         op: None,
                         ty: None,
                         params: Vec::new(),
+                        param_pins: None,
                     })
                     .collect();
                 let mut e = mk(Concept::Pipeline, "pipeline".into(), kids);
@@ -528,8 +602,14 @@ impl<'a> ExprLowering<'a> {
         named_children(list)
             .into_iter()
             .filter(|a| a.kind() == "argument")
-            .filter_map(|a| named_children(a).into_iter().last())
-            .map(|e| self.lower(e))
+            .filter_map(|a| {
+                let value = named_children(a).into_iter().last()?;
+                let mut expr = self.lower(value);
+                if let Some(mode) = children(a).into_iter().find(|c| matches!(c.kind(), "in" | "out" | "ref")) {
+                    expr.flavors.push(format!("argument:{}", mode.kind()));
+                }
+                Some(expr)
+            })
             .collect()
     }
 }
@@ -627,7 +707,7 @@ fn is_non_value_position(node: Node) -> bool {
         "member_access_expression" | "member_binding_expression" => field_is("name"),
         "object_creation_expression" | "cast_expression" | "variable_declaration" | "declaration_expression"
         | "typeof_expression" | "default_expression" | "is_expression" | "local_function_statement" => field_is("type") || field_is("name"),
-        "argument" => field_is("name"),
+        "argument" => field_is("name") || children(parent).iter().any(|child| child.kind() == "out"),
         "variable_declarator" | "parameter" | "catch_declaration" | "type_parameter" => field_is("name") || field_is("type"),
         "foreach_statement" => field_is("left") || field_is("type"),
         "name_colon" | "name_equals" | "attribute" | "goto_statement" | "labeled_statement" | "nullable_type"

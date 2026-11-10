@@ -5,4 +5,4 @@ import type { Symbol } from "./Symbol";
 /**
  * The linked structure of a whole project.
  */
-export type StructureGraph = { symbols: Array<Symbol>, edges: Array<StructEdge>, };
+export type StructureGraph = { source_revisions?: { [key in string]: string }, symbols: Array<Symbol>, edges: Array<StructEdge>, };

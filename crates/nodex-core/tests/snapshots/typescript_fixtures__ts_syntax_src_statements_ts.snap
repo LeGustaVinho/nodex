@@ -42,9 +42,9 @@ Match — match o.kind
     Assign — set x to 1
   case:
     Assign — set x to 2
-  case:
     Assign — set x to 3
     Break — leave the loop
+  case:
   case:
     Assign — set x to 4
 Try — try; handle errors below

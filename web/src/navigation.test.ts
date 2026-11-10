@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import type { Symbol } from "./gen/Symbol";
 import { blueprintNavigationTarget, navigationMenuItems, useNavigation } from "./navigation";
@@ -7,17 +8,18 @@ const member: Symbol = {
   id: "A.M", kind: "Method", parent: "A", name: "M", qualified_name: "A.M", language: "csharp",
   origins: [span], flavors: [], signature: null, type_text: null, has_flow: false, external: false, doc: null,
 };
+const fileActions = ["Reveal in File Explorer", "Open", "Copy path"];
 
 describe("navigation menu", () => {
   it("offers implementation navigation for contracts and excludes symbols without source", () => {
     expect(navigationMenuItems(member, { ...member, kind: "Interface" }).map((item) => item.label)).toEqual([
-      "Find usages", "Go to declaration", "Go to implementation",
+      "Find usages", "Go to declaration", "Go to implementation", ...fileActions,
     ]);
-    expect(navigationMenuItems(member, { ...member, kind: "Class" }).map((item) => item.label)).toEqual(["Find usages", "Go to declaration"]);
+    expect(navigationMenuItems(member, { ...member, kind: "Class" }).map((item) => item.label)).toEqual(["Find usages", "Go to declaration", ...fileActions]);
     expect(navigationMenuItems({ ...member, external: true })).toEqual([]);
     expect(navigationMenuItems({ ...member, origins: [] })).toEqual([]);
-    navigationMenuItems(member)[0].run?.();
-    expect(useNavigation.getState().request).toEqual({ symbol: member, kind: "usages" });
+    navigationMenuItems(member)[0].run?.(undefined);
+    expect(useNavigation.getState().request).toMatchObject({ symbol: member, kind: "usages" });
     useNavigation.getState().close();
   });
 
@@ -27,7 +29,14 @@ describe("navigation menu", () => {
     const labels = (items: ReturnType<typeof navigationMenuItems>) => items.map((item) => item.label);
     expect(labels(navigationMenuItems(contract))).toContain("Go to implementation");
     expect(labels(navigationMenuItems(method, contract))).toContain("Go to implementation");
-    expect(labels(navigationMenuItems({ ...contract, flavors: [] }))).toEqual(["Find usages", "Go to declaration"]);
+    expect(labels(navigationMenuItems({ ...contract, flavors: [] }))).toEqual(["Find usages", "Go to declaration", ...fileActions]);
+  });
+
+  it("offers a single entry for each distinct declaration file", () => {
+    const symbol = { ...member, origins: [span, { ...span, start_line: 2 }, { ...span, file: "other/A.cs" }] };
+    const source = navigationMenuItems(symbol).find((item) => item.label === "Source file");
+    expect(source?.children?.map((item) => item.label)).toEqual(["A.cs", "other/A.cs"]);
+    expect(source?.children?.[1].children?.map((item) => item.label)).toEqual(fileActions);
   });
 
   it("offers implementations for an associated Rust type declared by a trait", () => {

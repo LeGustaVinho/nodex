@@ -21,6 +21,12 @@ export function hasNativeDialogs(): boolean {
   return isDesktop && tauriInvoke() !== undefined;
 }
 
+export async function projectFileAction(operation: "open" | "reveal", expectedRoot: string, relativePath: string): Promise<void> {
+  const invoke = tauriInvoke();
+  if (!isDesktop || !invoke) throw new Error("Requires Nodex Desktop.");
+  await invoke("project_file_action", { operation, expectedRoot, relativePath });
+}
+
 /** Asks for a folder with the system's folder picker. `null` when cancelled or unavailable. */
 export async function pickFolder(title = "Open a project folder"): Promise<string | null> {
   const invoke = tauriInvoke();

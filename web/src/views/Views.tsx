@@ -1,22 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { api } from "../api";
 import type { StructureGraph } from "../gen/StructureGraph";
 import * as perf from "../perf";
-import { useTrace } from "../trace";
+import { useBlueprintReplay } from "./useBlueprintReplay";
 import { useCatalog } from "../catalog";
 import { callGraph } from "../graph/callGraph";
-import { flowToGraph } from "../graph/flowGraph";
-import { StructureIndex, architectureGraph, isTypeKind, typesGraph } from "../graph/structureGraph";
+import { flowToGraph, recordedEdgeId } from "../graph/flowGraph";
+import { StructureIndex, architectureGraph, isBlueprintContainer, isTypeKind, typesGraph } from "../graph/structureGraph";
 import { openMenu } from "../components/ContextMenu";
 import { blueprintNavigationTarget, navigationMenuItems, openNavigationMenu } from "../navigation";
 import { blueprintMenuItems, contextMenuItems } from "../uml/contextMenu";
 import { useShallow } from "zustand/react/shallow";
 import { useUi } from "../store";
 import { ReplayBar } from "../panels/RunPanel";
+import { BlueprintGuide } from "../components/BlueprintGuide";
 import { GraphCanvas } from "./GraphCanvas";
 import { useContextSet } from "./Explorer";
 import { ClassBlueprintView } from "./ClassBlueprint";
+import { useBlueprintSources } from "./useBlueprintSources";
+import { useReplaySource } from "./useReplaySource";
 import { Loading } from "../components/Loading";
 
 /** One index per structure graph, shared by every component that shows it. */
@@ -159,7 +162,7 @@ export function BlueprintView() {
   const { index, isLoading } = useStructure();
   const symbol = flow ? index?.byId.get(flow) : undefined;
   if (flow && isLoading) return <Loading label="Loading the Blueprint…" />;
-  if (index && symbol && isTypeKind(symbol.kind)) {
+  if (index && symbol && isBlueprintContainer(symbol)) {
     return <ClassBlueprintView key={symbol.id} index={index} symbol={symbol} />;
   }
   return <FunctionBlueprintView />;
@@ -167,11 +170,13 @@ export function BlueprintView() {
 
 function FunctionBlueprintView() {
   const { index } = useStructure();
-  const { flowSymbol, expanded, showDataWires, detail, select, selection, openFlow } = useUi(
+  const { flowSymbol, expanded, showDataWires, blueprintExplanations, blueprintGuide, detail, select, selection, openFlow } = useUi(
     useShallow((s) => ({
       flowSymbol: s.flowSymbol,
       expanded: s.expanded,
       showDataWires: s.showDataWires,
+      blueprintExplanations: s.blueprintExplanations,
+      blueprintGuide: s.blueprintGuide,
       detail: s.detail,
       select: s.select,
       selection: s.selection,
@@ -184,36 +189,42 @@ function FunctionBlueprintView() {
     queryFn: () => api.flow(flowSymbol!),
     enabled: !!flowSymbol,
   });
+  const sources = useBlueprintSources(useMemo(() => flow.data ? [flow.data] : undefined, [flow.data]));
   const graph = useMemo(
-    () => (flow.data ? flowToGraph(flow.data, expanded, showDataWires, { level: detail, operations: catalog?.operations }) : undefined),
-    [flow.data, expanded, showDataWires, detail, catalog],
+    () => (flow.data ? flowToGraph(flow.data, expanded, showDataWires, {
+      level: detail, explanations: blueprintExplanations, operations: catalog?.operations, source: sources[flow.data.span.file], structure: index,
+    }) : undefined),
+    [flow.data, expanded, showDataWires, blueprintExplanations, detail, catalog, sources, index],
   );
   // During replay, follow the current step in the code panel.
-  const replayNode = useTrace((s) => (s.replay?.flow === flowSymbol ? s.replay.page.steps[s.replay.index]?.node : undefined));
-  useEffect(() => {
-    const span = replayNode ? flow.data?.nodes.find((n) => n.id === replayNode)?.span : undefined;
-    if (span) useUi.getState().focusCode(span);
-  }, [replayNode, flow.data]);
-  const openedFlow = useRef<string | null>(null);
+  const { replay } = useBlueprintReplay(index);
+  const replayStep = replay?.page.steps[replay.index];
+  const replayNode = replayStep?.node;
+  const observedEdge = recordedEdgeId(flow.data, replayStep);
+  useReplaySource(replay, replayNode ? flow.data?.nodes.find((n) => n.id === replayNode)?.span : undefined);
+  const sourceIntent = useUi((s) => s.blueprintSourceIntent);
   // Focus the source on open, without replacing a later navigation destination on refresh.
   useEffect(() => {
-    if (!flowSymbol || flow.data?.symbol !== flowSymbol || openedFlow.current === flowSymbol) return;
-    openedFlow.current = flowSymbol;
-    const span = flow.data.span;
-    const ui = useUi.getState();
-    if (span && ui.codeFocus?.file !== span.file) ui.focusCode(span);
-  }, [flowSymbol, flow.data]);
+    if (flowSymbol && flow.data?.symbol === flowSymbol) useUi.getState().focusBlueprintSource(flowSymbol, [flow.data.span]);
+  }, [flowSymbol, flow.data, sourceIntent]);
   if (!flowSymbol) {
     return <div className="empty">Pick a method in the sidebar or double-click one in the Types view to open its Blueprint.</div>;
   }
   if (flow.error) return <div className="empty">This function is no longer in the project.</div>;
   // During replay the canvas follows the current step.
-  const selectedId =
-    replayNode ??
-    (selection?.kind === "flow-node" ? selection.id : selection?.kind === "expr" ? `${selection.nodeId}/e/${selection.path}` : null);
+  const activeNode = selection?.kind === "flow-node" && selection.flow === flowSymbol ? selection.id
+    : selection?.kind === "expr" && selection.flow === flowSymbol ? selection.nodeId : undefined;
+  const entry = blueprintGuide && !replay ? flow.data?.nodes.find((n) => n.concept === "Entry" || n.concept === "EventEntry")?.id : undefined;
+  const expressionId = activeNode && selection?.kind === "expr" ? activeNode + "/e/" + selection.path : undefined;
+  const selectedId = replay ? replayNode ?? null
+    : expressionId && graph?.nodes.some((n) => n.id === expressionId) ? expressionId : activeNode ?? entry ?? null;
   return (
-    <>
-    <ReplayBar flow={flowSymbol} />
+    <div className="blueprint-workspace">
+    <ReplayBar flow={flowSymbol} hasObservedTransition={!!observedEdge} />
+    {blueprintGuide && flow.data && (
+      <BlueprintGuide key={flowSymbol} flows={[flow.data]} activeFlow={flowSymbol} activeNode={activeNode} replaying={!!replay}
+        onStep={(flow, node) => select({ kind: "flow-node", flow, id: node.id }, node.span)} />
+    )}
     <GraphCanvas
       key={`flow:${flowSymbol}:${detail}`}
       graph={graph}
@@ -221,6 +232,9 @@ function FunctionBlueprintView() {
       fitFirst={3}
       loadingText="Loading the Blueprint…"
       selectedId={selectedId}
+      observedEdge={observedEdge}
+      explore={(blueprintGuide || blueprintExplanations) && !replay && (activeNode || entry)
+        ? { anchor: activeNode ?? entry ?? null, edgeMode: "all" } : undefined}
       onNodeContextMenu={(e, n) => openNavigationMenu(e, index?.byId.get(blueprintNavigationTarget(n) ?? ""), index)}
       onNodeDoubleClick={(n) => {
         // Double-clicking a call (or a function value with a Blueprint) opens that Blueprint.
@@ -243,6 +257,6 @@ function FunctionBlueprintView() {
         }
       }}
     />
-    </>
+    </div>
   );
 }

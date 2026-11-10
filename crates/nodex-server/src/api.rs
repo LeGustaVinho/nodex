@@ -72,6 +72,27 @@ pub struct FlowQuery {
     symbol: String,
 }
 
+#[derive(Deserialize)]
+pub struct BorrowQuery {
+    flow: String,
+    node: String,
+    pin: Option<String>,
+    expr_path: Option<String>,
+    #[serde(default)]
+    offset: usize,
+}
+
+pub async fn borrow_origin(State(state): State<Arc<AppState>>, Query(q): Query<BorrowQuery>) -> ApiResult {
+    if q.pin.is_some() == q.expr_path.is_some() {
+        return Err((StatusCode::BAD_REQUEST, "select one pin or expression".into()));
+    }
+    crate::builds::graphs(&state).await.map_err(internal)?;
+    let origins = state.project.lock().map_err(poisoned)?
+        .borrow_origin(&q.flow, &q.node, q.pin.as_deref(), q.expr_path.as_deref(), q.offset)
+        .ok_or_else(|| not_found("borrow origin"))?;
+    Ok(Json(origins).into_response())
+}
+
 pub async fn flow(State(state): State<Arc<AppState>>, Query(q): Query<FlowQuery>) -> ApiResult {
     // Enriching a flow needs the built graph (its locator): build it off the lock first.
     crate::builds::graphs(&state).await.map_err(internal)?;

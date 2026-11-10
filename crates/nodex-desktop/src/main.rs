@@ -9,6 +9,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod menu;
+mod project_files;
 mod updates;
 
 use std::path::{Path, PathBuf};
@@ -55,7 +56,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![save_export, check_for_updates])
+        .invoke_handler(tauri::generate_handler![save_export, check_for_updates, project_files::project_file_action])
         .setup(setup)
         .on_menu_event(menu::handle)
         .on_window_event(on_window_event)
@@ -95,6 +96,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .permission("dialog:default")
             .permission("opener:default")
             .permission("clipboard-manager:allow-write-text")
+            .permission("allow-project-file-action")
             .permission("allow-save-export")
             .permission("allow-check-for-updates"),
     )?;

@@ -4,6 +4,7 @@ import type { FlowGraph } from "../gen/FlowGraph";
 import type { OperationInfo } from "../gen/OperationInfo";
 import type { StructureGraph } from "../gen/StructureGraph";
 import type { Symbol } from "../gen/Symbol";
+import type { TypeInfo } from "../gen/TypeInfo";
 import { pointerBadge } from "./pointers";
 import { breadcrumbs, folderName } from "../paths";
 import { callGraph } from "./callGraph";
@@ -119,6 +120,23 @@ const opsFlow: FlowGraph = {
 };
 
 describe("flowToGraph detail levels", () => {
+  it("uses the type at a read for compact pins, expanded expressions and their wires", () => {
+    const int: TypeInfo = { origin: "Syntax", shape: { kind: "Scalar", name: "Number" } };
+    const string: TypeInfo = { origin: "Syntax", shape: { kind: "Scalar", name: "String" } };
+    const typed = structuredClone(opsFlow);
+    typed.nodes[1].outputs[1].type_info = int;
+    typed.nodes[2].inputs[1].type_info = string;
+    typed.nodes[2].expr!.children[1].type_info = string;
+    const compact = flowToGraph(typed, {}, true, { level: "statements", operations });
+    expect((compact.nodes.find((node) => node.id === "c")!.data as BlueprintData).node.inputs[1].type_info).toEqual(string);
+    expect(compact.edges.find((edge) => edge.sourceHandle === "var:x")?.data).toMatchObject({ shape: string.shape });
+    const expanded = flowToGraph(typed, {}, true, { level: "operations", operations });
+    expect((expanded.nodes.find((node) => node.id === "c")!.data as BlueprintData).argPins?.[0].typeInfo).toEqual(string);
+    expect(expanded.edges.find((edge) => edge.sourceHandle === "var:x")?.data).toMatchObject({ shape: string.shape });
+    const expressions = flowToGraph(typed, { [expansionKey(typed.symbol, "c")]: true }, true, { operations });
+    expect((expressions.nodes.find((node) => node.id === "c/e/0")!.data as ExprData).pins[0].typeInfo).toEqual(string);
+  });
+
   it("statements level draws one node per statement", () => {
     const g = flowToGraph(opsFlow, {}, true, { level: "statements", operations });
     expect(g.nodes.every((n) => n.type === "blueprint")).toBe(true);
@@ -162,6 +180,14 @@ describe("flowToGraph detail levels", () => {
     expect(all.edges.some((x) => x.source === "d/e/0.1" && x.sourceHandle === "p:i" && x.target === "d/e/0.1.0" && x.targetHandle === "c0")).toBe(true);
     // `a` inside the lambda is still the method's parameter.
     expect(all.edges.some((x) => x.source === "a" && x.target === "d/e/0.1.0" && x.targetHandle === "c1")).toBe(true);
+    const explained = flowToGraph(opsFlow, {}, true, { level: "everything", operations, explanations: true });
+    const body = explained.nodes.find((n) => n.id === "d/e/0.1.0")!.data as ExprData;
+    expect(body.pins.map((pin) => pin.name)).toEqual(["A", "B · a (outer scope)"]);
+    expect((explained.nodes.find((n) => n.id === lambda.id)!.data as ExprData).pins[0].name).toBe("Result for the caller");
+    const withoutWires = flowToGraph(opsFlow, {}, false, { level: "everything", operations, explanations: true });
+    const inline = withoutWires.nodes.find((n) => n.id === "d/e/0.1.0")!.data as ExprData;
+    expect(inline.pins.map((pin) => pin.value)).toEqual(["i", "a"]);
+    expect(withoutWires.edges.some((edge) => edge.kind === "data")).toBe(false);
   });
 
   it("a statement can still be closed in the compact levels", () => {
@@ -243,6 +269,8 @@ describe("structure graphs", () => {
     expect(index.primaryTypeInFile("src/Mixed.cs")).toBeUndefined();
     expect(index.primaryTypeInFile("src/Program.cs")).toBeUndefined();
     expect(index.primaryTypeInFile("src/External.cs")).toBeUndefined();
+    expect(index.fileBlueprint("src/Order.cs", true)?.id).toBe("App.Order");
+    expect(index.fileBlueprint("src/Order.cs", false)).toBeUndefined();
   });
 
   const index = new StructureIndex(structure);

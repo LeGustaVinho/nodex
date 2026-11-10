@@ -183,6 +183,9 @@ impl<'a, 't> Collector<'a, 't> {
             return;
         }
         self.symbols.push(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id,
             kind: SymbolKind::Namespace,
             name: name.to_owned(),
@@ -321,6 +324,9 @@ impl<'a, 't> Collector<'a, 't> {
 
         let signature = src.header(node, node.child_by_field_name("body").or_else(|| first_child_of_kind(node, "declaration_list")));
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: qualified.clone(),
             kind,
             name: display,
@@ -369,6 +375,9 @@ impl<'a, 't> Collector<'a, 't> {
             let params = parameters(src, node);
             let ctor_id = format!("{}..ctor({})", ctx.qualified, id_types(&params).join(", "));
             self.push_or_merge(Symbol {
+                syntax_sites: None,
+                type_info: None,
+                value_info: None,
                 id: ctor_id,
                 kind: SymbolKind::Constructor,
                 name: ctx.name.clone(),
@@ -486,6 +495,9 @@ impl<'a, 't> Collector<'a, 't> {
                 let returns = child.child_by_field_name("type").map(|t| src.norm(t));
                 let signature = src.header(child, Some(fn_body));
                 self.push_or_merge(Symbol {
+                    syntax_sites: None,
+                    type_info: None,
+                    value_info: None,
                     id: id.clone(),
                     kind: SymbolKind::Function,
                     name: name.clone(),
@@ -579,6 +591,9 @@ impl<'a, 't> Collector<'a, 't> {
         }
         let signature = src.header(lambda, Some(body));
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Function,
             name: name.clone(),
@@ -687,6 +702,9 @@ impl<'a, 't> Collector<'a, 't> {
         let signature = src.header(node, body);
         let type_text = returns.map(|r| src.norm(r));
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind,
             name: name.clone(),
@@ -750,6 +768,15 @@ impl<'a, 't> Collector<'a, 't> {
         if is_indexer {
             flavors.push("indexer".into());
         }
+        if let Some(accessors) = node.child_by_field_name("accessors").or_else(|| first_child_of_kind(node, "accessor_list")) {
+            for accessor in children_of_kind(accessors, "accessor_declaration") {
+                if let Some(keyword) = children(accessor).into_iter().map(|c| src.text(c))
+                    .find(|token| matches!(*token, "get" | "set" | "init"))
+                {
+                    flavors.push(format!("accessor:{keyword}"));
+                }
+            }
+        }
         let id = self.member_symbol(ty, node, SymbolKind::Property, &name, Some(node), ty_node, flavors.clone());
 
         let type_text = ty_node.map(|t| src.norm(t));
@@ -811,6 +838,9 @@ impl<'a, 't> Collector<'a, 't> {
             let mut acc_flavors = modifiers(src, acc);
             acc_flavors.push(role.into());
             self.symbols.push(Symbol {
+                syntax_sites: None,
+                type_info: None,
+                value_info: None,
                 id: acc_id.clone(),
                 kind: SymbolKind::Method,
                 name: format!("{name}.{keyword}"),
@@ -875,6 +905,9 @@ impl<'a, 't> Collector<'a, 't> {
             src.header(s, body).trim_end_matches(';').trim().to_owned()
         });
         self.push_or_merge(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind,
             name: name.to_owned(),
@@ -917,6 +950,9 @@ impl<'a, 't> Collector<'a, 't> {
         let parent = ns.map(|ns| format!("ns:{ns}"));
         if !self.symbols.iter().any(|s| s.id == qualified) {
             self.symbols.push(Symbol {
+                syntax_sites: None,
+                type_info: None,
+                value_info: None,
                 id: qualified.clone(),
                 kind: SymbolKind::Class,
                 name: "Program".into(),
@@ -934,6 +970,9 @@ impl<'a, 't> Collector<'a, 't> {
         }
         let id = format!("{qualified}.<Main>$(string[])");
         self.symbols.push(Symbol {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             id: id.clone(),
             kind: SymbolKind::Method,
             name: "Top-level statements".into(),

@@ -25,6 +25,155 @@ fn find_expr<'a>(e: &'a Expr, pred: &dyn Fn(&Expr) -> bool) -> Option<&'a Expr> 
     e.children.iter().find_map(|c| find_expr(c, pred))
 }
 
+#[test]
+#[ignore = "needs the TypeScript and Roslyn sidecars"]
+fn blueprint_language_details_are_confirmed_at_the_expression_site() {
+    use nodex_ir::Language;
+    use nodex_lang_typescript::TypeScriptFrontend;
+    let cases: [(Arc<dyn LanguageFrontend>, Language, &str, &[&str]); 2] = [
+        (Arc::new(CSharpFrontend), Language::Csharp, "Explain", &["boxing", "value-copy", "reference-copy"]),
+        (Arc::new(TypeScriptFrontend), Language::Typescript, "explain", &["narrowed:string", "narrowed:number", "runtime-freeze"]),
+    ];
+    let root = fixtures().join("rosetta/language-details");
+    let mut project = Project::open(&root, cases.iter().map(|(frontend, ..)| frontend.clone()).collect()).unwrap();
+    for (frontend, language, name, details) in cases {
+        let mut provider = frontend.semantic(&root).unwrap().unwrap();
+        let facts = provider.analyze().unwrap();
+        if language == Language::Csharp {
+            assert!(facts.expressions.iter().any(|fact| fact.kind == nodex_ir::semantic::ExpressionFactKind::Dynamic));
+        }
+        let id = project.flows().find(|flow| flow.language == language && flow.name == name).unwrap().symbol.clone();
+        project.apply_semantic(language, facts);
+        let flow = project.flow(&id).unwrap();
+        for detail in details {
+            assert!(flow.nodes.iter().filter_map(|n| n.expr.as_ref())
+                .any(|root| find_expr(root, &|e| e.flavors.iter().any(|f| f == detail)).is_some()), "{language:?}: {detail}");
+        }
+        if language == Language::Csharp {
+            use nodex_ir::{PassingMode, ValueKind};
+            for (name, expected) in [("copy", ValueKind::Value), ("shared", ValueKind::Reference), ("boxed", ValueKind::Reference)] {
+                let pin = flow.nodes.iter().flat_map(|node| &node.outputs)
+                    .find(|pin| pin.id == format!("var:{name}")).unwrap();
+                assert_eq!(pin.value_info.unwrap().kind, expected, "{pin:?}");
+            }
+            let call = flow.nodes.iter().find(|n| n.code.starts_with("Update(")).unwrap().expr.as_ref().unwrap();
+            let arg = find_expr(call, &|expr| expr.value_info.is_some_and(|info| info.passing == Some(PassingMode::Ref))).unwrap();
+            assert_eq!(arg.value_info.unwrap().kind, ValueKind::Value);
+            for (prefix, detail) in [("copy = ((source))", "value-copy"), ("var shared = (History)", "reference-copy")] {
+                let expression = flow.nodes.iter().find(|node| node.code.starts_with(prefix)).unwrap().expr.as_ref().unwrap();
+                assert!(find_expr(expression, &|expr| expr.flavors.iter().any(|flavor| flavor == detail)).is_some(), "{prefix}: {detail}");
+            }
+        }
+        if language == Language::Typescript {
+            use nodex_ir::ValueKind;
+            let representation = project.flow("languageDetails.representation").unwrap();
+            for name in ["value", "structural"] {
+                let pin = representation.nodes[0].outputs.iter().find(|p| p.label == name).unwrap();
+                assert_eq!(pin.value_info.unwrap().kind, ValueKind::Mixed, "{pin:?}");
+            }
+            let ret = representation.nodes.iter().find(|n| n.code == "return value;").unwrap();
+            assert_eq!(ret.expr.as_ref().unwrap().value_info.unwrap().kind, ValueKind::Value);
+            let input = ret.inputs.iter().find(|pin| pin.id == "use:value").unwrap();
+            assert_eq!(input.value_info.unwrap().kind, ValueKind::Value);
+            for (function, name) in [
+                ("narrowedCatch", "problem"),
+                ("narrowedIteration", "item"),
+                ("narrowedDestructure", "item"),
+            ] {
+                let flow = project.flow(&format!("languageDetails.{function}")).unwrap();
+                let ret = flow.nodes.iter().find(|n| n.code == format!("return {name};")).unwrap();
+                let pin = ret.inputs.iter().find(|pin| pin.id == format!("use:{name}")).unwrap();
+                assert_eq!(pin.value_info.unwrap().kind, ValueKind::Value, "{function}");
+            }
+            let custom = project.flow("languageDetails.customMap").unwrap();
+            let call = custom.nodes.iter().filter_map(|node| node.expr.as_ref())
+                .find_map(|root| find_expr(root, &|expr| expr.concept == Concept::Call &&
+                    expr.focus.as_ref().is_some_and(|focus| focus.primary == "map")))
+                .expect("the custom map call exists");
+            assert!(!call.flavors.iter().any(|flavor| flavor.starts_with("sequence:")));
+        }
+        project.set_semantic_status(language, SemanticState::Loading, "rebuilding");
+        let flow = project.flow(&id).unwrap();
+        assert!(flow.nodes.iter().filter_map(|n| n.expr.as_ref())
+            .all(|root| find_expr(root, &|e| e.flavors.iter().any(|f| details.contains(&f.as_str()))).is_none()));
+    }
+}
+
+#[test]
+#[ignore = "needs the C#, TypeScript and Rust semantic tools"]
+fn collection_pipeline_rosetta_has_confirmed_stages_in_all_three_languages() {
+    let root = fixtures().join("rosetta/collection-pipeline");
+    let cases: [(Arc<dyn LanguageFrontend>, nodex_ir::Language, &str, [&str; 3]); 3] = [
+        (Arc::new(CSharpFrontend), nodex_ir::Language::Csharp, "sequence:linq", ["Where", "Select", "Sum"]),
+        (Arc::new(nodex_lang_typescript::TypeScriptFrontend), nodex_ir::Language::Typescript, "sequence:array", ["filter", "map", "reduce"]),
+        (Arc::new(nodex_lang_rust::RustFrontend), nodex_ir::Language::Rust, "sequence:iterator", ["filter", "map", "sum"]),
+    ];
+    let mut project = Project::open(&root, cases.iter().map(|(frontend, ..)| frontend.clone()).collect()).unwrap();
+    for (frontend, language, marker, expected) in cases {
+        let mut provider = frontend.semantic(&root).unwrap().unwrap();
+        project.apply_semantic(language, provider.analyze().unwrap());
+        let id = project.flows().find(|flow| flow.language == language &&
+            flow.nodes.iter().any(|node| node.code.contains(expected[0]))).unwrap().symbol.clone();
+        let flow = project.flow(&id).unwrap();
+        let pipeline = flow.nodes.iter().filter_map(|node| node.expr.as_ref())
+            .find_map(|expr| find_expr(expr, &|e| e.concept == Concept::Pipeline)).unwrap();
+        let stages: Vec<_> = pipeline.children.iter()
+            .filter(|stage| stage.flavors.iter().any(|f| f == marker))
+            .map(|stage| stage.label.split('(').next().unwrap())
+            .collect();
+        assert_eq!(stages, expected, "{language:?}: {:?}", pipeline.children);
+    }
+}
+
+#[test]
+#[ignore = "needs Node.js and an installed nodex-ts sidecar"]
+fn typescript_resolves_async_array_mapping_and_promise_paths() {
+    use nodex_lang_typescript::TypeScriptFrontend;
+    let root = fixtures().join("rosetta/collection-pipeline");
+    let mut project = Project::open(&root, vec![Arc::new(TypeScriptFrontend)]).unwrap();
+    let mut provider = TypeScriptFrontend.semantic(&root).unwrap().unwrap();
+    project.apply_semantic(nodex_ir::Language::Typescript, provider.analyze().unwrap());
+
+    let flow = project.flow("asyncPipeline.loadAll").unwrap();
+    let find = |target: &str| flow.nodes.iter()
+        .filter_map(|node| node.expr.as_ref())
+        .find_map(|expr| find_expr(expr, &|e| e.target.as_deref().is_some_and(|t| t.starts_with(target))))
+        .unwrap_or_else(|| panic!("expected compiler target {target}"));
+    let map = find("Array.map(");
+    assert!(map.flavors.iter().any(|f| f == "sequence:array"), "{map:?}");
+    assert!(map.children.iter().any(|expr| expr.concept == Concept::Lambda &&
+        expr.flavors.iter().any(|f| f == "async")), "{map:?}");
+    let all = find("PromiseConstructor.all(");
+    assert!(all.flavors.iter().any(|f| f == "promise:all"), "{all:?}");
+    for target in ["Promise.then(", "Promise.catch("] {
+        let stage = find(target);
+        assert!(stage.flavors.iter().any(|f| f == "sequence:promise"), "{stage:?}");
+    }
+}
+
+#[test]
+#[ignore = "needs rust-analyzer"]
+fn rust_analyzer_distinguishes_mutable_iteration_from_consuming_values() {
+    use nodex_lang_rust::RustFrontend;
+    let root = fixtures().join("rosetta/collection-pipeline");
+    let mut project = Project::open(&root, vec![Arc::new(RustFrontend)]).unwrap();
+    let mut provider = RustFrontend.semantic(&root).unwrap().unwrap();
+    project.apply_semantic(nodex_ir::Language::Rust, provider.analyze().unwrap());
+
+    for (symbol, method, flavor) in [
+        ("crate::adjust_and_sum", "iter_mut", "rust-iter:borrow-mut"),
+        ("crate::borrowed_sum", "into_iter", "rust-iter:borrow"),
+        ("crate::adjust_and_sum", "into_iter", "rust-iter:by-value"),
+        ("crate::first_positive", "and_then", "option:and_then"),
+    ] {
+        let flow = project.flow(symbol).unwrap();
+        let call = flow.nodes.iter().filter_map(|node| node.expr.as_ref())
+            .find_map(|expr| find_expr(expr, &|e| e.label.split('(').next() == Some(method)))
+            .unwrap_or_else(|| panic!("expected {method} in {symbol}"));
+        assert!(call.flavors.iter().any(|f| f == flavor), "expected {flavor}: {call:?}");
+    }
+}
+
 const MAIN: &str = "Sample.Program.Main(string[])";
 const TOTAL: &str = "Sample.Services.OrderService.TotalForCustomer(string)";
 
@@ -44,6 +193,7 @@ fn synthetic_call_fact_links_flow_and_structure() {
         refs: vec![SemanticRef {
             site: ByteRange { file: "Program.cs".into(), start: call_expr.span.start_byte, end: call_expr.span.end_byte },
             kind: RefKind::Call,
+            emit_focus: None,
             target: SemanticTarget {
                 decl: Some(ByteRange { file: decl.file.clone(), start: decl.start_byte, end: decl.end_byte }),
                 display: "OrderService.TotalForCustomer(string)".into(),
@@ -53,11 +203,7 @@ fn synthetic_call_fact_links_flow_and_structure() {
                 external: false,
             },
         }],
-        locals: Vec::new(),
-        navigation: None,
-        implementation_contracts: Vec::new(),
-        configuration_files: Vec::new(),
-        messages: Vec::new(),
+        ..Default::default()
     };
     project.apply_semantic(nodex_ir::Language::Csharp, facts);
 
@@ -189,11 +335,14 @@ fn roslyn_sidecar_resolves_the_sample() {
     let repo = main.nodes.iter().find(|n| n.label.starts_with("repository =")).unwrap();
     let pin = repo.outputs.iter().find(|p| p.id == "var:repository").unwrap();
     assert_eq!(pin.ty.as_deref(), Some("InMemoryOrderRepository"));
+    assert_eq!(pin.value_info.unwrap().kind, nodex_ir::ValueKind::Reference);
+    assert_eq!(pin.value_info.unwrap().basis, nodex_ir::ValueBasis::TypeAnalysis);
     let linq = project.flow("Sample.Services.OrderService.TotalForCustomerLinq(string)").unwrap();
     let ret = linq.nodes.iter().find(|n| n.concept == Concept::Return).unwrap();
     let stage = find_expr(ret.expr.as_ref().unwrap(), &|e| e.label.starts_with("Where")).unwrap();
     assert!(stage.target.as_deref().is_some_and(|t| t.contains("Enumerable.Where")), "{:?}", stage.target);
     assert!(!stage.flavors.iter().any(|f| f == "custom-stage"));
+    assert!(stage.flavors.iter().any(|f| f == "sequence:linq"));
 
     // Edits are picked up through `update`.
     let file = project.root().join("Program.cs");
@@ -248,6 +397,8 @@ fn typescript_sidecar_resolves_the_sample() {
     let repo = main.nodes.iter().find(|n| n.label.starts_with("repository =")).unwrap();
     let pin = repo.outputs.iter().find(|p| p.id == "var:repository").unwrap();
     assert_eq!(pin.ty.as_deref(), Some("InMemoryOrderRepository"));
+    assert_eq!(pin.value_info.unwrap().kind, nodex_ir::ValueKind::Reference);
+    assert_eq!(pin.value_info.unwrap().basis, nodex_ir::ValueBasis::TypeAnalysis);
     let call = main.nodes.iter().find(|n| n.label.contains("totalForCustomer")).unwrap();
     assert!(call.calls.iter().any(|c| c.symbol.as_deref() == Some("src/services/orderService.OrderService.totalForCustomer")));
     let pipeline = project.flow("src/services/orderService.OrderService.totalForCustomerPipeline").unwrap();
@@ -255,6 +406,7 @@ fn typescript_sidecar_resolves_the_sample() {
     let stage = find_expr(ret.expr.as_ref().unwrap(), &|e| e.label.starts_with("filter")).unwrap();
     assert!(!stage.flavors.iter().any(|f| f == "custom-stage"), "{:?}", stage.flavors);
     assert!(stage.target.as_deref().is_some_and(|t| t.starts_with("Array.filter")), "{:?}", stage.target);
+    assert!(stage.flavors.iter().any(|f| f == "sequence:array"));
 }
 
 /// `rustup component add rust-analyzer`, then `cargo test -- --ignored`.
@@ -290,4 +442,98 @@ fn rust_analyzer_resolves_the_sample() {
     let push_expr = find_expr(push.expr.as_ref().unwrap(), &|e| e.label == "push").unwrap();
     assert!(push_expr.target.as_deref().is_some_and(|t| t.starts_with("alloc::vec::Vec::push")), "{:?}", push_expr.target);
     assert_eq!(push_expr.op.as_deref(), Some("list.add"));
+
+    let pipeline = project.flow("crate::services::order_service::OrderService::total_for_customer_pipeline").unwrap();
+    let filter = pipeline.nodes.iter().filter_map(|node| node.expr.as_ref())
+        .find_map(|expr| find_expr(expr, &|e| e.label.starts_with("filter("))).unwrap();
+    assert!(filter.flavors.iter().any(|f| f == "sequence:iterator"), "{filter:?}");
+    let iter = pipeline.nodes.iter().filter_map(|node| node.expr.as_ref())
+        .find_map(|expr| find_expr(expr, &|e| e.label.starts_with("iter("))).unwrap();
+    assert!(iter.flavors.iter().any(|f| f == "rust-iter:borrow"), "{iter:?}");
+
+    let descriptions = project.flow("crate::services::order_service::OrderService::describe_all").unwrap();
+    let option_map = descriptions.nodes.iter().filter_map(|node| node.expr.as_ref())
+        .find_map(|expr| find_expr(expr, &|e| e.label == "map")).unwrap();
+    assert!(option_map.flavors.iter().any(|f| f == "option:map"), "{option_map:?}");
+}
+
+
+#[test]
+#[ignore = "needs rust-analyzer"]
+fn rust_borrow_origins_follow_resolved_callers_and_returned_parameters() {
+    use nodex_core::borrow_origin::BorrowOriginKind;
+    use nodex_ir::Language;
+    use nodex_lang_rust::RustFrontend;
+
+    let mut project = Project::open(&fixtures().join("rosetta/language-details"), vec![Arc::new(RustFrontend)]).unwrap();
+    let mut provider = RustFrontend.semantic(project.root()).unwrap().unwrap();
+    project.apply_semantic(Language::Rust, provider.analyze().unwrap());
+    let symbol = |project: &mut Project, name: &str| project.structure().symbols.iter()
+        .find(|s| s.language == Language::Rust && s.name == name).unwrap().id.clone();
+
+    let borrowed = symbol(&mut project, "borrow_first");
+    let flow = project.flow(&borrowed).unwrap();
+    let origins = project.borrow_origin(&borrowed, &flow.nodes[0].id, Some("var:first"), None, 0).unwrap();
+    let mut owners: Vec<_> = origins.origins.iter().map(|entry| {
+        assert_eq!(entry.kind, BorrowOriginKind::Local, "{entry:?}");
+        assert!(entry.call.is_some());
+        entry.owner.as_ref().unwrap().label.as_str()
+    }).collect();
+    owners.sort_unstable();
+    assert_eq!(owners, ["owner", "separate"]);
+
+    let caller = symbol(&mut project, "from_first_caller");
+    let flow = project.flow(&caller).unwrap();
+    let result = flow.nodes.iter().find(|n| n.code.starts_with("let result")).unwrap();
+    let origins = project.borrow_origin(&caller, &result.id, Some("var:result"), None, 0).unwrap();
+    let owner = origins.origins[0].owner.as_ref().unwrap();
+    assert_eq!(owner.label, "owner");
+    assert_eq!(owner.pin.as_deref(), Some("var:owner"));
+    assert_eq!(owner.revision, flow.source_revision);
+
+    for (name, expected_kind, expected_owner, expected_borrowed) in [
+        ("smart_owner", BorrowOriginKind::Shared, "strong", "strong"),
+        ("borrow_field", BorrowOriginKind::Local, "owner", "owner.name"),
+        ("direct_receiver", BorrowOriginKind::Local, "owner", "owner.0"),
+        ("inferred_reference_receiver", BorrowOriginKind::Local, "owner", "owner.0"),
+        ("reference_receiver", BorrowOriginKind::Local, "actual_owner", "actual_owner.0"),
+        ("awaited_owner", BorrowOriginKind::Local, "owner", "owner"),
+        ("grouped_owner", BorrowOriginKind::Local, "owner", "owner"),
+    ] {
+        let function = symbol(&mut project, name);
+        let flow = project.flow(&function).unwrap();
+        let node = flow.nodes.iter().find(|n| n.code.starts_with("let borrowed")).unwrap();
+        let origins = project.borrow_origin(&function, &node.id, Some("var:borrowed"), None, 0).unwrap();
+        assert_eq!(origins.origins[0].kind, expected_kind, "{:?}", origins.origins);
+        assert_eq!(origins.origins[0].owner.as_ref().unwrap().label, expected_owner);
+        assert_eq!(origins.origins[0].borrowed.as_deref(), Some(expected_borrowed));
+    }
+    let wrapper = symbol(&mut project, "implicit_deref_receiver");
+    let flow = project.flow(&wrapper).unwrap();
+    let node = flow.nodes.iter().find(|n| n.code.starts_with("let borrowed")).unwrap();
+    let origins = project.borrow_origin(&wrapper, &node.id, Some("var:borrowed"), None, 0).unwrap();
+    assert!(origins.origins.iter().all(|origin| origin.kind == BorrowOriginKind::Unknown));
+    let mixed = symbol(&mut project, "mixed_receiver");
+    let flow = project.flow(&mixed).unwrap();
+    let node = flow.nodes.iter().find(|n| n.code.starts_with("let borrowed")).unwrap();
+    let origins = project.borrow_origin(&mixed, &node.id, Some("var:borrowed"), None, 0).unwrap();
+    assert!(origins.origins.iter().any(|origin| origin.kind == BorrowOriginKind::Unknown));
+    assert!(origins.origins.iter().any(|origin| origin.borrowed.as_deref() == Some("owner")));
+
+    let paged = symbol(&mut project, "paged_borrow");
+    let flow = project.flow(&paged).unwrap();
+    let mut offset = 0;
+    let mut calls = std::collections::BTreeMap::new();
+    loop {
+        let page = project.borrow_origin(&paged, &flow.nodes[0].id, Some("var:value"), None, offset).unwrap();
+        for origin in page.origins {
+            assert_eq!(origin.kind, BorrowOriginKind::Local, "{origin:?}");
+            *calls.entry(origin.call.unwrap().span.start_byte).or_insert(0) += 1;
+        }
+        let Some(next) = page.next_offset else { break };
+        assert!(next > offset);
+        offset = next;
+    }
+    assert_eq!(calls.len(), 25);
+    assert!(calls.values().all(|&count| count == 20), "{calls:?}");
 }

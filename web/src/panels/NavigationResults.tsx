@@ -31,7 +31,7 @@ export function NavigationResults() {
   useEffect(() => {
     if (!request || request.kind === "usages" || query.isFetching || query.isError || !query.data ||
         query.data.coverage === "loading" || query.data.locations.length !== 1 ||
-        useNavigation.getState().request !== request) return;
+        useNavigation.getState().request !== request || useUi.getState().codeIntent !== request.codeIntent) return;
     reveal(query.data.locations[0], queryClient);
     if (query.data.coverage === "partial") toast.info("Opened the only result in the available project links.");
     close();

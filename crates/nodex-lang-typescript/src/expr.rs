@@ -1,6 +1,6 @@
 //! Expressions → [`Expr`] trees, natural-language text and local-variable reads.
 
-use nodex_ir::{Concept, Expr};
+use nodex_ir::{Concept, Expr, Focus};
 use nodex_lang_api::kit::truncate;
 use nodex_lang_api::ops::{self, Equality};
 use tree_sitter::Node;
@@ -58,6 +58,59 @@ pub fn unparen(mut node: Node) -> Node {
         }
     }
     node
+}
+
+pub(crate) fn reference_focus(src: Src, node: Node) -> Option<Focus> {
+    let node = unparen(node);
+    if let Some(member) = node.child_by_field_name("property").filter(|_| node.kind() == "member_expression") {
+        return src.member_focus(node, member);
+    }
+    src.focus(node)
+}
+
+fn call_focus(src: Src, call: Node) -> Option<Focus> {
+    let callee = unparen(call.child_by_field_name("function")?);
+    if is_function_value(callee.kind()) {
+        return None;
+    }
+    reference_focus(src, callee)
+}
+
+fn type_focus(src: Src, operand: Node, end: usize) -> Option<Focus> {
+    let ty = if operand.kind() == "generic_type" { operand.child_by_field_name("name")? } else { operand };
+    let name = match ty.kind() {
+        "nested_type_identifier" => ty.child_by_field_name("name"),
+        "member_expression" => ty.child_by_field_name("property"),
+        _ => None,
+    };
+    src.split_focus(operand.start_byte(), name.unwrap_or(operand).start_byte(), end)
+}
+
+fn expression_focus(src: Src, node: Node, concept: Concept) -> Option<Focus> {
+    let operand = match concept {
+        Concept::Var | Concept::GetMember | Concept::Index | Concept::SafeAccess => return reference_focus(src, node),
+        Concept::Call => return call_focus(src, node),
+        Concept::Construct => {
+            let ty = node.child_by_field_name("constructor").or_else(|| node.child_by_field_name("name"))?;
+            let end = node.child_by_field_name("type_arguments").map_or(ty.end_byte(), |args| args.end_byte());
+            return type_focus(src, ty, end);
+        }
+        Concept::Assign => return reference_focus(src, node.child_by_field_name("left")?),
+        Concept::UnaryOp if node.kind() == "update_expression" =>
+            return reference_focus(src, node.child_by_field_name("argument")?),
+        Concept::Choose => node.child_by_field_name("condition"),
+        Concept::Convert => {
+            let ty = if node.kind() == "type_assertion" {
+                named_children(node).first()?.named_child(0)
+            } else {
+                named_children(node).get(1).copied().or_else(|| children(node).into_iter().find(|c| c.kind() == "const"))
+            }?;
+            return type_focus(src, ty, ty.end_byte());
+        }
+        Concept::Await | Concept::Yield => named_children(node).into_iter().next(),
+        _ => None,
+    };
+    src.focus(unparen(operand?))
 }
 
 /// Lowers expressions and remembers which types were instantiated.
@@ -167,8 +220,12 @@ impl<'a> ExprLowering<'a> {
         let node = unparen(node);
         let span = src.span(node);
         let mk = |concept: Concept, label: String, children: Vec<Expr>| Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept,
             label,
+            focus: expression_focus(src, node, concept),
             span: span.clone(),
             flavors: Vec::new(),
             children,
@@ -177,6 +234,7 @@ impl<'a> ExprLowering<'a> {
             op: None,
             ty: None,
             params: Vec::new(),
+            param_pins: None,
         };
         let text = || truncate(&src.norm(node), 40);
         let with = |mut e: Expr, flavor: &str| {
@@ -191,8 +249,12 @@ impl<'a> ExprLowering<'a> {
                     for (name, call) in &p.stages {
                         let args = self.arguments(*call);
                         let mut stage = Expr {
+                            syntax_sites: None,
+                            type_info: None,
+                            value_info: None,
                             concept: Concept::Call,
                             label: self.stage_label(name, *call),
+                            focus: call_focus(src, *call),
                             span: src.span(*call),
                             flavors: vec!["stage".into()],
                             children: args,
@@ -201,6 +263,7 @@ impl<'a> ExprLowering<'a> {
                             op: None,
                             ty: None,
                             params: Vec::new(),
+                            param_pins: None,
                         };
                         let known = match p.kind {
                             PipelineKind::Array => is_array_stage(name, *call),
@@ -373,7 +436,14 @@ impl<'a> ExprLowering<'a> {
             }
             "spread_element" => {
                 let kids = named_children(node).into_iter().map(|c| self.lower(c)).collect();
-                with(mk(Concept::Compose, "all items of".into(), kids), "spread")
+                let context = match node.parent().map(|p| p.kind()) {
+                    Some("arguments") => "spread-arguments",
+                    Some("array") => "spread-items",
+                    Some("object") => "spread-properties",
+                    _ => "spread",
+                };
+                let e = with(mk(Concept::Compose, "all items of".into(), kids), "spread");
+                if context == "spread" { e } else { with(e, context) }
             }
             "as_expression" | "satisfies_expression" | "type_assertion" => {
                 let parts = named_children(node);
@@ -388,9 +458,9 @@ impl<'a> ExprLowering<'a> {
                 if node.kind() == "satisfies_expression" {
                     with(mk(Concept::Convert, truncate(&format!("checked as {ty}"), 40), kids), "satisfies")
                 } else if ty == "const" {
-                    with(mk(Concept::Convert, "as constant".into(), kids), "type-only")
+                    with(mk(Concept::Convert, "as constant".into(), kids), "as-const")
                 } else {
-                    with(mk(Concept::Convert, truncate(&format!("as {ty}"), 40), kids), "type-only")
+                    with(mk(Concept::Convert, truncate(&format!("as {ty}"), 40), kids), "type-assertion")
                 }
             }
             "non_null_expression" => {
@@ -434,8 +504,12 @@ impl<'a> ExprLowering<'a> {
         let left = node.child_by_field_name("left");
         let right = node.child_by_field_name("right");
         let mk = |concept: Concept, label: String, children: Vec<Expr>, flavors: Vec<String>| Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept,
             label,
+            focus: None,
             span: span.clone(),
             flavors,
             children,
@@ -444,6 +518,7 @@ impl<'a> ExprLowering<'a> {
             op: None,
             ty: None,
             params: Vec::new(),
+            param_pins: None,
         };
         // `typeof x === "string"`: a type check that narrows `x`.
         if matches!(op.as_str(), "===" | "==" | "!==" | "!=")
@@ -457,7 +532,9 @@ impl<'a> ExprLowering<'a> {
             {
                 let negated = op.starts_with('!');
                 let label = format!("{}is {}", if negated { "not " } else { "" }, string_value(src, lit));
-                return mk(Concept::TypeCheck, label, vec![self.lower(arg)], vec!["typeof".into()]);
+                let mut expr = mk(Concept::TypeCheck, label, vec![self.lower(arg)], vec!["typeof".into()]);
+                expr.focus = src.focus(lit);
+                return expr;
             }
         }
         let kids: Vec<Expr> = [left, right].into_iter().flatten().map(|c| self.lower(c)).collect();
@@ -466,16 +543,22 @@ impl<'a> ExprLowering<'a> {
             "instanceof" => {
                 let ty = right.map(|r| src.norm(r)).unwrap_or_default();
                 let kids = left.map(|l| vec![self.lower(l)]).unwrap_or_default();
-                mk(Concept::TypeCheck, truncate(&format!("is {ty}"), 40), kids, vec!["instanceof".into()])
+                let mut expr = mk(Concept::TypeCheck, truncate(&format!("is {ty}"), 40), kids, vec!["instanceof".into()]);
+                expr.focus = right.and_then(|ty| type_focus(src, ty, ty.end_byte()));
+                expr
             }
-            "in" => mk(Concept::TypeCheck, "has key".into(), kids, vec!["in".into()]),
+            "in" => {
+                let mut expr = mk(Concept::TypeCheck, "has key".into(), kids, vec!["in".into()]);
+                expr.focus = left.and_then(|key| src.focus(key));
+                expr
+            }
             "==" | "!=" => ops::operator(
                 mk(Concept::BinaryOp, if op == "==" { "==".into() } else { "≠".into() }, kids, vec!["loose-equality".into()]),
                 &op,
                 Equality::Loose,
             ),
             "&&" | "||" => ops::operator(
-                mk(Concept::BinaryOp, if op == "&&" { "and".into() } else { "or".into() }, kids, Vec::new()),
+                mk(Concept::BinaryOp, if op == "&&" { "and".into() } else { "or".into() }, kids, if op == "||" { vec!["falsy-fallback".into()] } else { Vec::new() }),
                 &op,
                 Equality::Loose,
             ),
@@ -495,8 +578,12 @@ impl<'a> ExprLowering<'a> {
             _ => Vec::new(),
         };
         let mut e = Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept: Concept::Lambda,
             label: truncate(&format!("({}) => …", params.trim_matches(['(', ')'])), 40),
+            focus: None,
             span: src.span(node),
             flavors: Vec::new(),
             children: kids,
@@ -505,6 +592,7 @@ impl<'a> ExprLowering<'a> {
             op: None,
             ty: None,
             params: ops::param_names(&params),
+            param_pins: None,
         };
         if children(node).iter().any(|c| !c.is_named() && src.text(*c) == "async") {
             e.flavors.push("async".into());
@@ -563,8 +651,12 @@ impl<'a> ExprLowering<'a> {
                                 kids.push(e);
                             }
                             None => kids.push(Expr {
+                                syntax_sites: None,
+                                type_info: None,
+                                value_info: None,
                                 concept: Concept::Literal,
                                 label: format!("{key}: true"),
+                                focus: None,
                                 span: src.span(attr),
                                 flavors: Vec::new(),
                                 children: Vec::new(),
@@ -573,6 +665,7 @@ impl<'a> ExprLowering<'a> {
                                 op: None,
                                 ty: None,
                                 params: Vec::new(),
+                                param_pins: None,
                             }),
                         }
                     }
@@ -601,8 +694,12 @@ impl<'a> ExprLowering<'a> {
             self.instantiated.push(n.clone());
         }
         Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept: Concept::Construct,
             label: truncate(&label, 40),
+            focus: open.and_then(|o| o.child_by_field_name("name")).and_then(|name| reference_focus(src, name)),
             span: src.span(node),
             flavors: vec!["jsx".into()],
             children: kids,
@@ -611,6 +708,7 @@ impl<'a> ExprLowering<'a> {
             op: None,
             ty: None,
             params: Vec::new(),
+            param_pins: None,
         }
     }
 

@@ -8,6 +8,7 @@
 import ts from "typescript";
 import { type ByteOffset, byteOffsets } from "./positions.js";
 import type { ProjectHost } from "./project.js";
+import { blueprintShape, writtenType } from "./blueprint-types.js";
 
 export interface ByteRange {
   file: string;
@@ -29,6 +30,25 @@ export interface SemanticRef {
   site: ByteRange;
   kind: "call" | "construct" | "base" | "compatible";
   target: SemanticTarget;
+  emit_focus?: { receiver: boolean; text: string };
+}
+
+type ValueKind = "Value" | "Reference" | "Mixed" | "Unknown";
+interface ValueFact {
+  site: ByteRange;
+  target: "binding" | "expression" | "member";
+  info: { kind: ValueKind; basis: "TypeAnalysis"; qualifier?: "Object"; passing?: "ByValue" };
+}
+
+interface TypeFact {
+  site: ByteRange;
+  target: ValueFact["target"];
+  info: { shape: ReturnType<typeof blueprintShape>; origin: "Declared" | "Compiler"; native: string };
+}
+
+interface BindingUseFact {
+  site: ByteRange;
+  declaration: ByteRange;
 }
 
 export interface LocalTypeFact {
@@ -37,10 +57,20 @@ export interface LocalTypeFact {
   ty: string;
 }
 
+interface ExpressionFact {
+  site: ByteRange;
+  kind: "narrowed" | "freeze";
+  ty?: string;
+}
+
 export interface SemanticFacts {
   source: string;
   refs: SemanticRef[];
   locals: LocalTypeFact[];
+  expressions: ExpressionFact[];
+  values: ValueFact[];
+  types: TypeFact[];
+  binding_uses: BindingUseFact[];
   navigation: NavigationFact[];
   implementation_contracts: ByteRange[];
   configuration_files: string[];
@@ -56,7 +86,7 @@ interface NavigationFact {
 
 /** Containers whose methods form pipelines (`xs.filter(…).map(…)`, `p.then(…)`). */
 const PIPELINE_CONTAINERS = new Set([
-  "Array", "ReadonlyArray", "Iterator", "IteratorObject", "AsyncIterator", "Promise", "PromiseLike",
+  "Array", "ReadonlyArray", "Iterator", "IteratorObject", "AsyncIterator", "Promise", "PromiseLike", "PromiseConstructor",
   "Map", "ReadonlyMap", "Set", "ReadonlySet", "String",
 ]);
 
@@ -67,6 +97,10 @@ export interface FileFacts {
   sf: ts.SourceFile;
   refs: SemanticRef[];
   locals: LocalTypeFact[];
+  expressions: ExpressionFact[];
+  values: ValueFact[];
+  types: TypeFact[];
+  bindingUses: BindingUseFact[];
   navigation: NavigationFact[];
   implementationContracts: ByteRange[];
   unresolved: number;
@@ -117,12 +151,37 @@ export function collectFacts(project: ProjectHost, cache: FactsCache = new Map()
     if (!changed && cache.has(key)) continue;
     const refs: SemanticRef[] = [];
     const locals: LocalTypeFact[] = [];
+    const expressions: ExpressionFact[] = [];
+    const values: ValueFact[] = [];
+    const types: TypeFact[] = [];
+    const bindingUses: BindingUseFact[] = [];
     const navigation: NavigationFact[] = [];
     const implementationContracts: ByteRange[] = [];
     const callNames = new Set<ts.Node>();
     const sharedFile = sharedPaths.has(sf.fileName);
     let unresolved = 0;
     const checker = program.getTypeChecker();
+    const valueShapes = new Map<ts.Type, ValueKind>();
+    const blueprintTypes = new Map<ts.Type, Pick<TypeFact["info"], "shape" | "native">>();
+    const addValue = (node: ts.Node, type: ts.Type, target: ValueFact["target"], byValue = false) => {
+      const site = range(node, sf);
+      if (!site) return;
+      let kind = valueShapes.get(type);
+      if (!kind) {
+        kind = classifyValue(type, checker);
+        valueShapes.set(type, kind);
+      }
+      values.push({ site, target, info: {
+        kind, basis: "TypeAnalysis", qualifier: kind === "Reference" ? "Object" : undefined,
+        passing: byValue ? "ByValue" : undefined,
+      } });
+      let info = blueprintTypes.get(type);
+      if (!info) {
+        info = { shape: blueprintShape(type, checker, program), native: checker.typeToString(type).slice(0, 512) };
+        blueprintTypes.set(type, info);
+      }
+      types.push({ site, target, info: { ...info, origin: target !== "expression" && writtenType(node.parent) ? "Declared" : "Compiler" } });
+    };
     const target = (decl: ts.Declaration | undefined, fallbackName: string): SemanticTarget | null => {
       if (!decl) return null;
       return describe(decl, fallbackName, checker, program, project, offsetsOf);
@@ -152,6 +211,27 @@ export function collectFacts(project: ProjectHost, cache: FactsCache = new Map()
     };
 
     const visit = (node: ts.Node): void => {
+      if (ts.isExpression(node)) {
+        const byValue = (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
+          node.parent.arguments?.some((argument) => argument === node);
+        addValue(node, checker.getTypeAtLocation(node), "expression", byValue);
+      }
+      if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node) ||
+          ts.isPropertyDeclaration(node) || ts.isPropertySignature(node)) {
+        if (ts.isIdentifier(node.name) || ts.isPrivateIdentifier(node.name)) {
+          const member = ts.isPropertyDeclaration(node) || ts.isPropertySignature(node) ||
+            (ts.isVariableDeclaration(node) && ts.isVariableDeclarationList(node.parent) &&
+              ts.isVariableStatement(node.parent.parent) && ts.isSourceFile(node.parent.parent.parent));
+          addValue(node.name, checker.getTypeAtLocation(node.name), member ? "member" : "binding", ts.isParameter(node));
+          if (member && ts.isVariableDeclaration(node)) {
+            addValue(node.name, checker.getTypeAtLocation(node.name), "binding");
+          }
+        }
+      }
+      if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)) && node.name) {
+        const signature = checker.getSignatureFromDeclaration(node);
+        if (signature) addValue(node.name, checker.getReturnTypeOfSignature(signature), "member");
+      }
       if (ts.isCallExpression(node) && node.expression.kind !== ts.SyntaxKind.ImportKeyword && !isRequire(node)) {
         const site = range(node, sf);
         const display = node.expression.getText(sf);
@@ -166,8 +246,12 @@ export function collectFacts(project: ProjectHost, cache: FactsCache = new Map()
           const decl = callDeclaration(node, checker);
           const t = target(decl, display);
           if (site) {
-            refs.push({ site, kind: "call", target: t ?? unresolvedCall(display) });
+            refs.push({ site, kind: "call", target: t ?? unresolvedCall(display), emit_focus: emitFocus(node, decl) });
             if (!t) unresolved++;
+            if (!sharedFile && decl && program.isSourceFileDefaultLibrary(decl.getSourceFile()) &&
+                t?.container === "ObjectConstructor" && t.display.startsWith("ObjectConstructor.freeze(")) {
+              expressions.push({ site, kind: "freeze" });
+            }
           }
           if (decl && !ts.isCallSignatureDeclaration(decl)) {
             if (isNavigationDeclaration(decl) || navigationVariableName(decl)) callNames.add(name);
@@ -271,22 +355,45 @@ export function collectFacts(project: ProjectHost, cache: FactsCache = new Map()
             ? checker.getPropertyOfType(checker.getTypeAtLocation(parent.parent), node.text) : reference;
           const symbol = resolveAlias(property, checker);
           usagesOfSymbol(node, symbol);
+          const declaration = symbol?.valueDeclaration;
+          if (ts.isIdentifier(node) && symbol && declaration &&
+              (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration) || ts.isBindingElement(declaration))) {
+            const site = range(node, sf);
+            const definition = ts.isIdentifier(declaration.name) ? range(declaration.name) : null;
+            if (site && definition) bindingUses.push({ site, declaration: definition });
+            const declared = checker.getTypeOfSymbol(symbol);
+            if (!sharedFile && declared.isUnion()) {
+              const narrowed = checker.getTypeAtLocation(node);
+              if (narrowed !== declared && !(narrowed.flags & (ts.TypeFlags.Any | ts.TypeFlags.Never | ts.TypeFlags.Unknown))
+                  && checker.isTypeAssignableTo(narrowed, declared) && !checker.isTypeAssignableTo(declared, narrowed) && site) {
+                expressions.push({ site, kind: "narrowed", ty: checker.typeToString(narrowed) });
+              }
+            }
+          }
         }
       }
       ts.forEachChild(node, visit);
     };
     visit(sf);
-    cache.set(key, { sf, refs, locals, navigation, implementationContracts, unresolved });
+    cache.set(key, { sf, refs, locals, expressions, values, types, bindingUses, navigation, implementationContracts, unresolved });
   }
 
   const refs: SemanticRef[] = [];
   const locals: LocalTypeFact[] = [];
+  const expressions: ExpressionFact[] = [];
+  const values: ValueFact[] = [];
+  const types: TypeFact[] = [];
+  const bindingUses: BindingUseFact[] = [];
   const navigation: NavigationFact[] = [];
   const implementationContracts = new Map<string, ByteRange>();
   let unresolved = 0;
   for (const f of cache.values()) {
     refs.push(...f.refs);
     locals.push(...f.locals);
+    expressions.push(...f.expressions);
+    values.push(...f.values);
+    for (const fact of f.types) types.push(fact);
+    for (const fact of f.bindingUses) bindingUses.push(fact);
     for (const fact of f.navigation) navigation.push(fact);
     for (const site of f.implementationContracts) implementationContracts.set(JSON.stringify(site), site);
     unresolved += f.unresolved;
@@ -295,11 +402,34 @@ export function collectFacts(project: ProjectHost, cache: FactsCache = new Map()
   if (unresolved > 0) messages.push(`${unresolved} calls could not be resolved`);
   for (const fact of compatibility(project, offsetsOf, messages, navigation)) refs.push(fact);
   return {
-    source: project.describe(), refs: shared ? mergeReferences(refs) : refs, locals,
+    source: project.describe(), refs: shared ? mergeReferences(refs) : refs, locals, expressions, values, types,
+    binding_uses: bindingUses,
     navigation: shared ? [...new Map(navigation.map((fact) => [JSON.stringify(fact), fact])).values()] : navigation,
     implementation_contracts: [...implementationContracts.values()],
     configuration_files: [...project.configurationFiles].sort(), messages,
   };
+}
+
+function classifyValue(type: ts.Type, checker: ts.TypeChecker): ValueKind {
+  const primitive = ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.BigIntLike | ts.TypeFlags.ESSymbolLike | ts.TypeFlags.Null | ts.TypeFlags.Undefined;
+  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never | ts.TypeFlags.Void)) return "Unknown";
+  if (type.flags & primitive) return "Value";
+  if (type.isUnion()) {
+    const kinds = type.types.map((part) => classifyValue(part, checker));
+    if (kinds.includes("Unknown")) return "Unknown";
+    if (kinds.includes("Mixed") || new Set(kinds).size > 1) return "Mixed";
+    return kinds[0] ?? "Unknown";
+  }
+  if (type.isIntersection() && type.types.some((part) => part.flags & primitive)) return "Value";
+  if (type.flags & ts.TypeFlags.TypeParameter) {
+    const bound = checker.getBaseConstraintOfType(type);
+    return bound && bound !== type && !(bound.flags & ts.TypeFlags.TypeParameter) ? classifyValue(bound, checker) : "Unknown";
+  }
+  if (!checker.isTypeAssignableTo(type, checker.getNonPrimitiveType())) return "Unknown";
+  // Structural object types can admit primitive values even when assignable to object.
+  const primitives = [checker.getStringType(), checker.getNumberType(), checker.getBooleanType(), checker.getBigIntType(), checker.getESSymbolType()];
+  return primitives.some((value) => checker.isTypeAssignableTo(value, type)) ? "Mixed" : "Reference";
 }
 
 function mergeReferences(refs: SemanticRef[]): SemanticRef[] {
@@ -594,6 +724,29 @@ function callDeclaration(node: ts.CallExpression, checker: ts.TypeChecker): ts.D
   if (decl && !ts.isJSDocSignature(decl)) return decl as ts.Declaration;
   const callee = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression;
   return resolveAlias(checker.getSymbolAtLocation(callee), checker)?.declarations?.[0];
+}
+
+/** Angular outputs emit a value through the receiver. Node emitters take the event as an argument. */
+function emitFocus(call: ts.CallExpression, decl: ts.Declaration | undefined): SemanticRef["emit_focus"] {
+  const callee = call.expression;
+  if (!decl || !ts.isPropertyAccessExpression(callee) || callee.name.text !== "emit") return;
+  const owner = containerOf(decl);
+  if (owner !== "EventEmitter" && owner !== "OutputEmitterRef") return;
+  const file = decl.getSourceFile().fileName.replace(/\\/g, "/");
+  let module: string | undefined;
+  for (let cur: ts.Node | undefined = decl.parent; cur; cur = cur.parent) {
+    if (ts.isModuleDeclaration(cur) && ts.isStringLiteral(cur.name)) {
+      module = cur.name.text;
+      break;
+    }
+  }
+  if (module === "@angular/core" || file.includes("/node_modules/@angular/core/")) {
+    return { receiver: true, text: callee.expression.getText() };
+  }
+  if (owner === "EventEmitter" && (module === "events" || module === "node:events" || file.includes("/node_modules/@types/node/"))) {
+    const event = call.arguments[0];
+    if (event) return { receiver: false, text: event.getText() };
+  }
 }
 
 function constructDeclaration(node: ts.NewExpression, checker: ts.TypeChecker): ts.Declaration | undefined {

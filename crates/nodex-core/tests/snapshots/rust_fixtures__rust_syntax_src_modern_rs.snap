@@ -23,7 +23,7 @@ Var — typed = Vec::<u32>::with_capacity(4)
 Var — max = 1u32.max(2)
 Var — nested = Some(Some(3)).flatten()
 Var — joined = [r#match, zero, kind.len(), label.len()… → iter() → sum()
-Scope — run this block without the compiler's safety checks
+Scope — allow specific unsafe operations in this block
   body:
     Return — return *raw + joined + nested.unwrap_or(0) + c_text.count_bytes() + bytes.len() + raw_bytes.len…
 == crate::modern::async_closures

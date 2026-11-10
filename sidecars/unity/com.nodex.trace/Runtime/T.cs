@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -36,6 +37,8 @@ namespace Nodex.Trace
             Arg = 6,
             Throw = 7,
             Dropped = 9,
+            LocalType = 11,
+            ArgType = 12,
         }
 
         private const int MaxPendingBytes = 16 * 1024 * 1024;
@@ -146,12 +149,104 @@ namespace Nodex.Trace
 
         public static void Local(int method, int slot, object? value)
         {
-            if (s_on) Record(Kind.Local, method, slot, Format(value));
+            if (!s_on) return;
+            Record(Kind.Local, method, slot, Format(value));
+            Observe(Kind.LocalType, method, slot, value);
         }
 
         public static void Arg(int method, int index, object? value)
         {
-            if (s_on) Record(Kind.Arg, method, index, Format(value));
+            if (!s_on) return;
+            Record(Kind.Arg, method, index, Format(value));
+            Observe(Kind.ArgType, method, index, value);
+        }
+
+        private static void Observe(Kind kind, int method, int slot, object? value)
+        {
+            try
+            {
+                if (value is null)
+                {
+                    Record(kind, method, slot, "Null\nnull");
+                    return;
+                }
+                var type = value.GetType();
+                var portable = DescribeType(type, 0);
+                var native = type.ToString();
+                Record(kind, method, slot, (portable.Length <= 256 ? portable : "?") + "\n"
+                    + (native.Length <= 256 ? native : native.Substring(0, 255) + "…"));
+            }
+            catch (Exception)
+            {
+                // Metadata is optional; leave the value event available.
+            }
+        }
+
+        private static string DescribeType(Type type, int depth)
+        {
+            if (depth >= 6) return "?";
+            if (type == typeof(bool)) return "Bool";
+            if (type == typeof(string)) return "String";
+            if (type == typeof(char)) return "Char";
+            if (type == typeof(sbyte)) return "Int8";
+            if (type == typeof(byte)) return "UInt8";
+            if (type == typeof(short)) return "Int16";
+            if (type == typeof(ushort)) return "UInt16";
+            if (type == typeof(int)) return "Int32";
+            if (type == typeof(uint)) return "UInt32";
+            if (type == typeof(long)) return "Int64";
+            if (type == typeof(ulong)) return "UInt64";
+            if (type == typeof(IntPtr)) return "IntSize";
+            if (type == typeof(UIntPtr)) return "UIntSize";
+            if (type == typeof(float)) return "Float32";
+            if (type == typeof(double)) return "Float64";
+            if (type == typeof(decimal)) return "Decimal";
+            if (type == typeof(object)) return "Object";
+            if (type.Assembly == typeof(int).Assembly && type.Namespace == "System")
+            {
+                if (type.Name == "Half") return "Float16";
+                if (type.Name == "Int128" || type.Name == "UInt128") return type.Name;
+            }
+            if (type.IsArray)
+            {
+                return DescribeType(type.GetElementType()!, depth + 1) + "[" + new string(',', type.GetArrayRank() - 1) + "]";
+            }
+            var definition = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
+            var name = definition.Name.Split('`')[0];
+            var family = definition == typeof(List<>) || definition == typeof(LinkedList<>) ? "List"
+                : definition == typeof(Dictionary<,>) || definition == typeof(SortedDictionary<,>) ? "Dictionary"
+                : definition == typeof(HashSet<>) || definition == typeof(SortedSet<>) ? "Set"
+                : definition == typeof(Queue<>) ? "Queue"
+                : definition == typeof(Stack<>) ? "Stack"
+                : definition == typeof(LinkedList<>).Assembly.GetType("System.Collections.Generic.PriorityQueue`2") ? "PriorityQueue"
+                : "type:" + name;
+            if (!type.IsGenericType) return family;
+            var arguments = type.GetGenericArguments();
+            if (arguments.Length > 16) return family + "<?>";
+            if (IsValueTuple(definition))
+            {
+                var tupleItems = new List<string>();
+                AppendTupleItems(arguments, depth + 1, tupleItems);
+                return "(" + string.Join(", ", tupleItems) + (tupleItems.Count == 1 ? "," : "") + ")";
+            }
+            var items = Array.ConvertAll(arguments, argument => DescribeType(argument, depth + 1));
+            return family + "<" + string.Join(", ", items) + ">";
+        }
+
+        private static bool IsValueTuple(Type definition) =>
+            definition.Namespace == "System" && definition.Assembly == typeof(ValueTuple).Assembly
+                && definition.Name.StartsWith("ValueTuple`", StringComparison.Ordinal);
+
+        private static void AppendTupleItems(Type[] arguments, int depth, List<string> items)
+        {
+            // CLR stores any elements after the first seven in Rest, at the same tuple depth.
+            while (arguments.Length == 8 && arguments[7].IsGenericType
+                && IsValueTuple(arguments[7].GetGenericTypeDefinition()))
+            {
+                for (int i = 0; i < 7; i++) items.Add(DescribeType(arguments[i], depth));
+                arguments = arguments[7].GetGenericArguments();
+            }
+            foreach (var argument in arguments) items.Add(DescribeType(argument, depth));
         }
 
         [ThreadStatic] private static bool t_inThrow;

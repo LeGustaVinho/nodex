@@ -7,10 +7,11 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use nodex_ir::semantic::{ByteRange, LocalTypeFact, NavigationFact, RefKind, SemanticFacts, SemanticRef, SemanticTarget};
+use nodex_ir::semantic::{BindingUseFact, ByteRange, EmitFocus, ExpressionFact, ExpressionFactKind, LocalTypeFact, NavigationFact, RefKind, SemanticFacts, SemanticRef, SemanticTarget, ValueFact, ValueFactTarget};
 use nodex_ir::{
-    CallTarget, Concept, Expr, FlowGraph, Language, PinKind, StructEdge, StructEdgeKind, Symbol, SymbolId, SymbolKind,
+    CallTarget, Concept, Expr, FlowGraph, FlowNode, Focus, Language, PinKind, StructEdge, StructEdgeKind, Symbol, SymbolId, SymbolKind,
 };
+use nodex_lang_api::kit::{normalize_ws, truncate};
 
 struct Entry {
     start: u32,
@@ -217,6 +218,9 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
 
 fn external_type(id: &str, target: &SemanticTarget, contract: bool, language: Language) -> Symbol {
     Symbol {
+        syntax_sites: None,
+        type_info: None,
+        value_info: None,
         id: id.to_owned(),
         kind: if contract { SymbolKind::Interface } else { SymbolKind::Class },
         name: target.display.rsplit('.').next().unwrap_or(&target.display).to_owned(),
@@ -243,7 +247,163 @@ pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -
     let locals: Vec<&LocalTypeFact> = facts.locals.iter().collect();
     let mut flow = enrich_flow_with(flow, &refs, &locals, locator);
     annotate_navigation(&mut flow, facts.navigation.iter().flatten(), locator);
+    annotate_expression_facts(&mut flow, facts.expressions.iter());
+    annotate_value_facts(&mut flow, facts.values.iter(), &locals);
+    annotate_types(&mut flow, facts.types.iter(), &locals);
+    annotate_collection_roles(&mut flow, &refs, facts.binding_uses.iter());
     flow
+}
+
+pub(crate) fn annotate_value_facts<'a>(
+    flow: &mut FlowGraph,
+    facts: impl Iterator<Item = &'a ValueFact>,
+    locals: &[&LocalTypeFact],
+) {
+    use nodex_ir::{ValueBasis, ValueInfo, ValueKind};
+    let mut sites = HashMap::new();
+    for fact in facts.filter(|f| f.site.file == flow.span.file && within(flow.span.start_byte, flow.span.end_byte, &f.site)) {
+        let key = (fact.site.start, fact.site.end, fact.target);
+        sites.entry(key).and_modify(|previous| {
+            if *previous != fact.info {
+                *previous = ValueInfo { kind: ValueKind::Unknown, basis: ValueBasis::TypeAnalysis, qualifier: None, passing: None };
+            }
+        }).or_insert(fact.info);
+    }
+    fn apply(e: &mut Expr, sites: &HashMap<(u32, u32, ValueFactTarget), ValueInfo>) {
+        if let Some(info) = sites.get(&(e.span.start_byte, e.span.end_byte, ValueFactTarget::Expression)) {
+            e.value_info = Some(*info);
+        }
+        for child in &mut e.children { apply(child, sites); }
+    }
+    let rust_types: HashMap<_, _> = if flow.language == Language::Rust {
+        locals.iter().filter(|local| local.site.file == flow.span.file)
+            .map(|local| ((local.site.start, local.site.end), local.ty.as_str())).collect()
+    } else {
+        HashMap::new()
+    };
+    for node in &mut flow.nodes {
+        if let Some(expr) = &mut node.expr { apply(expr, &sites); }
+        for pin in &mut node.outputs {
+            let Some(span) = &pin.declaration else { continue };
+            if let Some(info) = sites.get(&(span.start_byte, span.end_byte, ValueFactTarget::Binding)) {
+                pin.value_info = Some(*info);
+            } else if let Some(mut info) = rust_types.get(&(span.start_byte, span.end_byte))
+                .and_then(|ty| nodex_lang_api::value_shapes::written_type(Language::Rust, ty)) {
+                info.basis = ValueBasis::TypeAnalysis;
+                pin.value_info = Some(info);
+            }
+        }
+    }
+    nodex_lang_api::value_shapes::carry_to_uses(flow);
+}
+
+pub(crate) fn annotate_member_values(graph: &mut nodex_ir::StructureGraph, facts: &[ValueFact], locator: &Locator) {
+    let mut values = HashMap::new();
+    for fact in facts.iter().filter(|f| f.target == ValueFactTarget::Member) {
+        let Some(entry) = locator.innermost(&fact.site.file, fact.site.start, |entry|
+            matches!(entry.kind, SymbolKind::Field | SymbolKind::Property | SymbolKind::Method | SymbolKind::Function))
+        else { continue };
+        values.entry(entry.id.as_str()).and_modify(|previous| {
+            if *previous != Some(fact.info) { *previous = None; }
+        }).or_insert(Some(fact.info));
+    }
+    for symbol in &mut graph.symbols {
+        if let Some(info) = values.get(symbol.id.as_str()) {
+            symbol.value_info = *info;
+        }
+    }
+}
+
+pub(crate) type TypeFactSites = HashMap<(u32, u32, ValueFactTarget), nodex_ir::types::TypeInfo>;
+
+pub(crate) fn annotate_types<'a>(
+    flow: &mut FlowGraph,
+    facts: impl Iterator<Item = &'a nodex_ir::semantic::TypeFact>,
+    locals: &[&LocalTypeFact],
+) {
+    use nodex_ir::types::{TypeInfo, TypeOrigin, TypeShape};
+    let mut sites = TypeFactSites::new();
+    for fact in facts.filter(|fact| fact.site.file == flow.span.file && within(flow.span.start_byte, flow.span.end_byte, &fact.site)) {
+        sites.entry((fact.site.start, fact.site.end, fact.target))
+            .and_modify(|previous| {
+                if previous.shape != fact.info.shape {
+                    *previous = TypeInfo::new(TypeShape::Unknown, TypeOrigin::Compiler, None);
+                }
+            }).or_insert_with(|| fact.info.clone());
+    }
+    crate::semantic_types::annotate(flow, &sites, locals);
+}
+
+pub(crate) fn annotate_member_types(graph: &mut nodex_ir::StructureGraph, facts: &[nodex_ir::semantic::TypeFact], locator: &Locator) {
+    use nodex_ir::types::{TypeInfo, TypeOrigin, TypeShape};
+    let mut types = HashMap::new();
+    for fact in facts.iter().filter(|fact| fact.target == ValueFactTarget::Member) {
+        let Some(entry) = locator.innermost(&fact.site.file, fact.site.start, |entry|
+            matches!(entry.kind, SymbolKind::Field | SymbolKind::Property | SymbolKind::Method | SymbolKind::Function))
+        else { continue };
+        types.entry(entry.id.as_str()).and_modify(|previous: &mut TypeInfo| {
+            if previous.shape != fact.info.shape {
+                *previous = TypeInfo::new(TypeShape::Unknown, TypeOrigin::Compiler, None);
+            }
+        }).or_insert_with(|| fact.info.clone());
+    }
+    for symbol in &mut graph.symbols {
+        if let Some(info) = types.get(symbol.id.as_str()) {
+            symbol.type_info = Some(info.clone());
+        }
+    }
+}
+
+pub(crate) fn annotate_collection_roles<'a>(
+    flow: &mut FlowGraph, refs: &[&SemanticRef], binding_uses: impl Iterator<Item = &'a BindingUseFact>,
+) {
+    crate::semantic_types::roles(flow, refs, binding_uses);
+}
+
+pub(crate) fn annotate_expression_facts<'a>(flow: &mut FlowGraph, facts: impl Iterator<Item = &'a ExpressionFact>) {
+    let mut by_site: HashMap<(u32, u32), Vec<&ExpressionFact>> = HashMap::new();
+    for fact in facts.filter(|fact| fact.site.file == flow.span.file && within(flow.span.start_byte, flow.span.end_byte, &fact.site)) {
+        by_site.entry((fact.site.start, fact.site.end)).or_default().push(fact);
+    }
+    if by_site.is_empty() {
+        return;
+    }
+    fn annotate(expr: &mut Expr, by_site: &HashMap<(u32, u32), Vec<&ExpressionFact>>) {
+        if let Some(facts) = by_site.get(&(expr.span.start_byte, expr.span.end_byte)) {
+            for fact in facts {
+                if facts.iter().any(|other| other.kind == fact.kind && other.ty != fact.ty) {
+                    continue;
+                }
+                let flavor = match fact.kind {
+                    ExpressionFactKind::Narrowed => {
+                        let Some(ty) = &fact.ty else { continue };
+                        expr.ty = Some(ty.clone());
+                        format!("narrowed:{ty}")
+                    }
+                    ExpressionFactKind::Boxing => "boxing".into(),
+                    ExpressionFactKind::ValueCopy => "value-copy".into(),
+                    ExpressionFactKind::ReferenceCopy => "reference-copy".into(),
+                    ExpressionFactKind::Dynamic => "dynamic".into(),
+                    ExpressionFactKind::Freeze => "runtime-freeze".into(),
+                };
+                if !expr.flavors.contains(&flavor) {
+                    expr.flavors.push(flavor.clone());
+                }
+                let sites = expr.syntax_sites.get_or_insert_with(Vec::new);
+                if !sites.iter().any(|site| site.key == flavor && site.span == expr.span) {
+                    sites.push(nodex_ir::SyntaxSite { key: flavor, span: expr.span.clone(), pin: None });
+                }
+            }
+        }
+        for child in &mut expr.children {
+            annotate(child, by_site);
+        }
+    }
+    for node in &mut flow.nodes {
+        if let Some(expr) = &mut node.expr {
+            annotate(expr, &by_site);
+        }
+    }
 }
 
 /// Member expressions keep the compiler's target when their reference token is unambiguous.
@@ -283,12 +443,17 @@ fn annotate_member(expr: &mut Expr, references: &[&NavigationFact], locator: &Lo
             continue;
         }
         let Some(id) = locator.navigation_target(&fact.target) else { return };
-        if target.as_ref().is_some_and(|previous| previous != &id) {
+        if target.as_ref().is_some_and(|(previous, _)| previous != &id) {
             return;
         }
-        target = Some(id);
+        target = Some((id, &fact.target.display));
     }
-    expr.symbol = target;
+    if let Some((id, display)) = target {
+        expr.symbol = Some(id);
+        if expr.focus.is_some() {
+            expr.target = Some(display.clone());
+        }
+    }
 }
 
 fn member_token(expr: &Expr, site: &ByteRange) -> bool {
@@ -309,6 +474,7 @@ fn member_token(expr: &Expr, site: &ByteRange) -> bool {
 pub fn enrich_flow_with(flow: &FlowGraph, refs: &[&SemanticRef], locals: &[&LocalTypeFact], locator: &Locator) -> FlowGraph {
     let mut flow = flow.clone();
     let file = flow.span.file.clone();
+    let language = flow.language;
     let (fs, fe) = (flow.span.start_byte, flow.span.end_byte);
     let refs: Vec<&SemanticRef> = refs.iter().copied().filter(|r| r.site.file == file && within(fs, fe, &r.site)).collect();
 
@@ -340,7 +506,16 @@ pub fn enrich_flow_with(flow: &FlowGraph, refs: &[&SemanticRef], locals: &[&Loca
                     });
                 }
                 if let Some(expr) = node.expr.as_mut() {
-                    annotate(expr, &r.site, symbol.as_deref(), &r.target);
+                    annotate(expr, &r.site, symbol.as_deref(), &r.target, language);
+                    if node.concept == Concept::Construct && expr.concept == Concept::Construct && node.focus.is_none() {
+                        node.focus = expr.focus.clone();
+                    }
+                }
+                if let Some(emit) = &r.emit_focus
+                    && matches!(node.concept, Concept::Call | Concept::Emit)
+                    && node.expr.as_ref().is_some_and(|expr| expr.concept == Concept::Call && invocation_matches(expr, &r.site, language))
+                {
+                    apply_emit_focus(node, emit);
                 }
             }
             RefKind::Subscribe | RefKind::Unsubscribe => {
@@ -362,12 +537,21 @@ pub fn enrich_flow_with(flow: &FlowGraph, refs: &[&SemanticRef], locals: &[&Loca
                 }
             }
             RefKind::Raise => {
-                if node.concept == Concept::Call {
-                    node.concept = Concept::Emit;
-                    node.label = format!("raise {}", r.target.display.rsplit('.').next().unwrap_or(&r.target.display));
-                }
                 if let Some(expr) = node.expr.as_mut() {
-                    annotate(expr, &r.site, symbol.as_deref(), &r.target);
+                    let direct = expr.concept == Concept::Call && invocation_matches(expr, &r.site, language);
+                    if direct && matches!(node.concept, Concept::Call | Concept::Emit) {
+                        let focus = event_focus(node.focus.as_ref(), &r.target.display);
+                        if node.concept == Concept::Call {
+                            node.concept = Concept::Emit;
+                            node.label = format!("raise {}", focus.primary);
+                        }
+                        expr.focus = Some(focus.clone());
+                        node.focus = Some(focus);
+                        expr.symbol = symbol;
+                        expr.target = Some(r.target.display.clone());
+                    } else {
+                        annotate(expr, &r.site, symbol.as_deref(), &r.target, language);
+                    }
                 }
             }
             RefKind::Base | RefKind::Handler | RefKind::Compatible => {}
@@ -405,18 +589,120 @@ pub fn enrich_flow_with(flow: &FlowGraph, refs: &[&SemanticRef], locals: &[&Loca
     flow
 }
 
-/// Sets the resolved target on the expression whose span equals `site`.
-fn annotate(expr: &mut Expr, site: &ByteRange, symbol: Option<&str>, target: &SemanticTarget) -> bool {
-    if expr.span.start_byte == site.start && expr.span.end_byte == site.end && matches!(expr.concept, Concept::Call | Concept::Construct) {
+fn event_focus(source: Option<&Focus>, display: &str) -> Focus {
+    let (owner, event) = display.rsplit_once('.').unwrap_or(("", display));
+    source.filter(|f| f.primary.trim_start_matches('@') == event).cloned().unwrap_or_else(|| Focus {
+        primary: event.to_owned(),
+        prefix: (!owner.is_empty()).then(|| format!("{owner}.")),
+        prefix_bytes: None,
+        primary_bytes: None,
+    })
+}
+
+fn apply_emit_focus(node: &mut FlowNode, emit: &EmitFocus) {
+    let Some([receiver, arguments @ ..]) = node.expr.as_ref().map(|expr| expr.children.as_slice()) else { return };
+    if !receiver.flavors.iter().any(|f| f == "target") {
+        return;
+    }
+    let plain = || Focus {
+        primary: emit.text.clone(),
+        prefix: None,
+        prefix_bytes: None,
+        primary_bytes: (if emit.receiver { Some(receiver) } else { arguments.first() })
+            .filter(|operand| operand.span.end_byte.saturating_sub(operand.span.start_byte) as usize == emit.text.len())
+            .map(|operand| [operand.span.start_byte, operand.span.end_byte]),
+    };
+    let focus = if emit.receiver && matches!(receiver.concept, Concept::Var | Concept::GetMember | Concept::Index | Concept::SafeAccess) {
+        receiver.focus.clone().unwrap_or_else(plain)
+    } else {
+        plain()
+    };
+    if node.concept != Concept::Emit || node.focus.as_ref() != Some(&focus) {
+        let label = if emit.receiver {
+            arguments.first().map_or_else(
+                || format!("raise {}", emit.text),
+                |arg| format!("send {} through {}", arg.label, emit.text),
+            )
+        } else {
+            let receiver = receiver.focus.as_ref().map_or_else(
+                || receiver.label.clone(),
+                |focus| format!("{}{}", focus.prefix.as_deref().unwrap_or(""), focus.primary),
+            );
+            let mut label = format!("raise {} on {receiver}", emit.text);
+            if arguments.len() > 1 {
+                label.push_str(" with ");
+                label.push_str(&arguments[1..].iter().map(|arg| arg.label.as_str()).collect::<Vec<_>>().join(", "));
+            }
+            label
+        };
+        node.concept = Concept::Emit;
+        node.label = truncate(&normalize_ws(&label), 96);
+        node.focus = Some(focus);
+    }
+    node.flavors.retain(|f| f != "angular:output");
+    if emit.receiver {
+        node.flavors.push("angular:output".into());
+    }
+}
+
+fn invocation_matches(expr: &Expr, site: &ByteRange, language: Language) -> bool {
+    expr.span.end_byte == site.end && (expr.span.start_byte == site.start ||
+        // Roslyn starts `receiver?.Call()` at the member binding. Tree-sitter includes the receiver.
+        language == Language::Csharp && expr.concept == Concept::Call && expr.span.start_byte < site.start &&
+            expr.flavors.iter().any(|flavor| flavor == "safe-access"))
+}
+
+/// Sets the resolved target on the expression corresponding to the compiler's call site.
+fn annotate(expr: &mut Expr, site: &ByteRange, symbol: Option<&str>, target: &SemanticTarget, language: Language) -> bool {
+    if matches!(expr.concept, Concept::Call | Concept::Construct) && invocation_matches(expr, site, language) {
         expr.symbol = symbol.map(str::to_owned);
         expr.target = (target.kind != "unresolved").then(|| target.display.clone());
-        if expr.flavors.iter().any(|f| f == "stage") {
-            expr.flavors.retain(|f| f != "custom-stage");
-            if !target.linq {
-                expr.flavors.push("custom-stage".into());
+        if target.kind == "event" {
+            expr.focus = Some(event_focus(expr.focus.as_ref(), &target.display));
+        } else if expr.concept == Concept::Construct && expr.focus.is_none() && target.kind == "constructor"
+            && let Some(ty) = &target.container
+        {
+            expr.focus = Some(Focus { primary: ty.clone(), prefix: None, prefix_bytes: None, primary_bytes: None });
+        }
+        let stage = expr.flavors.iter().any(|f| f == "stage");
+        expr.flavors.retain(|f| f != "promise:all" && f != "option:map" && f != "option:and_then"
+            && !f.starts_with("rust-iter:") && !f.starts_with("sequence:") && (!stage || f != "custom-stage"));
+        let sequence = if target.external && symbol.is_none() {
+            let display = target.display.trim_end_matches('.');
+            let slice_method = display.strip_prefix("core::slice::")
+                .and_then(|name| name.rsplit([':', ']']).next());
+            match target.container.as_deref() {
+                Some("Array" | "ReadonlyArray") if target.linq => Some("sequence:array"),
+                Some("System.Linq.Enumerable") if stage && target.linq => Some("sequence:linq"),
+                Some("Promise" | "PromiseLike") if target.linq => Some("sequence:promise"),
+                Some("PromiseConstructor") if target.linq && target.display.starts_with("PromiseConstructor.all(") => Some("promise:all"),
+                Some("Option") if target.display.starts_with("core::option::Option::map(") => Some("option:map"),
+                Some("Option") if target.display.starts_with("core::option::Option::and_then(") => Some("option:and_then"),
+                _ if slice_method == Some("iter()") => Some("rust-iter:borrow"),
+                _ if slice_method == Some("iter_mut()") => Some("rust-iter:borrow-mut"),
+                Some("Iterator") if target.display.starts_with("core::iter::") || target.display.starts_with("std::iter::") => {
+                    Some("sequence:iterator")
+                }
+                Some(receiver) if language == Language::Rust && receiver != "IntoIterator"
+                    && ["core::", "alloc::", "std::"].iter().any(|prefix| display.starts_with(prefix))
+                    && display.ends_with("::into_iter()") => {
+                    match receiver.strip_prefix('&') {
+                        Some(reference) if reference.split_ascii_whitespace().any(|part| part == "mut") => Some("rust-iter:borrow-mut"),
+                        Some(_) => Some("rust-iter:borrow"),
+                        None => Some("rust-iter:by-value"),
+                    }
+                }
+                _ => None,
             }
+        } else {
+            None
+        };
+        if let Some(sequence) = sequence {
+            expr.flavors.push(sequence.into());
+        } else if stage && !target.linq {
+            expr.flavors.push("custom-stage".into());
         }
         return true;
     }
-    expr.children.iter_mut().any(|c| annotate(c, site, symbol, target))
+    expr.children.iter_mut().any(|c| annotate(c, site, symbol, target, language))
 }

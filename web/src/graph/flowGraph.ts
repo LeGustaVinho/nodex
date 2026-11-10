@@ -1,11 +1,34 @@
+import type { ValueInfo } from "../gen/ValueInfo";
+import type { TypeInfo } from "../gen/TypeInfo";
+import { expressionSites, statementSites } from "./syntaxSites";
 import type { Expr } from "../gen/Expr";
+import type { Access } from "../gen/Access";
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { FlowNode } from "../gen/FlowNode";
+import type { Focus } from "../gen/Focus";
+import type { Span } from "../gen/Span";
+import type { StepInfo } from "../gen/StepInfo";
 import type { Language } from "../gen/Language";
 import type { OperationInfo } from "../gen/OperationInfo";
-import { type GEdge, type GGraph, type GNode, type GPort, lines } from "./model";
+import type { StructureIndex } from "./structureGraph";
+import { type BlueprintSource, type CodePreview, type CodeRange, codePreview, codePreviewHeight, sourceCode, uniqueCodeRange } from "./blueprintSource";
+import type { GEdge, GGraph, GNode, GPort } from "./model";
+import { argumentDetails, expressionDetailFlavors, expressionExplanations, isExplanationFlavor, sequenceArgumentRoles, sequenceCallbackRoles, sequencePreview, spreadOutput, statementExplanations, statementDetailFlavors, withoutExpressionFacts, type CallbackRoles, type ExpressionPinDetails, type SequencePreview } from "./blueprintExplanation";
 
 export const BLUEPRINT_WIDTH = 300;
+
+function flowEdgeId(edge: FlowGraph["edges"][number]) {
+  return `${edge.from}:${edge.from_pin}->${edge.to}:${edge.to_pin}`;
+}
+
+/** Only a unique execution edge can explain an observed pair of mapped steps. */
+export function recordedEdgeId(flow: FlowGraph | undefined, step: StepInfo | undefined, prefix = "") {
+  if (!flow || !step?.previous_node || !step.node) return;
+  const from = flow.nodes.find((node) => node.id === step.previous_node);
+  const edges = flow.edges.filter((edge) => edge.kind === "Exec" && edge.from === from?.id && edge.to === step.node);
+  if (edges.length !== 1 || from?.outputs.find((pin) => pin.id === edges[0].from_pin)?.label === "Then") return;
+  return prefix + flowEdgeId(edges[0]);
+}
 export const EXPR_WIDTH = 190;
 export const PIN_ROW = 22;
 const EXPR_PIN_ROW = 18;
@@ -34,19 +57,31 @@ export interface ExprPin {
   ty: string | null;
   /** A constant or a name shown inside the pin, instead of a wire. */
   value: string | null;
+  emphasis?: CodeRange;
+  languageDetails?: ExpressionPinDetails;
+  valueInfo?: ValueInfo;
+  typeInfo?: TypeInfo;
+  path?: string;
 }
 
 export interface BlueprintData {
   node: FlowNode;
+  code?: CodePreview;
+  sourceRevision?: string | null;
   flow: string;
   language: Language;
   expanded: boolean;
+  explanations?: string[];
+  sequence?: SequencePreview;
+  inputAccess?: Record<string, Access | undefined>;
   /** Compact levels: the statement's own call/assignment arguments, drawn as its input pins. */
   argPins?: ExprPin[];
   /** Inputs wired straight into the statement's expression tree instead (compact levels). */
   hiddenInputs?: string[];
   /** Whether the statement has details to open or close (its + / − button). */
   canExpand?: boolean;
+  detailsLabel?: string;
+  resultInfo?: ValueInfo;
 }
 
 export interface ExprData {
@@ -55,28 +90,24 @@ export interface ExprData {
   path: string;
   flow: string;
   language: Language;
+  code?: CodePreview;
   pins: ExprPin[];
-  /** Compact levels: no code label for recognized operations; values inside pins. */
-  compact: boolean;
   /** Everything level: the lambda's parameters, drawn as output pins. */
   params: string[];
+  paramRoles?: string[];
+  explanations?: string[];
 }
 
 export interface FlowGraphOptions {
   level?: DetailLevel;
+  structure?: StructureIndex;
+  explanations?: boolean;
+  source?: BlueprintSource;
   /** Catalog operations, for pin names. */
   operations?: Record<string, OperationInfo>;
 }
 
 export const expansionKey = (flow: string, nodeId: string) => `${flow}|${nodeId}`;
-
-export function blueprintHeight(node: FlowNode, expanded: boolean, argPins = 0): number {
-  const detailsPin = expanded && argPins === 0 ? 1 : 0;
-  const rows = Math.max(node.inputs.length + detailsPin + argPins, node.outputs.length, 1);
-  const label = lines(node.label, 36) * 17;
-  const badges = node.flavors.length > 0 ? 24 : 0;
-  return 30 + 10 + label + rows * PIN_ROW + badges + 26;
-}
 
 /**
  * Statements that *are* their expression (a call statement, an assignment): in the compact levels
@@ -102,24 +133,121 @@ const CONCEPT_PINS: Record<string, string[]> = {
   Throw: ["Error"],
 };
 
+function expressionSpan(expr: Expr): Span | undefined {
+  if (expr.flavors.includes("captured")) return;
+  const start = expr.focus?.primary_bytes?.[0];
+  // Pipeline stage spans also include all earlier calls. Only this call belongs to the stage.
+  if (expr.flavors.includes("stage") && start !== undefined && start >= expr.span.start_byte && start < expr.span.end_byte) {
+    return { ...expr.span, start_byte: start };
+  }
+  if (!expr.flavors.includes("stage")) return expr.span;
+}
+
+function visibleCode(preview: CodePreview | undefined) {
+  // A row made up of slots and their delimiters adds nothing to the connected pins.
+  return preview && (!preview.text.includes("□") || /[^□\s()[\]{},;.]/u.test(preview.text)) ? preview : undefined;
+}
+
+function coversTarget(focus: Focus, file: string, covered: readonly Span[]) {
+  const range = focus.primary_bytes;
+  return !!range && covered.some((part) => part.file === file && part.start_byte <= range[0] && part.end_byte >= range[1]);
+}
+
+function focusPreview(focus: Focus, qualified: boolean): CodePreview | undefined {
+  const prefix = qualified ? focus.prefix ?? "" : "";
+  return codePreview(prefix + focus.primary, [prefix.length, prefix.length + focus.primary.length]);
+}
+
+function expressionCode(expr: Expr, source: Uint8Array | undefined, covered: readonly Span[] = []): CodePreview | undefined {
+  const span = expressionSpan(expr);
+  const written = span && sourceCode(source, span, expr.focus, covered);
+  if (written) return visibleCode(written);
+  const focus = expr.focus;
+  if (focus) {
+    const range = focus.primary_bytes;
+    if (!coversTarget(focus, expr.span.file, covered) &&
+        (covered.length === 0 || range || ["Call", "Construct", "GetMember", "Convert", "TypeCheck"].includes(expr.concept))) {
+      return focusPreview(focus, covered.length === 0 && !expr.flavors.includes("stage"));
+    }
+  }
+  if (covered.length === 0 || /^[^\p{ID_Continue}\s]+$/u.test(expr.label) ||
+      (["Call", "Construct", "GetMember"].includes(expr.concept) && /^[\p{ID_Continue}.$:]+$/u.test(expr.label))) {
+    return codePreview(expr.label);
+  }
+}
+
+function statementCode(node: FlowNode, source: Uint8Array | undefined, expanded: boolean, covered: readonly Span[], absorb: boolean) {
+  if (node.flavors.includes("post-check") && node.expr) {
+    if (expanded) return;
+    const condition = sourceCode(source, node.expr.span, node.focus);
+    if (condition) {
+      const prefix = "do □ while (";
+      return codePreview(`${prefix}${condition.text})`, condition.emphasis &&
+        [prefix.length + condition.emphasis[0], prefix.length + condition.emphasis[1]]);
+    }
+  }
+  const written = sourceCode(source, node.span, node.focus, covered, node.code);
+  if (!expanded) {
+    const text = node.code || node.label;
+    return written ?? codePreview(text, uniqueCodeRange(text, node.focus?.primary));
+  }
+  if (written) {
+    if ((node.concept === "Branch" && /^if\s*(?:\(\s*□\s*\)|□)$/u.test(written.text)) ||
+        (node.concept === "Return" && /^(?:(?:return\b|=>)\s*)?□\s*;?$/u.test(written.text))) return;
+    return visibleCode(written);
+  }
+  if (absorb && node.expr) return expressionCode({ ...node.expr, focus: node.focus ?? node.expr.focus }, source, covered);
+  // A synthetic or old header has no reliable byte offsets to remove the expression from.
+  if (node.focus?.primary_bytes && !coversTarget(node.focus, node.span.file, covered)) {
+    return focusPreview(node.focus, false);
+  }
+}
+
 /** Converts a flow graph to the neutral model. Expanded statements show their expression trees. */
 export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, showDataWires: boolean, opts: FlowGraphOptions = {}): GGraph {
   const level = opts.level ?? "statements";
   const compact = level !== "statements";
+  const source = opts.source?.revision && opts.source.revision === flow.source_revision ? opts.source.bytes : undefined;
   const nodes: GNode[] = [];
   const edges: GEdge[] = [];
   /** `nodeId use:x` data edges replaced by wires into the node's expression tree. */
   const redirected = new Set<string>();
+  const accessByNode = new Map<string, Record<string, Access | undefined>>();
+  for (const edge of flow.edges) {
+    if (edge.kind !== "Data" || !edge.access) continue;
+    let access = accessByNode.get(edge.to);
+    if (!access) accessByNode.set(edge.to, access = {});
+    access[edge.to_pin] = !Object.hasOwn(access, edge.to_pin) || access[edge.to_pin] === edge.access ? edge.access : undefined;
+  }
 
-  for (const node of flow.nodes) {
+  const stale = !!opts.source && !!flow.source_revision && !source;
+  for (const original of flow.nodes) {
+    const syntaxPins = (pins: FlowNode["inputs"]) => pins.map((pin) => ({
+      ...pin, type_info: undefined, value_info: pin.value_info?.basis === "TypeAnalysis" ? undefined : pin.value_info,
+    }));
+    const node = stale ? {
+      ...original, expr: original.expr && withoutExpressionFacts(original.expr),
+      inputs: syntaxPins(original.inputs), outputs: syntaxPins(original.outputs),
+    } : original;
+    const explanations = opts.explanations === false ? [] : statementExplanations(node, flow.language);
+    const event = flow.language === "csharp" && node.concept === "Emit" ? node.expr?.symbol : undefined;
+    if (opts.explanations !== false && event && explanations.length < 2) {
+      const names = opts.structure?.eventSubscribers(event).map((subscriber) => subscriber.name);
+      if (names?.length) explanations.push(`Subscriptions in code: ${[...new Set(names)].join(", ")}`);
+    }
     // A statement whose whole expression is a constant or a variable has nothing to open.
     const trivial = compact && node.expr !== null && (node.expr.concept === "Literal" || node.expr.concept === "Var");
     const shownDetails = expanded[expansionKey(flow.symbol, node.id)];
     const isExpanded = node.expr !== null && !trivial && (compact ? shownDetails !== false : !!shownDetails);
+    const sequence = opts.explanations === false || isExpanded ? undefined : sequencePreview(node.expr);
+    const stageText = sequence?.stages.flatMap((stage) => [stage.action, stage.timing]);
+    const labels = explanations.filter((text) => !stageText?.includes(text));
     const ctx: TreeCtx = {
       flow,
       ownerId: node.id,
       level,
+      source,
+      stale,
       operations: opts.operations ?? {},
       locals: compact ? localsOf(flow, node.id) : new Map(),
       nodes,
@@ -127,13 +255,14 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
       redirected,
       count: 0,
       showDataWires,
+      explanations: opts.explanations !== false,
     };
     const absorb = compact && isExpanded && absorbs(node);
     const argPins = absorb && node.expr ? pinsOf(node.expr, node.id, ctx, "x") : undefined;
     const tree =
       isExpanded && node.expr
         ? absorb
-          ? addForest(argPins!.subtrees, node.id, ctx)
+          ? addForest(argPins!, node.id, ctx)
           : addExprTree(node.expr, node.id, { id: node.id, handle: "expr" }, "0", ctx)
         : undefined;
     // Inputs now wired straight into the expression tree are not repeated on the statement.
@@ -144,11 +273,22 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
     if (isExpanded && !absorb) ports.push({ id: "expr", side: "WEST" });
     for (const p of argPins?.pins ?? []) ports.push({ id: p.id, side: "WEST" });
     for (const p of node.outputs) ports.push({ id: p.id, side: "EAST" });
-    const height = blueprintHeight({ ...node, inputs: shown }, isExpanded, argPins?.pins.length ?? 0);
+    const rootSpan = node.expr && expressionSpan(node.expr);
+    const covered = argPins?.covered ?? (tree && rootSpan ? [rootSpan] : []);
+    const code = statementCode(node, source, isExpanded, covered, absorb);
+    const rows = Math.max(shown.length + (isExpanded && !absorb ? 1 : 0) + (argPins?.pins.length ?? 0), node.outputs.length);
+    const badges = (opts.explanations !== false && (statementDetailFlavors(node, flow.language, isExpanded, absorb).length > 0 || statementSites(node, isExpanded, absorb).length > 0))
+      || node.flavors.some((flavor) => flavor !== "unreachable" && !isExplanationFlavor(flavor)) ? 24 : 0;
+    const height = 38 + (code ? 8 + codePreviewHeight(code) : 0) + rows * PIN_ROW + badges
+      + labels.length * 21 + (sequence ? 25 + sequence.stages.length * 34 : 0)
+      + (sequence?.example ? 25 + sequence.example.length * 17 : 0);
     const gnode: GNode = {
       id: node.id,
       type: "blueprint",
-      data: { node, flow: flow.symbol, language: flow.language, expanded: isExpanded, argPins: argPins?.pins, hiddenInputs: hidden, canExpand: node.expr !== null && !trivial } satisfies BlueprintData,
+      data: { node, code, sourceRevision: flow.source_revision, flow: flow.symbol, language: flow.language, expanded: isExpanded, explanations: labels, sequence, inputAccess: accessByNode.get(node.id),
+        resultInfo: node.concept === "Return" && !stale ? opts.structure?.byId.get(flow.symbol)?.value_info : undefined,
+        detailsLabel: node.concept === "Branch" || node.concept === "Loop.While" ? "Condition" : undefined,
+        argPins: argPins?.pins, hiddenInputs: hidden, canExpand: node.expr !== null && !trivial } satisfies BlueprintData,
       width: BLUEPRINT_WIDTH,
       height,
       ports,
@@ -167,17 +307,20 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
     const isExec = e.kind === "Exec";
     if (!isExec && !showDataWires) continue;
     if (!isExec && redirected.has(`${e.to} ${e.to_pin}`)) continue;
-    const ty = isExec ? null : (flow.nodes.find((n) => n.id === e.from)?.outputs.find((p) => p.id === e.from_pin)?.ty ?? null);
+    const output = isExec ? undefined : flow.nodes.find((n) => n.id === e.from)?.outputs.find((p) => p.id === e.from_pin);
+    const input = isExec ? undefined : flow.nodes.find((n) => n.id === e.to)?.inputs.find((p) => p.id === e.to_pin);
+    const ty = output?.ty ?? null;
+    const shape = stale ? undefined : (input?.type_info ?? output?.type_info)?.shape;
     const access = isExec ? null : (e.access ?? null);
     edges.push({
-      id: `${e.from}:${e.from_pin}->${e.to}:${e.to_pin}`,
+      id: flowEdgeId(e),
       source: e.from,
       sourceHandle: e.from_pin,
       target: e.to,
       targetHandle: e.to_pin,
       kind: isExec ? "exec" : "data",
       layout: isExec,
-      data: { ty, access },
+      data: { ty, access, shape },
     });
   }
   return { nodes, edges, direction: "RIGHT" };
@@ -186,28 +329,34 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
 const TREE_GAP = 28;
 const TREE_COL = EXPR_WIDTH + 44;
 const TREE_ROW = 78;
+const TREE_ROW_GAP = 8;
+
+type LocalWire = { from: string; pin: string; ty: string | null; access: string | null; valueInfo?: ValueInfo };
 
 interface TreeCtx {
   flow: FlowGraph;
   ownerId: string;
   level: DetailLevel;
+  source?: Uint8Array;
+  stale: boolean;
   operations: Record<string, OperationInfo>;
   /** Local name → the pin that defines it (`var:x` of an earlier statement or the entry). */
-  locals: Map<string, { from: string; pin: string; ty: string | null; access: string | null }>;
+  locals: Map<string, LocalWire>;
   nodes: GNode[];
   edges: GEdge[];
   redirected: Set<string>;
   count: number;
   showDataWires: boolean;
+  explanations: boolean;
 }
 
 /** Locals a statement reads, from its `use:x` data edges. */
-function localsOf(flow: FlowGraph, nodeId: string): Map<string, { from: string; pin: string; ty: string | null; access: string | null }> {
-  const out = new Map<string, { from: string; pin: string; ty: string | null; access: string | null }>();
+function localsOf(flow: FlowGraph, nodeId: string): Map<string, LocalWire> {
+  const out = new Map<string, LocalWire>();
   for (const e of flow.edges) {
     if (e.kind !== "Data" || e.to !== nodeId || !e.to_pin.startsWith("use:")) continue;
-    const ty = flow.nodes.find((n) => n.id === e.from)?.outputs.find((p) => p.id === e.from_pin)?.ty ?? null;
-    out.set(e.to_pin.slice(4), { from: e.from, pin: e.from_pin, ty, access: e.access ?? null });
+    const pin = flow.nodes.find((n) => n.id === e.from)?.outputs.find((p) => p.id === e.from_pin);
+    out.set(e.to_pin.slice(4), { from: e.from, pin: e.from_pin, ty: pin?.ty ?? null, access: e.access ?? null, valueInfo: pin?.value_info });
   }
   return out;
 }
@@ -230,36 +379,84 @@ interface Subtree {
   expr: Expr;
   path: string;
   pin: string;
+  callbackRoles?: CallbackRoles;
+}
+
+interface PinLayout {
+  pins: ExprPin[];
+  subtrees: Subtree[];
+  covered: Span[];
+}
+
+function coverExpression(covered: Span[], expr: Expr) {
+  const span = expressionSpan(expr);
+  if (span) covered.push(span);
+}
+
+function inlineOperand(pin: ExprPin, child: Expr, layout: PinLayout, ctx: TreeCtx) {
+  const preview = expressionCode(child, ctx.source);
+  if (!preview) return;
+  pin.value = preview.text;
+  pin.emphasis = preview.emphasis;
+  coverExpression(layout.covered, child);
+}
+
+function describePin(pin: ExprPin, expr: Expr, path: string, ctx: TreeCtx, ownsExpression: boolean) {
+  if (!ctx.explanations) return;
+  const details = argumentDetails(expr);
+  const flavors = ownsExpression ? expressionDetailFlavors(expr, ctx.flow.language) : [];
+  const sites = ownsExpression ? expressionSites(expr) : [];
+  if (details.length || flavors.length || sites.length) pin.languageDetails = { path, details, flavors, sites };
+}
+
+function inlineSubtree(subtree: Subtree, layout: PinLayout, ctx: TreeCtx) {
+  const pin = layout.pins.find((pin) => pin.id === subtree.pin)!;
+  describePin(pin, subtree.expr, subtree.path, ctx, true);
+  inlineOperand(pin, subtree.expr, layout, ctx);
 }
 
 /** Pins of `expr` in the compact levels: constants and names inline, locals wired, the rest as subtrees. */
-function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"): { pins: ExprPin[]; subtrees: Subtree[] } {
+function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"): PinLayout {
   const op = expr.op ? ctx.operations[expr.op] : undefined;
   const kids = operands(expr, op);
   // An assignment keeps Target/Value even when it applies an operation (`total += x`).
   const names = op && expr.concept !== "Assign" ? op.inputs : (CONCEPT_PINS[expr.concept] ?? []).map((n) => `${n}:`);
-  const pins: ExprPin[] = [];
-  const subtrees: Subtree[] = [];
+  const layout: PinLayout = { pins: [], subtrees: [], covered: [] };
+  const roles = ctx.explanations ? sequenceArgumentRoles(expr) : [];
   kids.forEach((child, i) => {
     const pinId = `${prefix}${i}`;
-    const childPath = `${path}.${expr.children.indexOf(child)}`;
+    const childIndex = expr.children.indexOf(child);
+    const childPath = `${path}.${childIndex}`;
     const named = splitPin(names[Math.min(i, names.length - 1)]);
     let name = named.name || null;
+    if (roles[childIndex]) name = roles[childIndex];
+    if (!name && ctx.explanations && spreadOutput(expr)) name = "Source";
     if (!name && child.flavors.includes("target")) name = "Target";
-    const pin: ExprPin = { id: pinId, name, ty: named.ty || child.ty, value: null };
-    pins.push(pin);
+    const pin: ExprPin = { id: pinId, name, ty: named.ty || child.ty, value: null, valueInfo: child.value_info, typeInfo: child.type_info, path: childPath };
+    // A leaf that becomes a pin has no expression node to show its details.
+    const ownsExpression = ctx.level !== "statements" && (child.concept === "Var" || child.concept === "Literal");
+    describePin(pin, child, childPath, ctx, ownsExpression);
+    layout.pins.push(pin);
     if (ctx.level === "statements") {
-      subtrees.push({ expr: child, path: childPath, pin: pinId });
+      layout.subtrees.push({ expr: child, path: childPath, pin: pinId });
       return;
     }
     if (child.concept === "Literal") {
-      pin.value = child.label;
+      inlineOperand(pin, child, layout, ctx);
       pin.ty = pin.ty ?? child.ty;
       return;
     }
     if (child.concept === "Var") {
+      const writeTarget = expr.concept === "Assign" && childIndex === 0;
       const param = lambdaParam(ctx, child.label);
-      if (param) {
+      const local = param ? undefined : ctx.locals.get(child.label);
+      const scopes = lambdaScopes.get(ctx);
+      if (ctx.explanations && (param || local) && scopes?.length && !scopes.at(-1)?.has(child.label)) {
+        pin.name = ctx.showDataWires && !writeTarget
+          ? `${name ? `${name} · ` : ""}${child.label} (outer scope)`
+          : `${name ? `${name} · ` : ""}outer scope`;
+      }
+      if (param && ctx.showDataWires) {
         ctx.edges.push({
           id: `${param}:p:${child.label}->${id}:${pinId}`,
           source: param,
@@ -268,13 +465,18 @@ function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"):
           targetHandle: pinId,
           kind: "data",
           layout: false,
-          data: { ty: null },
+          data: { ty: pin.ty, shape: pin.typeInfo?.shape },
         });
-        return;
+        coverExpression(layout.covered, child);
+        if (!writeTarget) return;
       }
-      const local = ctx.locals.get(child.label);
       if (local) {
         pin.ty = pin.ty ?? local.ty;
+        if (local.valueInfo && (!ctx.stale || local.valueInfo.basis === "Syntax") && !child.syntax_sites?.some((s) => ["deref", "try"].includes(s.key))) {
+          if (!pin.valueInfo || (pin.valueInfo.kind === "Unknown" && pin.valueInfo.basis === "Syntax")) {
+            pin.valueInfo = { ...local.valueInfo, passing: pin.valueInfo?.passing };
+          }
+        }
         ctx.redirected.add(`${ctx.ownerId} use:${child.label}`);
         if (ctx.showDataWires) {
           ctx.edges.push({
@@ -285,17 +487,19 @@ function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"):
             targetHandle: pinId,
             kind: "data",
             layout: false,
-            data: { ty: local.ty, access: local.access },
+            data: { ty: local.ty, access: local.access, shape: pin.typeInfo?.shape },
           });
+          coverExpression(layout.covered, child);
+          if (!writeTarget) return;
         }
-        return;
       }
-      pin.value = child.label;
+      inlineOperand(pin, child, layout, ctx);
       return;
     }
-    subtrees.push({ expr: child, path: childPath, pin: pinId });
+    layout.subtrees.push({ expr: child, path: childPath, pin: pinId,
+      callbackRoles: ctx.explanations && child.concept === "Lambda" ? sequenceCallbackRoles(expr, childIndex) : undefined });
   });
-  return { pins, subtrees };
+  return layout;
 }
 
 /** Lambda parameters in scope while a lambda body is visited (Everything level): name → lambda node id. */
@@ -311,12 +515,17 @@ function lambdaParam(ctx: TreeCtx, name: string): string | undefined {
 }
 
 /** Several subtrees feeding one node (the statement's argument pins), stacked vertically. */
-function addForest(subtrees: Subtree[], ownerId: string, ctx: TreeCtx) {
+function addForest(layout: PinLayout, ownerId: string, ctx: TreeCtx) {
   const placed: GNode[] = [];
   let width = 0;
   let height = 0;
-  for (const s of subtrees) {
-    const tree = addExprTree(s.expr, ownerId, { id: ownerId, handle: s.pin }, s.path, ctx);
+  for (const s of layout.subtrees) {
+    if (ctx.count >= MAX_EXPR_NODES) {
+      inlineSubtree(s, layout, ctx);
+      continue;
+    }
+    const tree = addExprTree(s.expr, ownerId, { id: ownerId, handle: s.pin }, s.path, ctx, s.callbackRoles);
+    coverExpression(layout.covered, s.expr);
     for (const n of tree.placed) n.attach!.dy += height;
     placed.push(...tree.placed);
     width = Math.max(width, tree.width);
@@ -335,36 +544,38 @@ function addForest(subtrees: Subtree[], ownerId: string, ctx: TreeCtx) {
  * column (next to its statement) and children fan out to the left, like data inputs in a
  * Blueprint. Returns the tree's size and the placed nodes.
  */
-function addExprTree(root: Expr, ownerId: string, target: { id: string; handle: string }, rootPath: string, ctx: TreeCtx) {
+function addExprTree(root: Expr, ownerId: string, target: { id: string; handle: string }, rootPath: string, ctx: TreeCtx, rootRoles?: CallbackRoles) {
   let leaves = 0;
   let maxDepth = 0;
+  const nextRow = new Map<number, number>();
   const placed: GNode[] = [];
-  const visit = (expr: Expr, path: string, depth: number, parent: { id: string; handle: string }): number => {
+  const visit = (expr: Expr, path: string, depth: number, parent: { id: string; handle: string }, callbackRoles?: CallbackRoles): number => {
     ctx.count++;
     maxDepth = Math.max(maxDepth, depth);
     const id = `${ownerId}/e/${path}`;
-    const op = expr.op ? ctx.operations[expr.op] : undefined;
     const isLambda = expr.concept === "Lambda";
     const expandLambda = isLambda && ctx.level === "everything" && expr.children.length > 0;
-    const { pins, subtrees } =
+    const result = callbackRoles?.result ?? (ctx.explanations ? "Result for the caller" : "Result");
+    const layout: PinLayout =
       isLambda && !expandLambda
-        ? { pins: [], subtrees: [] }
+        ? { pins: [], subtrees: [], covered: [] }
         : expandLambda
-          ? { pins: [{ id: "c0", name: "Result", ty: null, value: null }], subtrees: expr.children.slice(0, 1).map((c) => ({ expr: c, path: `${path}.0`, pin: "c0" })) }
+          ? { pins: [{ id: "c0", name: result, ty: null, value: null, typeInfo: expr.children[0]?.type_info }], subtrees: expr.children.slice(0, 1).map((c) => ({ expr: c, path: `${path}.0`, pin: "c0" })), covered: [] }
           : pinsOf(expr, id, ctx, "c", path);
-    const params = expandLambda ? expr.params : [];
+    const { pins, subtrees, covered } = layout;
+    const params = expandLambda ? expr.param_pins?.map((pin) => pin.label) ?? expr.params : [];
     const ports: GPort[] = pins.map((p) => ({ id: p.id, side: "WEST" as const }));
     ports.push({ id: "out", side: "EAST" });
     for (const p of params) ports.push({ id: `p:${p}`, side: "EAST" });
-    const compact = ctx.level !== "statements";
-    const showLabel = !(compact && op && expr.concept === "Operation");
     const rows = Math.max(pins.length, 1) + params.length;
-    const gnode: GNode & { treeWidth?: number } = {
+    const explanations = ctx.explanations ? expressionExplanations(expr, ctx.flow.language).slice(0, 2) : [];
+    const data: ExprData = { expr, ownerId, path, flow: ctx.flow.symbol, language: ctx.flow.language, pins, params, explanations, paramRoles: callbackRoles?.params };
+    const gnode: GNode<ExprData> & { treeWidth?: number } = {
       id,
       type: "expr",
-      data: { expr, ownerId, path, flow: ctx.flow.symbol, language: ctx.flow.language, pins, compact, params } satisfies ExprData,
+      data,
       width: EXPR_WIDTH,
-      height: 34 + (showLabel ? lines(expr.label, 24) * 15 : 0) + (expr.target && !compact ? 15 : 0) + rows * EXPR_PIN_ROW,
+      height: 34 + rows * EXPR_PIN_ROW + explanations.length * 21,
       ports,
       attach: { to: ownerId, dx: depth, dy: 0 },
     };
@@ -378,32 +589,45 @@ function addExprTree(root: Expr, ownerId: string, target: { id: string; handle: 
       targetHandle: parent.handle,
       kind: "expr",
       layout: false,
-      data: { ty: expr.ty },
+      data: { ty: expr.ty, shape: expr.type_info?.shape },
     });
     if (expandLambda) {
       const scopes = lambdaScopes.get(ctx) ?? [];
       scopes.push(new Map(params.map((p) => [p, id])));
       lambdaScopes.set(ctx, scopes);
     }
-    const kids = ctx.count < MAX_EXPR_NODES ? subtrees : [];
+    const ys: number[] = [];
+    for (const s of subtrees) {
+      if (ctx.count < MAX_EXPR_NODES) {
+        ys.push(visit(s.expr, s.path, depth + 1, { id, handle: s.pin }, s.callbackRoles));
+        coverExpression(covered, s.expr);
+      } else {
+        inlineSubtree(s, layout, ctx);
+      }
+    }
+    if (!expandLambda && expr.concept !== "Pipeline") {
+      data.code = expressionCode(expr, ctx.source, covered);
+      gnode.height += codePreviewHeight(data.code);
+    }
     let y: number;
-    if (kids.length === 0) {
+    if (ys.length === 0) {
       y = leaves * TREE_ROW;
       leaves++;
     } else {
-      const ys = kids.map((s) => visit(s.expr, s.path, depth + 1, { id, handle: s.pin }));
       y = (ys[0] + ys[ys.length - 1]) / 2;
     }
     if (expandLambda) lambdaScopes.get(ctx)?.pop();
+    y = Math.max(y, nextRow.get(depth) ?? 0);
+    nextRow.set(depth, y + Math.max(TREE_ROW, gnode.height + TREE_ROW_GAP));
     gnode.attach!.dy = y;
     return y;
   };
-  visit(root, rootPath, 0, target);
+  visit(root, rootPath, 0, target, rootRoles);
   const width = (maxDepth + 1) * TREE_COL;
   for (const n of placed) {
     // depth → x: depth 0 is the right-most column.
     n.attach!.dx = width - (n.attach!.dx + 1) * TREE_COL;
     (n as GNode & { treeWidth?: number }).treeWidth = width;
   }
-  return { width, height: Math.max(leaves, 1) * TREE_ROW, placed };
+  return { width, height: Math.max(leaves * TREE_ROW, ...nextRow.values()), placed };
 }

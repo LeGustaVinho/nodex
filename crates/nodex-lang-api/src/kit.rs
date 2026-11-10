@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use nodex_ir::{
-    Access, CallTarget, Concept, Expr, FlowEdge, FlowEdgeKind, FlowGraph, FlowNode, Language, NodeId, Pin, PinKind,
+    Access, Binding, BindingForm, BindingOrigin, CallTarget, Concept, Expr, FlowEdge, FlowEdgeKind, FlowGraph, FlowNode, Focus, Language, NodeId, Pin, PinKind,
     Purity, Span, SymbolId, stable_id,
 };
 
@@ -38,7 +38,7 @@ impl<'a> LineIndex<'a> {
         let col = self
             .text
             .get(start..byte)
-            .map(|s| s.encode_utf16().count())
+            .map(|s| if line == 0 { s.strip_prefix('\u{feff}').unwrap_or(s) } else { s }.encode_utf16().count())
             .unwrap_or(byte - start);
         (line as u32 + 1, col as u32 + 1)
     }
@@ -91,6 +91,7 @@ pub fn truncate(text: &str, max: usize) -> String {
 pub struct NodeSpec {
     pub concept: Concept,
     pub label: String,
+    pub focus: Option<Focus>,
     /// Statement header used both for display and as the stable-id anchor.
     pub code: String,
     pub span: Span,
@@ -107,6 +108,7 @@ impl NodeSpec {
         Self {
             concept,
             label: label.into(),
+            focus: None,
             code: code.into(),
             span,
             flavors: Vec::new(),
@@ -118,6 +120,11 @@ impl NodeSpec {
 
     pub fn call(mut self, target: CallTarget) -> Self {
         self.calls.push(target);
+        self
+    }
+
+    pub fn focus(mut self, focus: Option<Focus>) -> Self {
+        self.focus = focus;
         self
     }
 
@@ -199,16 +206,39 @@ impl FlowBuilder {
         let is_entry = matches!(spec.concept, Concept::Entry | Concept::EventEntry);
         if spec.purity == Purity::Impure && !is_entry {
             inputs.push(Pin {
+                declaration: None,
+                type_info: None,
+                value_info: None,
                 id: "in".into(),
                 kind: PinKind::Exec,
                 label: String::new(),
                 ty: None,
+                binding: None,
             });
         }
+        let focus = spec.focus.or_else(|| {
+            let expr = spec.expr.as_ref()?;
+            if spec.concept == Concept::Call && expr.concept == Concept::Pipeline {
+                return expr.children.last()?.focus.clone();
+            }
+            let same_action = match spec.concept {
+                Concept::Assign | Concept::SetMember => expr.concept == Concept::Assign
+                    || (expr.concept == Concept::UnaryOp && matches!(expr.label.as_str(), "++" | "--")),
+                Concept::Subscribe => expr.concept == Concept::Assign,
+                Concept::Macro => matches!(expr.concept, Concept::Call | Concept::Macro),
+                Concept::Call => matches!(expr.concept, Concept::Call | Concept::Construct),
+                Concept::Construct | Concept::Await
+                | Concept::TypeCheck | Concept::Convert => spec.concept == expr.concept,
+                _ => false,
+            };
+            if same_action { expr.focus.clone() } else { None }
+        });
         self.nodes.push(FlowNode {
+            syntax_sites: None,
             id: id.clone(),
             concept: spec.concept,
             label: spec.label,
+            focus,
             code: truncate(&anchor, 160),
             span: spec.span,
             flavors: spec.flavors,
@@ -217,6 +247,7 @@ impl FlowBuilder {
             outputs: Vec::new(),
             expr: spec.expr,
             writes: Vec::new(),
+            binding_writes: Vec::new(),
             calls: spec.calls,
         });
         id
@@ -234,10 +265,14 @@ impl FlowBuilder {
         let n = self.node_mut(node);
         if !n.outputs.iter().any(|p| p.id == pin) {
             n.outputs.push(Pin {
+                declaration: None,
+                type_info: None,
+                value_info: None,
                 id: pin.into(),
                 kind: PinKind::Exec,
                 label: label.into(),
                 ty: None,
+                binding: None,
             });
         }
         (node.clone(), pin.to_owned())
@@ -246,29 +281,75 @@ impl FlowBuilder {
     /// Adds a data output pin for a local variable and defines it in the current scope.
     pub fn define(&mut self, node: &NodeId, name: &str, ty: Option<String>) {
         let pin = format!("var:{name}");
+        self.define_pin(node, pin, name, ty, None);
+    }
+
+    /// Define a local with source-proven declaration rules. Resolve the previous
+    /// binding before inserting the new one into the scope.
+    pub fn declare(&mut self, node: &NodeId, name: &str, ty: Option<String>, form: BindingForm, reassignable: bool, has_initializer: bool) {
+        self.declare_on(node, format!("var:{name}"), name, ty, form, reassignable, has_initializer);
+    }
+
+    pub fn declare_on(&mut self, node: &NodeId, pin: String, name: &str, ty: Option<String>, form: BindingForm, reassignable: bool, has_initializer: bool) {
+        // The initializer of a redeclaration runs on this path, but uses the existing
+        // function binding. Keep later reads tied to that binding across branches.
+        if form == BindingForm::Var && self.scopes[0].iter().any(|(existing, ..)| existing == name) {
+            if has_initializer {
+                self.write_output(node, name);
+            }
+            return;
+        }
+        let shadows = (form != BindingForm::Var).then(|| self.lookup(name)).flatten()
+            .filter(|(old_node, old_pin)| old_node != node || old_pin != &pin)
+            .map(|(node, pin)| BindingOrigin { node, pin });
+        let binding = Binding { form, reassignable, has_initializer, shadows };
+        self.define_pin(node, pin, name, ty, Some(binding));
+    }
+
+    fn define_pin(&mut self, node: &NodeId, pin: String, name: &str, ty: Option<String>, binding: Option<Binding>) {
+        let function_scoped = binding.as_ref().is_some_and(|rule| rule.form == BindingForm::Var);
         let n = self.node_mut(node);
         if !n.outputs.iter().any(|p| p.id == pin) {
             n.outputs.push(Pin {
+                declaration: None,
+                type_info: None,
+                value_info: None,
                 id: pin.clone(),
                 kind: PinKind::Data,
                 label: name.into(),
                 ty,
+                binding,
             });
         }
         if !n.writes.iter().any(|w| w == name) {
             n.writes.push(name.into());
         }
-        self.scopes
-            .last_mut()
-            .expect("scope stack is never empty")
-            .push((name.into(), node.clone(), pin));
+        let scope = if function_scoped { &mut self.scopes[0] } else { self.scopes.last_mut().expect("scope stack is never empty") };
+        scope.push((name.into(), node.clone(), pin));
     }
 
     /// Records that `node` writes an existing local (assignment, increment).
     pub fn write(&mut self, node: &NodeId, name: &str) {
+        let definition = self.lookup(name).map(|(node, pin)| BindingOrigin { node, pin });
         let n = self.node_mut(node);
         if !n.writes.iter().any(|w| w == name) {
             n.writes.push(name.into());
+        }
+        if let Some(definition) = definition
+            && !n.binding_writes.contains(&definition)
+        {
+            n.binding_writes.push(definition);
+        }
+    }
+
+    /// Expose an updated local as a result without changing its lexical definition.
+    pub fn write_output(&mut self, node: &NodeId, name: &str) {
+        let ty = self.type_of(name);
+        self.write(node, name);
+        let pin = format!("write:{name}");
+        let n = self.node_mut(node);
+        if !n.outputs.iter().any(|p| p.id == pin) {
+            n.outputs.push(Pin { declaration: None, type_info: None, value_info: None, id: pin, kind: PinKind::Data, label: name.into(), ty, binding: None });
         }
     }
 
@@ -322,7 +403,7 @@ impl FlowBuilder {
     pub fn read_with(&mut self, node: &NodeId, name: &str, access: Option<Access>) {
         let rank = |a: Option<Access>| match a {
             Some(Access::BorrowMut) => 4,
-            Some(Access::Move) => 3,
+            Some(Access::Move | Access::ByValue) => 3,
             Some(Access::Borrow) => 2,
             Some(Access::Copy) => 1,
             None => 0,
@@ -353,10 +434,14 @@ impl FlowBuilder {
             return;
         }
         n.inputs.push(Pin {
+            declaration: None,
+            type_info: None,
+            value_info: None,
             id: pin.clone(),
             kind: PinKind::Data,
             label,
             ty,
+            binding: None,
         });
         self.edges.push(FlowEdge {
             from: def_node,
@@ -395,6 +480,11 @@ impl FlowBuilder {
         self.nodes.len()
     }
 
+    /// ID of a node at an earlier `node_count()` checkpoint, if lowering created one.
+    pub fn node_id_at(&self, index: usize) -> Option<&str> {
+        self.nodes.get(index).map(|node| node.id.as_str())
+    }
+
     /// Adds a flavor to the node created at position `index`, if it exists.
     pub fn add_flavor_at(&mut self, index: usize, flavor: &str) {
         if let Some(n) = self.nodes.get_mut(index)
@@ -419,6 +509,7 @@ impl FlowBuilder {
             name: name.into(),
             language,
             span,
+            source_revision: None,
             nodes: self.nodes,
             edges: self.edges,
         }

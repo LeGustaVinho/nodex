@@ -8,13 +8,26 @@ export const isTypeKind = (k: SymbolKind) => TYPE_KINDS.includes(k);
 /** Containers of declarations: namespaces (C#, TypeScript `namespace`) and file modules (TypeScript, Rust). */
 export const isScopeKind = (k: SymbolKind) => k === "Namespace" || k === "Module";
 
+export const isFileModule = (s: Symbol) =>
+  s.kind === "Module" && (s.language === "typescript" || s.language === "rust") &&
+  !s.external && !s.flavors.includes("inline-module");
+
+export const isBlueprintContainer = (s: Symbol) => isTypeKind(s.kind) || isFileModule(s);
+
 /** Indexes over a structure graph, shared by views. */
 export class StructureIndex {
   byId = new Map<string, Symbol>();
   children = new Map<string, Symbol[]>();
+  private modulesByFile = new Map<string, Symbol>();
+  private subscribers?: Map<string, Symbol[]>;
 
   constructor(public graph: StructureGraph) {
-    for (const s of graph.symbols) this.byId.set(s.id, s);
+    for (const s of graph.symbols) {
+      this.byId.set(s.id, s);
+      if (isFileModule(s)) {
+        for (const origin of s.origins) this.modulesByFile.set(origin.file, s);
+      }
+    }
     for (const s of graph.symbols) {
       if (!s.parent) continue;
       const list = this.children.get(s.parent) ?? [];
@@ -28,6 +41,22 @@ export class StructureIndex {
     let cur = this.byId.get(id);
     while (cur && !isTypeKind(cur.kind)) cur = cur.parent ? this.byId.get(cur.parent) : undefined;
     return cur;
+  }
+
+  /** Subscription targets discovered in source. The live list can depend on execution. */
+  eventSubscribers(event: string): readonly Symbol[] {
+    if (!this.subscribers) {
+      this.subscribers = new Map();
+      for (const edge of this.graph.edges) {
+        if (edge.kind !== "Subscribes") continue;
+        const subscriber = this.byId.get(edge.to);
+        if (!subscriber) continue;
+        const list = this.subscribers.get(edge.from) ?? [];
+        list.push(subscriber);
+        this.subscribers.set(edge.from, list);
+      }
+    }
+    return this.subscribers.get(event) ?? [];
   }
 
   namespaceOf(id: string): string | null {
@@ -84,6 +113,11 @@ export class StructureIndex {
     const stem = file.split("/").at(-1)?.replace(/(?:\.d)?\.[^.]+$/, "").toLowerCase();
     const named = types.filter((s) => s.name.toLowerCase() === stem);
     return named.length === 1 ? named[0] : undefined;
+  }
+
+  /** In Blueprint view prefer a clear type match. Files with a module can also open as a whole. */
+  fileBlueprint(file: string, inBlueprintView: boolean): Symbol | undefined {
+    return (inBlueprintView ? this.primaryTypeInFile(file) : undefined) ?? this.modulesByFile.get(file);
   }
 }
 

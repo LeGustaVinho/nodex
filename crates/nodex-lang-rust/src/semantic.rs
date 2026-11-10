@@ -10,10 +10,15 @@
 //! library first). Install it with `rustup component add rust-analyzer`, or point
 //! `NODEX_RUST_ANALYZER` at a binary.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use nodex_ir::semantic::{ByteRange, LocalTypeFact, RefKind, SemanticFacts, SemanticRef, SemanticTarget};
+use nodex_ir::semantic::{ByteRange, LocalTypeFact, RefKind, RustNominalType, SemanticFacts, SemanticRef, SemanticTarget, TypeFact, ValueFact, ValueFactTarget};
+use nodex_ir::types::{CollectionKind, TypeInfo, TypeOrigin, TypeShape, native_shape};
+use nodex_ir::{Language, ValueBasis, ValueInfo, ValueKind};
+use nodex_lang_api::blueprint_types::{expression_type, project_pattern};
+use nodex_lang_api::kit::LineIndex;
+use nodex_lang_api::syntax::{Src, named_children};
 use nodex_lang_api::SemanticProvider;
 use protobuf::Message;
 use tree_sitter::Node;
@@ -99,12 +104,7 @@ impl RustAnalyzer {
     fn facts(&self) -> Result<SemanticFacts, String> {
         let mut facts = SemanticFacts {
             source: format!("{} (SCIP)", self.version),
-            refs: Vec::new(),
-            locals: Vec::new(),
-            navigation: None,
-            implementation_contracts: Vec::new(),
-            configuration_files: Vec::new(),
-            messages: Vec::new(),
+            ..Default::default()
         };
         for (n, crate_root) in self.crate_roots.iter().enumerate() {
             let index = self.index(crate_root, n)?;
@@ -132,7 +132,14 @@ impl SemanticProvider for RustAnalyzer {
 /// A parsed SCIP symbol: `rust-analyzer cargo <package> <version> <descriptors>`.
 struct Sym<'s> {
     package: &'s str,
+    version: &'s str,
     descriptors: &'s str,
+}
+
+impl Sym<'_> {
+    fn standard(&self) -> bool {
+        matches!(self.package, "alloc" | "core" | "std") && self.version.starts_with("https://github.com/rust-lang/rust/")
+    }
 }
 
 fn parse_symbol(symbol: &str) -> Option<Sym<'_>> {
@@ -140,8 +147,8 @@ fn parse_symbol(symbol: &str) -> Option<Sym<'_>> {
         return None;
     }
     let mut parts = symbol.splitn(5, ' ');
-    let (_scheme, _manager, package, _version, descriptors) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?, parts.next()?);
-    Some(Sym { package, descriptors })
+    let (_scheme, _manager, package, version, descriptors) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    Some(Sym { package, version, descriptors })
 }
 
 /// `vec/Vec#push().` → `["vec", "Vec", "push()"]`; `impl#[`Foo<T>`][Display]fmt().` → `["Foo", "fmt()"]`.
@@ -268,6 +275,465 @@ fn local_signature(text: &str) -> Option<(String, String)> {
     Some((name.to_owned(), ty.trim().to_owned()))
 }
 
+fn named_value_site(node: Node<'_>) -> Option<(Node<'_>, ValueFactTarget)> {
+    let target = match node.kind() {
+        "field_declaration" => ValueFactTarget::Member,
+        "parameter" | "let_declaration" => ValueFactTarget::Binding,
+        _ => return None,
+    };
+    let mut name = node.child_by_field_name("name").or_else(|| node.child_by_field_name("pattern"))?;
+    if name.kind() == "mut_pattern" {
+        name = named_children(name).into_iter().last()?;
+    }
+    (name.kind() == "identifier" || name.kind() == "field_identifier").then_some((name, target))
+}
+
+fn outer_type_declaration(mut name: Node<'_>) -> Option<(Node<'_>, bool)> {
+    let mut by_reference = false;
+    while let Some(parent) = name.parent() {
+        let field = match parent.kind() {
+            "generic_type" => "type",
+            "scoped_type_identifier" => "name",
+            "tuple_type" if crate::syntax::unparen_type(parent).id() == crate::syntax::unparen_type(name).id() => {
+                name = parent;
+                continue;
+            }
+            "reference_type" if !by_reference => {
+                by_reference = true;
+                "type"
+            }
+            _ => return parent.child_by_field_name("type").filter(|ty| ty.id() == name.id()).map(|_| (parent, by_reference)),
+        };
+        if !parent.child_by_field_name(field).is_some_and(|part| part.id() == name.id()) {
+            return None;
+        }
+        name = parent;
+    }
+    None
+}
+
+/// A constructor fixes the outer type of an unannotated local, including a
+/// direct borrow of the constructor. Explicit annotations may coerce it.
+fn constructor_type_sites(mut value: Node<'_>) -> Vec<(Node<'_>, bool)> {
+    let mut sites = vec![(value, false)];
+    let mut by_reference = false;
+    while let Some(parent) = value.parent() {
+        match parent.kind() {
+            "parenthesized_expression" => {}
+            "reference_expression" if !by_reference
+                && !nodex_lang_api::syntax::children(parent).iter().any(|child| child.kind() == "raw")
+                && parent.child_by_field_name("value").is_some_and(|operand| operand.id() == value.id()) =>
+            {
+                by_reference = true;
+                sites.push((parent, true));
+            }
+            "let_declaration" if parent.child_by_field_name("type").is_none()
+                && parent.child_by_field_name("value").is_some_and(|initializer| initializer.id() == value.id()) =>
+            {
+                if let Some((binding, _)) = named_value_site(parent) {
+                    sites.push((binding, by_reference));
+                }
+                break;
+            }
+            _ => break,
+        }
+        value = parent;
+    }
+    sites
+}
+
+fn propagate_nominal_locals(
+    facts: &mut Vec<RustNominalType>,
+    first: usize,
+    file: &str,
+    root: Node<'_>,
+    definitions: &HashMap<&str, (usize, usize)>,
+    mut uses: Vec<(usize, usize, &str)>,
+) {
+    let mut types = HashMap::new();
+    let record = |fact: &RustNominalType, types: &mut HashMap<_, _>| {
+        let evidence = (fact.declaration.clone(), fact.by_reference);
+        types.entry((fact.site.start, fact.site.end)).and_modify(|previous: &mut Option<_>| {
+            if previous.as_ref() != Some(&evidence) {
+                *previous = None;
+            }
+        }).or_insert(Some(evidence));
+    };
+    for fact in &facts[first..] {
+        record(fact, &mut types);
+    }
+    uses.sort_unstable_by_key(|&(start, _, _)| start);
+    for (start, end, symbol) in uses {
+        let Some(&(decl_start, decl_end)) = definitions.get(symbol) else { continue };
+        let Some(Some((declaration, by_reference))) = types.get(&(decl_start as u32, decl_end as u32)).cloned() else { continue };
+        let Some(name) = root.descendant_for_byte_range(start, end).filter(|name| name.kind() == "identifier") else { continue };
+        for (node, borrow) in constructor_type_sites(name).into_iter().skip(1) {
+            if borrow && by_reference {
+                continue;
+            }
+            let fact = RustNominalType {
+                site: ByteRange { file: file.to_owned(), start: node.start_byte() as u32, end: node.end_byte() as u32 },
+                declaration: declaration.clone(),
+                by_reference: by_reference || borrow,
+            };
+            record(&fact, &mut types);
+            facts.push(fact);
+        }
+    }
+}
+
+fn local_nominal_type(name: Node<'_>) -> bool {
+    let Some(decl) = name.parent() else { return false };
+    matches!(decl.kind(), "struct_item" | "enum_item" | "union_item") &&
+        decl.child_by_field_name("name").is_some_and(|id| id.id() == name.id())
+}
+
+type TypeIdentities = BTreeMap<usize, (usize, String)>;
+type Range = (usize, usize);
+
+struct ReturnType {
+    info: TypeInfo,
+    generics: Vec<Option<String>>,
+    parameters: Vec<Option<TypeShape>>,
+    receiver: bool,
+    owner: Option<TypeShape>,
+    owner_generics: Vec<String>,
+}
+
+#[derive(Default)]
+struct InitializerTypes<'a> {
+    shapes: HashMap<Range, TypeShape>,
+    calls: HashMap<Range, &'a ReturnType>,
+}
+
+/// SCIP identifies the tokens in written types, while signatures of locals use short names.
+fn written_shape(ty: Node<'_>, text: &str, identities: &TypeIdentities) -> TypeShape {
+    let mut resolved = String::new();
+    let mut start = ty.start_byte();
+    for (&at, (end, path)) in identities.range(ty.byte_range()) {
+        if at < start || *end > ty.end_byte() { continue; }
+        resolved.push_str(&text[start..at]);
+        resolved.push_str(path);
+        start = *end;
+    }
+    resolved.push_str(&text[start..ty.end_byte()]);
+    native_shape(Language::Rust, &resolved)
+}
+
+fn standard_type_identities(doc: &scip::types::Document, starts: &[usize], root: Node<'_>) -> TypeIdentities {
+    doc.occurrences.iter().filter_map(|occurrence| {
+        let symbol = parse_symbol(&occurrence.symbol)?;
+        if !symbol.standard() || kind_of(symbol.descriptors) != "type" { return None; }
+        let path = display(&symbol);
+        if !matches!(native_shape(Language::Rust, &path), TypeShape::Collection { .. } | TypeShape::Scalar { .. }) {
+            return None;
+        }
+        let (start, end) = range_bytes(starts, &occurrence.range)?;
+        let mut node = root.descendant_for_byte_range(start, end)?;
+        if node.start_byte() != start || node.end_byte() != end { return None; }
+        while let Some(parent) = node.parent().filter(|parent| {
+            matches!(parent.kind(), "scoped_type_identifier" | "scoped_identifier")
+                && parent.child_by_field_name("name").is_some_and(|name| name.id() == node.id())
+        }) {
+            node = parent;
+        }
+        Some((node.start_byte(), (node.end_byte(), path)))
+    }).collect()
+}
+
+fn with_type_identity(inferred: TypeShape, evidence: &TypeShape) -> TypeShape {
+    let refine = |inferred: Vec<TypeShape>, hints: &[TypeShape]| {
+        if inferred.is_empty() { return hints.to_vec(); }
+        inferred.into_iter().enumerate().map(|(i, shape)| match hints.get(i) {
+            Some(hint) => with_type_identity(shape, hint),
+            None => shape,
+        }).collect()
+    };
+    match (inferred, evidence) {
+        (TypeShape::Unknown, known) => known.clone(),
+        (TypeShape::Named { arguments, .. },
+            TypeShape::Collection { family, arguments: hints, rank, length }) =>
+            TypeShape::Collection { family: *family, arguments: refine(arguments, hints), rank: *rank, length: length.clone() },
+        (TypeShape::Collection { family, arguments, rank, length },
+            TypeShape::Collection { family: hint_family, arguments: hints, .. }) if family == *hint_family =>
+            TypeShape::Collection { family, arguments: refine(arguments, hints), rank, length },
+        (TypeShape::Named { name, arguments }, TypeShape::Named { name: written, arguments: hints }) if &name == written =>
+            TypeShape::Named { name, arguments: refine(arguments, hints) },
+        (TypeShape::Named { name, .. }, TypeShape::Scalar { name: known }) if &name == known =>
+            TypeShape::scalar(known),
+        (TypeShape::Tuple { items }, TypeShape::Tuple { items: hints }) =>
+            TypeShape::Tuple { items: refine(items, hints) },
+        (TypeShape::Indirect { pointer, target }, TypeShape::Indirect { target: hint, .. }) =>
+            TypeShape::Indirect { pointer, target: Box::new(with_type_identity(*target, hint)) },
+        (other, _) => other,
+    }
+}
+
+fn infer_type_arguments(
+    formal: &TypeShape, actual: &TypeShape, inferred: &mut HashMap<&str, Option<TypeShape>>,
+) {
+    if let TypeShape::Named { name, arguments } = formal
+        && arguments.is_empty()
+        && let Some(binding) = inferred.get_mut(name.as_str())
+    {
+        if *actual != TypeShape::Unknown {
+            match binding {
+                None => *binding = Some(actual.clone()),
+                Some(previous) if previous != actual => *previous = TypeShape::Unknown,
+                _ => {}
+            }
+        }
+        return;
+    }
+    let (formals, actuals) = match (formal, actual) {
+        (TypeShape::Named { name: a, arguments: formals }, TypeShape::Named { name: b, arguments: actuals }) if a == b =>
+            (formals, actuals),
+        (TypeShape::Collection { family: a, arguments: formals, .. },
+            TypeShape::Collection { family: b, arguments: actuals, .. }) if a == b => (formals, actuals),
+        (TypeShape::Tuple { items: formals }, TypeShape::Tuple { items: actuals }) => (formals, actuals),
+        (TypeShape::Indirect { pointer: a, target: formal }, TypeShape::Indirect { pointer: b, target: actual }) if a == b => {
+            infer_type_arguments(formal, actual, inferred);
+            return;
+        }
+        _ => return,
+    };
+    for (formal, actual) in formals.iter().zip(actuals) {
+        infer_type_arguments(formal, actual, inferred);
+    }
+}
+
+fn substitute_type_arguments(shape: &mut TypeShape, types: &HashMap<&str, Option<TypeShape>>) {
+    let children = match shape {
+        TypeShape::Named { name, arguments } => {
+            if arguments.is_empty() && let Some(ty) = types.get(name.as_str()) {
+                *shape = ty.clone().unwrap_or(TypeShape::Unknown);
+                return;
+            }
+            arguments
+        }
+        TypeShape::Collection { arguments, .. } => arguments,
+        TypeShape::Tuple { items } | TypeShape::Union { items } => items,
+        TypeShape::Indirect { target, .. } => {
+            substitute_type_arguments(target, types);
+            return;
+        }
+        _ => return,
+    };
+    for child in children {
+        substitute_type_arguments(child, types);
+    }
+}
+
+fn call_result<'tree>(
+    template: &ReturnType, call: Node<'tree>, src: Src<'_>, identities: &TypeIdentities,
+    argument_type: impl Fn(Node<'tree>) -> Option<TypeShape>,
+) -> TypeShape {
+    let mut types: HashMap<_, _> = template.generics.iter().flatten().chain(&template.owner_generics)
+        .map(|name| (name.as_str(), None)).collect();
+    let function = call.child_by_field_name("function");
+    let explicit = function.and_then(|function| function.child_by_field_name("type_arguments"));
+    let callee = function.and_then(|function| if function.kind() == "generic_function" {
+        function.child_by_field_name("function")
+    } else { Some(function) });
+    let args: Vec<_> = call.child_by_field_name("arguments").map(named_children).unwrap_or_default()
+        .into_iter().filter(|arg| !arg.is_extra()).collect();
+    let method = template.receiver && callee.is_some_and(|callee| callee.kind() == "field_expression");
+    if let Some(owner) = &template.owner {
+        let receiver = if method {
+            callee.and_then(|callee| callee.child_by_field_name("value"))
+        } else {
+            args.first().copied().filter(|_| template.receiver)
+        };
+        if let Some(actual) = receiver.and_then(&argument_type) {
+            let mut target = &actual;
+            while let TypeShape::Indirect { pointer: false, target: inner } = target {
+                target = inner;
+            }
+            infer_type_arguments(owner, target, &mut types);
+        }
+        if !method && let Some(qualifier) = callee.and_then(|callee| callee.child_by_field_name("path")) {
+            infer_type_arguments(owner, &written_shape(qualifier, src.text, identities), &mut types);
+        }
+    }
+    for (formal, arg) in template.parameters.iter().skip(usize::from(method)).zip(args) {
+        if let Some(formal) = formal && let Some(actual) = argument_type(arg) {
+            infer_type_arguments(formal, &actual, &mut types);
+        }
+    }
+    if let Some(owner) = &template.owner {
+        let mut actual = owner.clone();
+        substitute_type_arguments(&mut actual, &types);
+        types.insert("Self", Some(actual));
+    }
+    if let Some(explicit) = explicit {
+        let args = named_children(explicit).into_iter().filter(|arg| !arg.is_extra() && arg.kind() != "lifetime");
+        for (name, arg) in template.generics.iter().zip(args) {
+            if let Some(name) = name && src.text(arg) != "_" {
+                types.insert(name, Some(written_shape(arg, src.text, identities)));
+            }
+        }
+    }
+    let mut shape = template.info.shape.clone();
+    substitute_type_arguments(&mut shape, &types);
+    shape
+}
+
+fn type_parameters(declaration: Node<'_>, text: &str) -> Vec<Option<String>> {
+    declaration.child_by_field_name("type_parameters").map(named_children).unwrap_or_default()
+        .into_iter().filter_map(|param| match param.kind() {
+            "type_parameter" => Some(param.child_by_field_name("name").map(|name| text[name.byte_range()].to_owned())),
+            "const_parameter" => Some(None),
+            _ => None,
+        }).collect()
+}
+
+/// A nested element must be a complete vec! invocation. Direct arguments share the
+/// outer macro's lexical scope, even when SCIP only identifies the outer invocation.
+fn vec_macro_shape(tokens: Node<'_>, name: &str, text: &str, resolved: &HashSet<Range>, depth: u8) -> TypeShape {
+    use nodex_lang_api::syntax::children;
+    let contents: Vec<_> = children(tokens).into_iter().filter(|child| !child.is_extra()).collect();
+    let mut element = TypeShape::Unknown;
+    if depth < 7 && contents.len() >= 2 {
+        let arguments = &contents[1..contents.len() - 1];
+        for argument in arguments.split(|node| matches!(node.kind(), "," | ";")) {
+            let [path @ .., bang, nested] = argument else { continue };
+            let (Some(first), Some(last)) = (path.first(), path.last()) else { continue };
+            let spelling = &text[first.start_byte()..last.end_byte()];
+            let resolved_path = resolved.contains(&(last.start_byte(), last.end_byte()))
+                && path.iter().rev().enumerate().all(|(i, part)| if i % 2 == 0 {
+                    matches!(part.kind(), "identifier" | "crate" | "self" | "super")
+                } else { part.kind() == "::" });
+            if bang.kind() == "!" && nested.kind() == "token_tree"
+                && (spelling == name || resolved_path)
+            {
+                element = with_type_identity(element, &vec_macro_shape(*nested, spelling, text, resolved, depth + 1));
+            }
+        }
+    }
+    TypeShape::collection(CollectionKind::List, vec![element])
+}
+
+fn initializer_type(
+    src: Src<'_>, value: Node<'_>, identities: &TypeIdentities, initializers: &InitializerTypes<'_>,
+    local: &impl Fn(Range) -> Option<TypeShape>, depth: usize,
+) -> Option<TypeShape> {
+    if depth > 12 { return None; }
+    let range = (value.start_byte(), value.end_byte());
+    if let Some(shape) = initializers.shapes.get(&range).cloned().or_else(|| local(range)) {
+        return Some(shape);
+    }
+    let child_type = |child| initializer_type(src, child, identities, initializers, local, depth + 1);
+    if let Some(template) = initializers.calls.get(&range) {
+        return Some(call_result(template, value, src, identities, child_type));
+    }
+    let operands = || named_children(value).into_iter().filter(|child| !child.is_extra());
+    match value.kind() {
+        "parenthesized_expression" | "negative_literal" => child_type(operands().next()?),
+        "reference_expression" => {
+            let operand = value.child_by_field_name("value")?;
+            let pointer = nodex_lang_api::syntax::children(value).iter().any(|child| child.kind() == "raw");
+            Some(TypeShape::Indirect { pointer, target: Box::new(child_type(operand)?) })
+        }
+        "tuple_expression" => Some(TypeShape::Tuple {
+            items: operands().map(|child| child_type(child).unwrap_or(TypeShape::Unknown)).collect(),
+        }),
+        "array_expression" => {
+            let TypeShape::Collection { family, rank, length, .. } = expression_type(Language::Rust, src, value)? else {
+                return None;
+            };
+            let repeat = value.child_by_field_name("length");
+            let element = TypeShape::union(operands().filter(|child| repeat != Some(*child))
+                .map(|child| child_type(child).unwrap_or(TypeShape::Unknown)));
+            Some(TypeShape::Collection { family, rank, length, arguments: vec![element] })
+        }
+        "integer_literal" | "float_literal" | "boolean_literal" | "char_literal" |
+        "string_literal" | "raw_string_literal" => {
+            let shape = expression_type(Language::Rust, src, value)?;
+            (!matches!(&shape, TypeShape::Scalar { name } if matches!(name.as_str(), "Integer" | "Float"))).then_some(shape)
+        }
+        _ => None,
+    }
+}
+
+fn rust_type_facts(
+    facts: &mut SemanticFacts,
+    file: &str,
+    text: &str,
+    root: Node<'_>,
+    definitions: &HashMap<&str, (usize, usize)>,
+    uses: &[(usize, usize, &str)],
+    signatures: &HashMap<&str, &str>,
+    identities: &TypeIdentities,
+    initializers: &InitializerTypes<'_>,
+) {
+    let index = LineIndex::new(text);
+    let src = Src { text, file, index: &index };
+    let site = |start: usize, end: usize| ByteRange { file: file.into(), start: start as u32, end: end as u32 };
+    let mut types: HashMap<_, TypeInfo> = HashMap::new();
+    let uses_by_site: HashMap<_, _> = uses.iter().map(|&(start, end, symbol)| ((start, end), symbol)).collect();
+    let initializer = |value, types: &HashMap<&str, TypeInfo>| {
+        initializer_type(src, value, identities, initializers, &|range| {
+            types.get(uses_by_site.get(&range)?).map(|info| info.shape.clone())
+        }, 0)
+    };
+    let mut bindings: Vec<_> = definitions.iter().collect();
+    bindings.sort_by_key(|(_, (start, _))| *start);
+    let mut typed_initializers = HashSet::new();
+    for (&symbol, &(start, end)) in bindings {
+        let Some((_, ty)) = signatures.get(symbol).and_then(|sig| local_signature(sig)) else { continue };
+        let leaf = root.descendant_for_byte_range(start, end);
+        let declaration = leaf.and_then(|name| {
+            std::iter::successors(name.parent(), Node::parent)
+                .find(|parent| matches!(parent.kind(), "parameter" | "let_declaration" | "match_arm" | "for_expression"))
+        });
+        let origin = if declaration.and_then(|decl| decl.child_by_field_name("type")).is_some() {
+            TypeOrigin::Declared
+        } else {
+            TypeOrigin::Compiler
+        };
+        let mut shape = native_shape(Language::Rust, &ty);
+        let mut native = ty.clone();
+        if let Some(declaration) = declaration
+            && let Some(pattern) = declaration.child_by_field_name("pattern")
+            && let Some(leaf) = leaf
+        {
+            if let Some(written) = declaration.child_by_field_name("type") {
+                if let Some(written) = project_pattern(src, pattern, written, leaf) {
+                    shape = with_type_identity(shape, &written_shape(written, text, identities));
+                    native = text[written.byte_range()].to_owned();
+                }
+            } else if let Some(value) = declaration.child_by_field_name("value")
+                && let Some(value) = project_pattern(src, pattern, value, leaf)
+                && let Some(evidence) = initializer(value, &types)
+            {
+                shape = with_type_identity(shape, &evidence);
+                typed_initializers.insert((value.start_byte(), value.end_byte()));
+                facts.types.push(TypeFact { site: site(value.start_byte(), value.end_byte()), target: ValueFactTarget::Expression,
+                    info: TypeInfo::new(shape.clone(), TypeOrigin::Compiler, Some(ty)) });
+            }
+        }
+        let info = TypeInfo::new(shape, origin, Some(native));
+        facts.types.push(TypeFact { site: site(start, end), target: ValueFactTarget::Binding, info: info.clone() });
+        types.insert(symbol, info);
+    }
+    for &(start, end) in initializers.shapes.keys().chain(initializers.calls.keys()) {
+        if !typed_initializers.contains(&(start, end))
+            && let Some(value) = root.descendant_for_byte_range(start, end)
+            && let Some(shape) = initializer(value, &types)
+        {
+            facts.types.push(TypeFact { site: site(start, end), target: ValueFactTarget::Expression,
+                info: TypeInfo::new(shape, TypeOrigin::Compiler, None) });
+        }
+    }
+    for &(start, end, symbol) in uses {
+        if let Some(info) = types.get(symbol) {
+            let mut info = info.clone();
+            info.origin = TypeOrigin::Compiler;
+            facts.types.push(TypeFact { site: site(start, end), target: ValueFactTarget::Expression, info });
+        }
+    }
+}
+
 fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages: &HashSet<String>, facts: &mut SemanticFacts) {
     // Where each project symbol is defined, and what every symbol is.
     let rel_of = |doc: &scip::types::Document| {
@@ -296,11 +762,52 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         }
     }
 
+    let mut typed_documents = HashMap::new();
     for doc in &index.documents {
         let rel = rel_of(doc);
         let Some((text, starts)) = texts.get(&rel) else { continue };
         let Some(tree) = crate::parse(text) else { continue };
+        let identities = standard_type_identities(doc, starts, tree.root_node());
+        typed_documents.insert(rel, (tree, identities));
+    }
+    let return_types: HashMap<_, _> = definitions.iter().filter_map(|(&symbol, definition)| {
+        if !matches!(kind_of(parse_symbol(symbol)?.descriptors), "method" | "function") { return None; }
+        let (text, _) = texts.get(&definition.file)?;
+        let (tree, identities) = typed_documents.get(&definition.file)?;
+        let name = tree.root_node().descendant_for_byte_range(definition.start as usize, definition.end as usize)?;
+        let function = name.parent().filter(|parent| matches!(parent.kind(), "function_item" | "function_signature_item"))?;
+        let ty = function.child_by_field_name("return_type")?;
+        let shape = written_shape(ty, text, identities);
+        let info = TypeInfo::new(shape, TypeOrigin::Declared, Some(text[ty.byte_range()].to_owned()));
+        let generics = type_parameters(function, text);
+        let implementation = function.parent().and_then(|body| body.parent()).filter(|node| node.kind() == "impl_item");
+        let owner = implementation.and_then(|node| node.child_by_field_name("type")).map(|ty| written_shape(ty, text, identities));
+        let owner_generics = implementation.into_iter().flat_map(|node| type_parameters(node, text)).flatten().collect();
+        let parameters = function.child_by_field_name("parameters").map(named_children).unwrap_or_default();
+        let receiver = parameters.iter().find(|param| !param.is_extra()).is_some_and(|param| param.kind() == "self_parameter");
+        let parameters = parameters.into_iter().filter(|param| !param.is_extra()).map(|param| {
+            param.child_by_field_name("type").map(|ty| written_shape(ty, text, identities))
+        }).collect();
+        Some((symbol, (definition, ReturnType { info, generics, parameters, receiver, owner, owner_generics })))
+    }).collect();
+    for (definition, result) in return_types.values() {
+        facts.types.push(TypeFact { site: (*definition).clone(), target: ValueFactTarget::Member, info: result.info.clone() });
+    }
+
+    for doc in &index.documents {
+        let rel = rel_of(doc);
+        let Some((text, starts)) = texts.get(&rel) else { continue };
+        let Some((tree, identities)) = typed_documents.get(&rel) else { continue };
         let root_node = tree.root_node();
+        let first_nominal = facts.rust_nominal_types.len();
+        let mut local_definitions = HashMap::new();
+        let mut local_uses = Vec::new();
+        let mut initializers = InitializerTypes::default();
+        let vec_macros: HashSet<_> = doc.occurrences.iter().filter_map(|occurrence| {
+            let symbol = parse_symbol(&occurrence.symbol)?;
+            (symbol.standard() && matches!(display(&symbol).as_str(), "alloc::macros::vec!" | "alloc::vec!" | "std::vec!"))
+                .then(|| range_bytes(starts, &occurrence.range)).flatten()
+        }).collect();
         let signatures: HashMap<&str, &str> = doc
             .symbols
             .iter()
@@ -312,6 +819,11 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             let site = |a: usize, b: usize| ByteRange { file: rel.clone(), start: a as u32, end: b as u32 };
             // Local definitions: their types.
             if o.symbol.starts_with("local ") {
+                if o.symbol_roles & 1 == 1 {
+                    local_definitions.insert(o.symbol.as_str(), (s, e));
+                } else {
+                    local_uses.push((s, e, o.symbol.as_str()));
+                }
                 if o.symbol_roles & 1 == 1
                     && let Some(sig) = signatures.get(o.symbol.as_str())
                     && let Some((name, ty)) = local_signature(sig)
@@ -324,12 +836,23 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                 continue;
             }
             let Some(sym) = parse_symbol(&o.symbol) else { continue };
+            let external = !local_packages.contains(sym.package);
             if sym.descriptors.ends_with('!') {
+                if vec_macros.contains(&(s, e))
+                    && let Some(name) = root_node.descendant_for_byte_range(s, e)
+                    && let Some(invocation) = std::iter::successors(Some(name), Node::parent)
+                        .find(|node| node.kind() == "macro_invocation")
+                    && let Some(macro_name) = invocation.child_by_field_name("macro")
+                    && macro_name.start_byte() <= s && e <= macro_name.end_byte()
+                    && let Some(tokens) = named_children(invocation).into_iter().find(|node| node.kind() == "token_tree")
+                {
+                    initializers.shapes.insert((invocation.start_byte(), invocation.end_byte()),
+                        vec_macro_shape(tokens, &text[macro_name.byte_range()], text, &vec_macros, 0));
+                }
                 continue;
             }
             let Some(name) = root_node.descendant_for_byte_range(s, e) else { continue };
             let kind = kind_of(sym.descriptors);
-            let external = !local_packages.contains(sym.package);
             let segs = segments(sym.descriptors);
             let target = SemanticTarget {
                 decl: if external { None } else { definitions.get(o.symbol.as_str()).cloned() },
@@ -339,6 +862,87 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                 linq: false,
                 external,
             };
+            let mut add_value = |node: Node, fact_target, mut info: ValueInfo| {
+                info.basis = ValueBasis::TypeAnalysis;
+                facts.values.push(ValueFact { site: site(node.start_byte(), node.end_byte()), target: fact_target, info });
+            };
+            if kind == "type"
+                && let Some((implementation, false)) = outer_type_declaration(name)
+                && implementation.kind() == "impl_item"
+                && let Some(declaration) = &target.decl
+                && let Some(body) = implementation.child_by_field_name("body")
+            {
+                for method in named_children(body).into_iter().filter(|child| child.kind() == "function_item") {
+                    let Some(params) = method.child_by_field_name("parameters") else { continue };
+                    let Some(receiver) = named_children(params).into_iter().find(|param| param.kind() == "self_parameter") else { continue };
+                    let children = nodex_lang_api::syntax::children(receiver);
+                    if let Some(binding) = children.iter().find(|child| child.kind() == "self") {
+                        facts.rust_nominal_types.push(RustNominalType {
+                            site: site(binding.start_byte(), binding.end_byte()),
+                            declaration: declaration.clone(),
+                            by_reference: children.iter().any(|child| child.kind() == "&"),
+                        });
+                    }
+                }
+            }
+            if kind == "type"
+                && let Some((decl, by_reference)) = outer_type_declaration(name)
+                && let Some((binding, fact_target)) = named_value_site(decl)
+            {
+                if fact_target == ValueFactTarget::Member
+                    && let Some(ty) = decl.child_by_field_name("type")
+                {
+                    facts.types.push(TypeFact { site: site(binding.start_byte(), binding.end_byte()), target: fact_target,
+                        info: TypeInfo::new(written_shape(ty, text, identities), TypeOrigin::Declared, Some(text[ty.byte_range()].into())) });
+                }
+                if let Some(declaration) = &target.decl {
+                    facts.rust_nominal_types.push(RustNominalType {
+                        site: site(binding.start_byte(), binding.end_byte()),
+                        declaration: declaration.clone(),
+                        by_reference,
+                    });
+                }
+                let known = (!by_reference).then(|| nodex_lang_api::value_shapes::written_type(Language::Rust, &target.display)
+                    .or_else(|| {
+                        let definition = definitions.get(o.symbol.as_str()).filter(|definition| definition.file == rel)?;
+                        let name = root_node.descendant_for_byte_range(definition.start as usize, definition.end as usize)?;
+                        local_nominal_type(name).then_some(ValueInfo {
+                            kind: ValueKind::Value, basis: ValueBasis::TypeAnalysis, qualifier: None, passing: None,
+                        })
+                    })).flatten();
+                if let Some(info) = known { add_value(binding, fact_target, info); }
+            }
+            if sym.standard()
+                && let Some(owner) = target.display.strip_suffix("()").and_then(|path| path.rsplit_once("::")).map(|(owner, _)| owner)
+                && let Some(call) = enclosing_call(name)
+                // A method such as pop() has the same owner, but does not construct that collection.
+                && let Some(method) = target.display.rsplit("::").next().filter(|method|
+                    matches!(*method, "new()" | "with_capacity()" | "from()" | "from_iter()" | "default()"))
+                && !call.child_by_field_name("function").is_some_and(|function| function.kind() == "field_expression")
+            {
+                let qualifier = if method == "default()" && owner == "core::default::Default" {
+                    call.child_by_field_name("function")
+                        .and_then(|function| function.child_by_field_name("path"))
+                        .map(|ty| written_shape(ty, text, identities))
+                } else { None };
+                let shape = qualifier.unwrap_or_else(|| native_shape(Language::Rust, owner));
+                if matches!(shape, TypeShape::Collection { .. } | TypeShape::Scalar { .. }) {
+                    initializers.shapes.insert((call.start_byte(), call.end_byte()), shape);
+                }
+            }
+            if let Some(owner) = target.display.strip_suffix("::new()")
+                && let Some(info) = nodex_lang_api::value_shapes::written_type(Language::Rust, owner)
+                && let Some(call) = enclosing_call(name)
+            {
+                add_value(call, ValueFactTarget::Expression, info);
+                if let Some(decl) = call.parent().filter(|parent| parent.kind() == "let_declaration")
+                    && decl.child_by_field_name("type").is_none()
+                    && decl.child_by_field_name("value").is_some_and(|value| value.id() == call.id())
+                    && let Some((binding, fact_target)) = named_value_site(decl)
+                {
+                    add_value(binding, fact_target, info);
+                }
+            }
             let (ref_kind, at) = match kind {
                 "method" | "function" => match enclosing_call(name) {
                     Some(call) => (RefKind::Call, call),
@@ -346,15 +950,46 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                 },
                 "type" => match enclosing_struct_literal(name).or_else(|| enclosing_call(name)) {
                     Some(n) => (RefKind::Construct, n),
-                    None => continue,
+                    None => {
+                        if let Some(declaration) = &target.decl {
+                            let mut value = name;
+                            if let Some(path) = value.parent().filter(|parent| parent.kind() == "scoped_identifier"
+                                && parent.child_by_field_name("name").is_some_and(|last| last.id() == name.id())) {
+                                value = path;
+                            }
+                            let sites = constructor_type_sites(value);
+                            if sites.len() > 1 || value.parent().is_some_and(|parent| parent.kind() == "field_expression"
+                                && parent.child_by_field_name("value").is_some_and(|base| base.id() == value.id())) {
+                                facts.rust_nominal_types.extend(sites.into_iter().map(|(node, by_reference)| {
+                                    RustNominalType { site: site(node.start_byte(), node.end_byte()), declaration: declaration.clone(), by_reference }
+                                }));
+                            }
+                        }
+                        continue;
+                    }
                 },
                 _ => continue,
             };
             let key = (at.start_byte(), at.end_byte(), o.symbol.clone());
             if seen.insert(key) {
-                facts.refs.push(SemanticRef { site: site(at.start_byte(), at.end_byte()), kind: ref_kind, target });
+                if ref_kind == RefKind::Call && let Some((_, result)) = return_types.get(o.symbol.as_str()) {
+                    let range = (at.start_byte(), at.end_byte());
+                    if result.generics.is_empty() && result.owner.is_none() {
+                        initializers.shapes.insert(range, result.info.shape.clone());
+                    } else {
+                        initializers.calls.insert(range, result);
+                    }
+                }
+                if ref_kind == RefKind::Construct && let Some(declaration) = &target.decl {
+                    facts.rust_nominal_types.extend(constructor_type_sites(at).into_iter().map(|(node, by_reference)| {
+                        RustNominalType { site: site(node.start_byte(), node.end_byte()), declaration: declaration.clone(), by_reference }
+                    }));
+                }
+                facts.refs.push(SemanticRef { site: site(at.start_byte(), at.end_byte()), kind: ref_kind, target, emit_focus: None });
             }
         }
+        rust_type_facts(facts, &rel, text, root_node, &local_definitions, &local_uses, &signatures, identities, &initializers);
+        propagate_nominal_locals(&mut facts.rust_nominal_types, first_nominal, &rel, root_node, &local_definitions, local_uses);
     }
 }
 

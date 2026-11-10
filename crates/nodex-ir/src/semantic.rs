@@ -65,10 +65,19 @@ pub struct SemanticTarget {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct EmitFocus {
+    /// True when the receiver represents the event source. Otherwise `text` is the event argument.
+    pub receiver: bool,
+    pub text: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SemanticRef {
     pub site: ByteRange,
     pub kind: RefKind,
     pub target: SemanticTarget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emit_focus: Option<EmitFocus>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -91,6 +100,64 @@ pub struct LocalTypeFact {
     pub ty: String,
 }
 
+/// A use of a binding resolved by the compiler, including uses outside a lowered flow.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct BindingUseFact {
+    pub site: ByteRange,
+    pub declaration: ByteRange,
+}
+
+/// Nominal type identity for a Rust binding or constructor expression.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RustNominalType {
+    pub site: ByteRange,
+    pub declaration: ByteRange,
+    pub by_reference: bool,
+}
+
+/// An explanation verified by the compiler for an expression at this byte range.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ExpressionFact {
+    pub site: ByteRange,
+    pub kind: ExpressionFactKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ty: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpressionFactKind {
+    Narrowed,
+    Boxing,
+    ValueCopy,
+    ReferenceCopy,
+    Dynamic,
+    Freeze,
+}
+
+/// An exact source site classified by a language's type checker.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ValueFact {
+    pub site: ByteRange,
+    pub target: ValueFactTarget,
+    pub info: crate::ValueInfo,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct TypeFact {
+    pub site: ByteRange,
+    pub target: ValueFactTarget,
+    pub info: crate::types::TypeInfo,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueFactTarget {
+    Binding,
+    Expression,
+    Member,
+}
+
 /// Everything a semantic provider reports for a project.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct SemanticFacts {
@@ -98,6 +165,16 @@ pub struct SemanticFacts {
     pub source: String,
     pub refs: Vec<SemanticRef>,
     pub locals: Vec<LocalTypeFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expressions: Vec<ExpressionFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<ValueFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub types: Vec<TypeFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binding_uses: Vec<BindingUseFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rust_nominal_types: Vec<RustNominalType>,
     /// Present when the provider collects project-wide symbol navigation facts.
     #[serde(default)]
     pub navigation: Option<Vec<NavigationFact>>,

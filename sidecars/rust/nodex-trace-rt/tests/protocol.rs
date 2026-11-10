@@ -93,12 +93,14 @@ fn sends_the_nodex_protocol() {
     let kinds: Vec<(u8, i32, i32, &str)> =
         records.iter().filter(|r| r.kind != 10).map(|r| (r.kind, r.method, r.arg, r.text.as_str())).collect();
     assert_eq!(
-        &kinds[..7],
+        &kinds[..9],
         &[
             (1, 5, 0, ""),
             (6, 5, 0, "21"),
+            (12, 5, 0, "\nu32"),
             (2, 5, 1, ""),
             (4, 5, 0, "Order { id: 21 }"),
+            (11, 5, 0, "\nprotocol::Order"),
             (2, 5, 2, ""),
             (5, 5, 0, "42"),
             (3, 5, 0, ""),

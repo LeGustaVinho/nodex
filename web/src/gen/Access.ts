@@ -3,4 +3,4 @@
 /**
  * How a value travels along a data wire.
  */
-export type Access = "Move" | "Copy" | "Borrow" | "BorrowMut";
+export type Access = "Move" | "Copy" | "Borrow" | "BorrowMut" | "ByValue";

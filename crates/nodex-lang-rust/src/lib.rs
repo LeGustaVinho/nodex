@@ -6,6 +6,7 @@
 //! rust-analyzer ([`semantic`]); live traces from an instrumented copy of the crate
 //! ([`instrument`]).
 
+mod borrow;
 mod expr;
 mod flow;
 mod debug;
@@ -176,6 +177,8 @@ fn without_bom(text: &str) -> String {
 /// Lowers Rust source. Never fails: parse problems become diagnostics and `Opaque` nodes.
 pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     let mut ir = FileIr {
+        borrow_models: Default::default(),
+        source_revision: None,
         file: rel_path.to_owned(),
         language: Language::Rust,
         symbols: Vec::new(),
@@ -186,8 +189,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         knowledge: Default::default(),
     };
     let prepared = without_bom(text);
-    let text = prepared.as_str();
-    let Some(tree) = parse(text) else {
+    let Some(tree) = parse(&prepared) else {
         ir.diagnostics.push(Diagnostic {
             severity: Severity::Error,
             message: "tree-sitter Rust grammar is incompatible with the runtime".into(),
@@ -237,6 +239,16 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     ir.imports = imports.into_iter().map(|target| ImportRef { from_scope: module.clone(), target }).collect();
     ir.symbols = symbols;
     ir.type_refs = type_refs;
+    nodex_lang_api::syntax_sites::annotate(&mut ir, root, src, false);
+    nodex_lang_api::value_shapes::annotate(&mut ir, root, src);
+    nodex_lang_api::blueprint_types::annotate(&mut ir, root, src, &Default::default());
+    for (job, graph) in bodies.iter().zip(&mut ir.flows) {
+        let model = borrow::analyze(src, job, graph);
+        if !model.uses.is_empty() {
+            borrow::annotate_control_values(graph, &model);
+            ir.borrow_models.insert(graph.symbol.clone(), model);
+        }
+    }
     ir
 }
 

@@ -178,7 +178,7 @@ mod tests {
             "Test.cs",
             "namespace Shop { class Root {} } namespace Shop.Tools { class Tool {} } namespace Shopper { class Other {} }",
         );
-        let graph = StructureGraph { symbols: ir.symbols, edges: Vec::new() };
+        let graph = StructureGraph { source_revisions: None, symbols: ir.symbols, edges: Vec::new() };
         let knowledge = ProjectKnowledge::default();
         let index = Index::new(&graph, &knowledge);
         assert!(index.get("ns:Shop.Tools").unwrap().parent.is_none());

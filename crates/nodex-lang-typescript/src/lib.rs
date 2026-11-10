@@ -133,6 +133,8 @@ pub fn remaining_parse_errors(rel: &str, text: &str) -> Vec<(usize, String)> {
 /// `Opaque` nodes.
 pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     let mut ir = FileIr {
+        borrow_models: Default::default(),
+        source_revision: None,
         file: rel_path.to_owned(),
         language: Language::Typescript,
         symbols: Vec::new(),
@@ -160,7 +162,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
         });
         return ir;
     };
-    let index = LineIndex::new(text);
+    let index = LineIndex::new(original);
     let root = tree.root_node();
     if root.has_error() {
         let first_error = syntax::first_error(root);
@@ -178,11 +180,15 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     collector.program(root);
     let structure::Collected { mut symbols, imports, mut type_refs, bodies, function_ids } = collector.finish();
 
+    let mut continuations = std::collections::HashMap::new();
     for job in &bodies {
         let lowered = flow::lower_body(src, job, &function_ids, fw);
         type_refs.extend(lowered.type_refs);
         if let Some(sym) = symbols.iter_mut().find(|s| s.id == job.symbol) {
             sym.has_flow = true;
+        }
+        if !lowered.continuations.is_empty() {
+            continuations.insert(job.symbol.clone(), lowered.continuations);
         }
         ir.flows.push(lowered.graph);
     }
@@ -192,6 +198,9 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     ir.imports = imports.into_iter().map(|target| ImportRef { from_scope: from_scope.clone(), target }).collect();
     ir.symbols = symbols;
     ir.type_refs = type_refs;
+    nodex_lang_api::syntax_sites::annotate(&mut ir, root, src, is_javascript(rel_path));
+    nodex_lang_api::value_shapes::annotate(&mut ir, root, src);
+    nodex_lang_api::blueprint_types::annotate(&mut ir, root, src, &continuations);
     ir
 }
 

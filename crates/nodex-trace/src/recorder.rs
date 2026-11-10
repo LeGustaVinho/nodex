@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::Serialize;
 use ts_rs::TS;
+use nodex_ir::{Language, types::{TypeShape, native_shape, portable_shape}};
 
 use crate::map::{MethodMap, TraceMap};
 use crate::protocol::{Record, RecordKind};
@@ -17,6 +18,9 @@ pub const MAX_SPANS: usize = 500_000;
 pub const MAX_SPAN_TEXT: usize = 120;
 /// Arguments kept per call span.
 pub const MAX_SPAN_ARGS: usize = 6;
+const MAX_STEP_TYPES: usize = 64;
+const MAX_TYPE_DESCRIPTORS: usize = 4096;
+const MAX_TYPE_OBSERVATIONS: usize = 2_000_000;
 
 /// The node a thread is executing.
 #[derive(Serialize, TS, Clone, Debug, PartialEq)]
@@ -64,8 +68,25 @@ pub struct StepInfo {
     pub micros: i64,
     pub thread: i32,
     pub node: Option<String>,
+    /// The previous mapped step in this execution, when no observed gap separates them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub previous_node: Option<String>,
     /// Values written while this step ran (`name = value`, `→ value` for returns).
     pub values: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub observations: Option<Vec<TypeObservation>>,
+}
+
+#[derive(Serialize, TS, Clone, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub struct TypeObservation {
+    pub name: String,
+    pub slot: i32,
+    pub parameter: bool,
+    pub shape: TypeShape,
+    pub native: String,
 }
 
 #[derive(Serialize, TS, Clone, Debug, Default, PartialEq)]
@@ -149,8 +170,16 @@ struct Calling {
 }
 
 enum Entry {
-    Step { micros: i64, thread: i32, flow: u32, node: Option<u32> },
-    Value { thread: i32, flow: u32, text: String },
+    Step { micros: i64, thread: i32, flow: u32, call: Option<u32>, node: Option<u32>, previous: Option<u32> },
+    Value { call: u32, text: String },
+    Gap(Option<u32>),
+}
+
+struct RecordedType {
+    name: u32,
+    slot: i32,
+    parameter: bool,
+    descriptor: u32,
 }
 
 /// A resolved point: interned flow, and the interned node when the point lies in a statement.
@@ -160,7 +189,12 @@ struct Frame {
     method: i32,
     flow: Option<u32>,
     last_node: Option<u32>,
+    last_step: Option<(u32, u32)>,
+    entered_after_drops: u64,
     args: Vec<String>,
+    early_types: Vec<RecordedType>,
+    /// Timeline index of the recorded step and how many type observations it holds.
+    observation_step: Option<(usize, usize)>,
     start: i64,
     resumed: bool,
     calling: Calling,
@@ -224,6 +258,9 @@ pub struct Recorder {
     threads: HashMap<i32, Vec<Frame>>,
     active: HashMap<i32, (u32, Option<u32>)>,
     timeline: Vec<Entry>,
+    observations: Vec<(usize, RecordedType)>,
+    descriptors: Vec<(TypeShape, String)>,
+    descriptor_ids: HashMap<String, u32>,
     events: u64,
     dropped: u64,
     /// Highest frame number received per process (see [`RecordKind::Sequence`]).
@@ -274,6 +311,9 @@ impl Recorder {
             threads: HashMap::new(),
             active: HashMap::new(),
             timeline: Vec::new(),
+            observations: Vec::new(),
+            descriptors: Vec::new(),
+            descriptor_ids: HashMap::new(),
             events: 0,
             dropped: 0,
             sequences: HashMap::new(),
@@ -378,9 +418,13 @@ impl Recorder {
                     method: r.method,
                     flow,
                     last_node: None,
+                    last_step: None,
+                    entered_after_drops: self.dropped,
                     args: Vec::new(),
                     start: r.micros,
                     resumed: is_resume,
+                    early_types: Vec::new(),
+                    observation_step: None,
                     calling,
                 });
             }
@@ -396,7 +440,28 @@ impl Recorder {
                 if let Some(pos) = unwound {
                     self.close_frames(r.thread, pos + 1, r.micros, true);
                 }
-                let Some((flow, node)) = self.point(r.method, r.arg) else { return };
+                let point = self.point(r.method, r.arg);
+                let timeline_index = (point.is_some() && self.timeline.len() < MAX_TIMELINE).then_some(self.timeline.len());
+                let observation_room = MAX_TYPE_OBSERVATIONS - self.observations.len();
+                let frame = self.threads.get_mut(&r.thread).and_then(|s| s.last_mut())
+                    .filter(|f| f.method == r.method && f.entered_after_drops == self.dropped);
+                let (call, previous, early_types) = frame.map(|f| {
+                    let previous = f.last_step;
+                    f.last_step = point.and_then(|(flow, node)| node.map(|n| (flow, n)));
+                    let mut early = if f.last_step.is_some() { std::mem::take(&mut f.early_types) } else { Vec::new() };
+                    early.truncate(observation_room);
+                    f.observation_step = timeline_index.map(|index| (index, early.len()));
+                    (Some(f.calling.id), previous, early)
+                }).unwrap_or_default();
+                let Some((flow, node)) = point else {
+                    if call.is_some() && self.timeline.len() < MAX_TIMELINE {
+                        self.timeline.push(Entry::Gap(call));
+                    }
+                    return;
+                };
+                let previous = previous.filter(|(prior_flow, prior_node)| {
+                    *prior_flow == flow && node.is_some_and(|n| n != *prior_node)
+                }).map(|(_, prior_node)| prior_node);
                 if let Some(n) = node {
                     *self.counts.entry((flow, n)).or_default() += 1;
                     self.changed_counts.insert((flow, n));
@@ -406,10 +471,12 @@ impl Recorder {
                         frame.last_node = node;
                     }
                 self.active.insert(r.thread, (flow, node));
-                if self.timeline.len() < MAX_TIMELINE {
-                    self.timeline.push(Entry::Step { micros: r.micros, thread: r.thread, flow, node });
+                if let Some(index) = timeline_index {
+                    self.timeline.push(Entry::Step { micros: r.micros, thread: r.thread, flow, call, node, previous });
+                    self.observations.extend(early_types.into_iter().map(|observation| (index, observation)));
                 }
             }
+            RecordKind::LocalType | RecordKind::ArgType => self.record_type(r),
             RecordKind::Local | RecordKind::Arg | RecordKind::Return => {
                 let Some(method) = self.methods.get(&r.method) else { return };
                 let name = match r.kind {
@@ -436,9 +503,9 @@ impl Recorder {
                         if r.kind == RecordKind::Return {
                             f.calling.ret = Some(short(&value));
                         }
-                        (f.flow, f.last_node, f.args.join(", "))
+                        (f.flow, f.last_node, f.args.join(", "), f.calling.id)
                     });
-                let Some((Some(flow), last_node, args)) = frame_info else { return };
+                let Some((Some(flow), last_node, args, call)) = frame_info else { return };
                 if r.kind == RecordKind::Arg {
                     let entry = self.flow_name(flow).and_then(|f| self.resolver.entry_node(&f)).map(|e| self.strings.id(&e));
                     if let Some(e) = entry {
@@ -452,7 +519,7 @@ impl Recorder {
                     self.changed_vars.insert((flow, n));
                 }
                 if self.timeline.len() < MAX_TIMELINE {
-                    self.timeline.push(Entry::Value { thread: r.thread, flow, text });
+                    self.timeline.push(Entry::Value { call, text });
                 }
                 if r.kind == RecordKind::Return {
                     self.pop(r.thread, r.method, r.micros);
@@ -463,23 +530,64 @@ impl Recorder {
                 if let Some(top) = self.threads.get_mut(&r.thread).and_then(|s| s.last_mut()) {
                     top.calling.exception = Some(short(r.text.as_deref().unwrap_or("exception")));
                 }
-                let current = self.threads.get(&r.thread).and_then(|s| s.last()).map(|f| (f.flow, f.last_node));
-                let Some((Some(flow), Some(node))) = current else { return };
+                let current = self.threads.get(&r.thread).and_then(|s| s.last()).map(|f| (f.flow, f.last_node, f.calling.id));
+                let Some((Some(flow), Some(node), call)) = current else { return };
                 *self.throws.entry((flow, node)).or_default() += 1;
                 self.changed_throws.insert((flow, node));
                 let text = format!("⚠ {}", r.text.clone().unwrap_or_else(|| "exception".into()));
                 self.set_value(flow, node, text.clone());
                 if self.timeline.len() < MAX_TIMELINE {
-                    self.timeline.push(Entry::Value { thread: r.thread, flow, text });
+                    self.timeline.push(Entry::Value { call, text });
                 }
             }
-            RecordKind::Dropped => self.dropped += r.arg.max(0) as u64,
+            RecordKind::Dropped => {
+                self.dropped += r.arg.max(0) as u64;
+                if r.arg > 0 && self.timeline.len() < MAX_TIMELINE {
+                    self.timeline.push(Entry::Gap(None));
+                }
+            }
             RecordKind::Sequence | RecordKind::Unknown(_) => {}
         }
     }
 
     fn flow_name(&self, flow: u32) -> Option<String> {
         Some(self.strings.name(flow).to_owned())
+    }
+
+    fn record_type(&mut self, record: &Record) {
+        if self.observations.len() >= MAX_TYPE_OBSERVATIONS { return; }
+        let parameter = record.kind == RecordKind::ArgType;
+        let Some(method) = self.methods.get(&record.method) else { return };
+        let Some(name) = (if parameter { method.params.get(record.arg as usize) } else { method.locals.get(&record.arg.to_string()) }) else { return };
+        let Some(frame) = self.threads.get_mut(&record.thread)
+            .and_then(|stack| stack.iter_mut().rev().find(|frame| frame.method == record.method))
+            .filter(|frame| frame.flow.is_some() && frame.entered_after_drops == self.dropped)
+        else { return };
+        let early = parameter && frame.last_node.is_none();
+        if early {
+            if frame.early_types.len() >= MAX_STEP_TYPES || self.timeline.len() >= MAX_TIMELINE { return; }
+        } else if frame.observation_step.is_none_or(|(_, count)| count >= MAX_STEP_TYPES) {
+            return;
+        }
+        let Some(text) = record.text.as_deref().filter(|text| text.len() <= 2048) else { return };
+        let descriptor = if let Some(&id) = self.descriptor_ids.get(text) {
+            id
+        } else {
+            if self.descriptors.len() >= MAX_TYPE_DESCRIPTORS { return; }
+            let Some((portable, native)) = text.split_once('\n') else { return };
+            let shape = if portable.is_empty() { native_shape(Language::Rust, native) } else { portable_shape(portable) };
+            let id = self.descriptors.len() as u32;
+            self.descriptor_ids.insert(text.into(), id);
+            self.descriptors.push((shape, native.into()));
+            id
+        };
+        let observation = RecordedType { name: self.strings.id(name), slot: record.arg, parameter, descriptor };
+        if early {
+            frame.early_types.push(observation);
+        } else if let Some((step, count)) = &mut frame.observation_step {
+            self.observations.push((*step, observation));
+            *count += 1;
+        }
     }
 
     /// Removes frames `from..` of a thread's stack, recording them as call spans.
@@ -702,31 +810,49 @@ impl Recorder {
     pub fn steps(&self, flow: &str, offset: usize, limit: usize) -> StepsPage {
         let Some(flow_id) = self.strings.find(flow) else { return StepsPage::default() };
         let mut steps: Vec<StepInfo> = Vec::new();
-        // Index into `steps` of each thread's latest step in this flow.
-        let mut last: HashMap<i32, Option<usize>> = HashMap::new();
-        for e in &self.timeline {
+        // Values belong to the latest step of the same execution, including recursive calls.
+        let mut last: HashMap<u32, usize> = HashMap::new();
+        let selected = offset..offset.saturating_add(limit);
+        let mut observed_steps = HashMap::new();
+        for (entry, e) in self.timeline.iter().enumerate() {
             match e {
-                Entry::Step { micros, thread, flow, node } => {
+                Entry::Step { micros, thread, flow, call, node, previous } => {
                     if *flow == flow_id {
+                        if selected.contains(&steps.len()) {
+                            observed_steps.insert(entry, steps.len());
+                        }
                         steps.push(StepInfo {
                             index: steps.len() as u32,
                             micros: *micros,
                             thread: *thread,
                             node: node.map(|n| self.strings.name(n).to_owned()),
+                            previous_node: previous.map(|n| self.strings.name(n).to_owned()),
                             values: Vec::new(),
+                            observations: None,
                         });
-                        last.insert(*thread, Some(steps.len() - 1));
-                    } else {
-                        last.insert(*thread, None);
+                        if let Some(call) = call {
+                            last.insert(*call, steps.len() - 1);
+                        }
+                    } else if let Some(call) = call {
+                        last.remove(call);
                     }
                 }
-                Entry::Value { thread, flow, text } => {
-                    if *flow == flow_id
-                        && let Some(Some(i)) = last.get(thread) {
-                            steps[*i].values.push(text.clone());
-                        }
+                Entry::Value { call, text } => {
+                    if let Some(i) = last.get(call) {
+                        steps[*i].values.push(text.clone());
+                    }
                 }
+                Entry::Gap(Some(call)) => { last.remove(call); }
+                Entry::Gap(None) => { last.clear(); }
             }
+        }
+        for (entry, observation) in &self.observations {
+            let Some(&i) = observed_steps.get(entry) else { continue };
+            let (shape, native) = &self.descriptors[observation.descriptor as usize];
+            steps[i].observations.get_or_insert_with(Vec::new).push(TypeObservation {
+                name: self.strings.name(observation.name).into(), slot: observation.slot,
+                parameter: observation.parameter, shape: shape.clone(), native: native.clone(),
+            });
         }
         let total = steps.len() as u32;
         let steps = steps.into_iter().skip(offset).take(limit).collect();
@@ -746,9 +872,11 @@ mod tests {
 
     fn node(id: &str, concept: Concept, start: u32, end: u32) -> FlowNode {
         FlowNode {
+            syntax_sites: None,
             id: id.into(),
             concept,
             label: id.into(),
+            focus: None,
             code: id.into(),
             span: span(start, end),
             flavors: Vec::new(),
@@ -757,6 +885,7 @@ mod tests {
             outputs: Vec::new(),
             expr: None,
             writes: Vec::new(),
+            binding_writes: Vec::new(),
             calls: Vec::new(),
         }
     }
@@ -767,6 +896,7 @@ mod tests {
             name: "M".into(),
             language: Language::Csharp,
             span: span(0, 100),
+            source_revision: None,
             nodes: vec![node("entry", Concept::Entry, 0, 10), node("a", Concept::Var, 20, 30), node("b", Concept::Return, 40, 50)],
             edges: Vec::new(),
         };
@@ -811,6 +941,35 @@ mod tests {
     }
 
     #[test]
+    fn replay_keeps_predecessors_and_values_within_each_invocation() {
+        let mut r = setup();
+        let events = [
+            (RecordKind::Enter, 0, None),
+            (RecordKind::Step, 1, None),
+            (RecordKind::Enter, 0, None),
+            (RecordKind::Arg, 0, Some("inner")),
+            (RecordKind::Step, 2, None),
+            (RecordKind::Return, 0, Some("inner return")),
+            (RecordKind::Local, 0, Some("outer local")),
+            (RecordKind::Step, 2, None),
+            (RecordKind::Step, 0, None),
+            (RecordKind::Step, 1, None),
+            (RecordKind::Dropped, 1, None),
+            (RecordKind::Step, 2, None),
+            (RecordKind::Step, 1, None),
+        ];
+        for (kind, arg, text) in events {
+            r.record(&rec(kind, arg, text));
+        }
+        let page = r.steps("S.M(int)", 0, 20);
+        assert_eq!(page.steps.iter().map(|s| s.previous_node.as_deref()).collect::<Vec<_>>(),
+            vec![None, None, Some("a"), None, None, None, None]);
+        assert_eq!(page.steps[0].values, ["x = outer local"]);
+        assert_eq!(page.steps[1].values, ["→ inner return"]);
+        assert_eq!(r.steps("S.M(int)", 2, 1).steps[0].previous_node.as_deref(), Some("a"));
+    }
+
+    #[test]
     fn aggregates_counts_values_and_replay_steps() {
         let mut r = setup();
         for _ in 0..2 {
@@ -837,10 +996,45 @@ mod tests {
         assert_eq!(page.steps[1].node.as_deref(), Some("a"));
         assert_eq!(page.steps[1].values, vec!["x = 10"]);
         assert_eq!(page.steps[0].node, None, "brace point maps to the flow only");
+        assert!(page.steps.iter().all(|step| step.observations.is_none()), "legacy traces keep their values");
 
         let calls = r.calls(100);
         assert_eq!(calls.total, 2);
         assert!(calls.spans.iter().all(|s| s.flow == "S.M(int)" && !s.threw && !s.open && s.depth == 0));
+    }
+
+    #[test]
+    fn observations_follow_the_capture_step_and_recursive_invocation() {
+        use RecordKind::*;
+        let mut recorder = setup();
+        for (kind, slot, text) in [
+            (Enter, 0, None),
+            (ArgType, 0, Some("Int32\nSystem.Int32")),
+            (Step, 0, None), // no mapped node yet
+            (Step, 1, None),
+            (Local, 0, Some("original preview")),
+            (LocalType, 0, Some("String\nstring")),
+            (Enter, 0, None),
+            (ArgType, 0, Some("Bool\nboolean")),
+            (Step, 1, None),
+            (LocalType, 0, Some("Array<?>\nArray")),
+            (Exit, 0, None),
+            (Step, 2, None),
+            (LocalType, 0, Some("Number\nnumber")),
+        ] {
+            recorder.record(&rec(kind, slot, text));
+        }
+        let page = recorder.steps("S.M(int)", 0, 10);
+        assert_eq!(recorder.timeline.len(), 5, "optional observations use no replay entries");
+        assert!(page.steps[0].observations.is_none());
+        assert_eq!(page.steps[1].values, ["x = original preview"]);
+        let observations = |i: usize| page.steps[i].observations.as_deref().unwrap();
+        assert_eq!(observations(1).iter().map(|o| (&*o.name, o.parameter, &*o.native)).collect::<Vec<_>>(),
+            [("n", true, "System.Int32"), ("x", false, "string")]);
+        assert_eq!(observations(2)[0].shape, TypeShape::scalar("Bool"));
+        assert_eq!(observations(2)[1].shape, portable_shape("Array<?>"));
+        assert_eq!(observations(3)[0].shape, TypeShape::scalar("Number"));
+        assert_eq!(recorder.steps("S.M(int)", 2, 1).steps[0].observations.as_deref(), Some(observations(2)));
     }
 
     fn at(kind: RecordKind, method: i32, arg: i32, micros: i64, text: Option<&str>) -> Record {
@@ -880,6 +1074,7 @@ mod tests {
             name: "M".into(),
             language: Language::Csharp,
             span: span(0, 100),
+            source_revision: None,
             nodes: vec![node("entry", Concept::Entry, 0, 10), node("a", Concept::Var, 20, 30), node("b", Concept::Return, 40, 50)],
             edges: Vec::new(),
         };

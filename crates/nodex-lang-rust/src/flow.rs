@@ -9,13 +9,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nodex_ir::{Access, CallTarget, Concept, FlowEdgeKind, FlowGraph, Language, SymbolId, TypeRef, TypeRelation};
+use nodex_ir::{Access, BindingForm, CallTarget, Concept, FlowEdgeKind, FlowGraph, Focus, Language, SymbolId, TypeRef, TypeRelation};
 use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, callback_entry_label, truncate};
 use tree_sitter::Node;
 
-use crate::expr::{ExprLowering, callee_path, is_expression, macro_args, macro_name, method_call, reads};
+use crate::expr::{ExprLowering, callee_path, is_expression, macro_args, macro_name, method_call, reads, reference_focus};
 use crate::structure::{BodyJob, BodyKind};
-use crate::syntax::{Src, children, first_child_of_kind, has_semicolon, is_comment, is_item, named_children, parameters, pattern_names, unparen};
+use crate::syntax::{Src, children, first_child_of_kind, has_semicolon, is_comment, is_item, named_children, parameters, pattern_bindings, unparen};
 
 pub struct Lowered {
     pub graph: FlowGraph,
@@ -38,6 +38,7 @@ struct Lowering<'a, 'f> {
     drop_types: &'f HashMap<String, SymbolId>,
     /// While lowering `let x = loop { … }`: `break value` sets `x`.
     target: Option<String>,
+    propagation_label: &'static str,
 }
 
 /// A local that runs code when its scope ends.
@@ -172,6 +173,12 @@ pub fn lower_body(
     copy_types: &HashSet<String>,
     drop_types: &HashMap<String, SymbolId>,
 ) -> Lowered {
+    let return_type = job.decl.child_by_field_name("return_type").map(|t| src.norm(t));
+    let propagation_label = match return_type.as_deref().and_then(|ty| ty.split('<').next()) {
+        Some("std::option::Option" | "core::option::Option") => "If absent: return None",
+        Some("std::result::Result" | "core::result::Result") => "If it fails: return Err",
+        _ => "If propagation is needed: return early",
+    };
     let mut l = Lowering {
         src,
         b: FlowBuilder::new(job.symbol.clone()),
@@ -182,6 +189,7 @@ pub fn lower_body(
         drops: Vec::new(),
         drop_types,
         target: None,
+        propagation_label,
     };
     let params: Vec<&str> = job.params.iter().map(|(n, _)| n.as_str()).collect();
     let label = match job.kind {
@@ -195,7 +203,7 @@ pub fn lower_body(
     let flavors = job
         .flavors
         .iter()
-        .filter(|f| ENTRY_FLAVORS.contains(&f.as_str()) || f.starts_with("from-trait:") || f.starts_with("attr:"))
+        .filter(|f| ENTRY_FLAVORS.contains(&f.as_str()) || f.starts_with("from-trait:") || f.starts_with("attr:") || f.starts_with("#cfg") || f.as_str() == "lifetime")
         .cloned();
     // `impl Drop for Guard { fn drop … }`: Rust calls it, the code never does.
     let owner_type = job.symbol.rsplit("::").nth(1).unwrap_or("").to_owned();
@@ -210,28 +218,37 @@ pub fn lower_body(
     };
     let entry = l.b.add(NodeSpec::new(concept, label, job.signature.clone(), entry_span).flavors(flavors));
     let start = l.b.exec_out(&entry, "out", "");
-    for (name, ty) in &job.params {
-        if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            l.b.define(&entry, name, ty.clone());
-        } else {
-            let mut names = Vec::new();
-            if let Some(list) = job.decl.child_by_field_name("parameters") {
-                for p in named_children(list) {
-                    if let Some(pat) = p.child_by_field_name("pattern") {
-                        pattern_names(src, pat, &mut names);
-                    }
+    let mut declared = HashSet::new();
+    if let Some(list) = job.decl.child_by_field_name("parameters") {
+        for parameter in named_children(list) {
+            let mutable = first_child_of_kind(parameter, "mutable_specifier").is_some();
+            let mut bindings = Vec::new();
+            if let Some(pat) = parameter.child_by_field_name("pattern") {
+                if let Some(name) = single_binding(pat) {
+                    bindings.push((src.text(name).to_owned(), mutable || pat.kind() == "mut_pattern"));
+                } else {
+                    pattern_bindings(src, pat, mutable, &mut bindings);
                 }
+            } else if parameter.kind() == "self_parameter" {
+                bindings.push(("self".into(), mutable && !src.text(parameter).starts_with('&')));
             }
-            for n in names {
-                l.b.define(&entry, &n, None);
+            for (name, mutable) in bindings {
+                let ty = job.params.iter().find(|(n, _)| n == &name).and_then(|(_, ty)| ty.clone());
+                l.b.declare(&entry, &name, ty, BindingForm::Parameter, mutable, false);
+                declared.insert(name);
             }
+        }
+    }
+    for (name, ty) in &job.params {
+        if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') && !declared.contains(name) {
+            l.b.define(&entry, name, ty.clone());
         }
     }
 
     if job.body.kind() == "block" {
         l.block(job.body, Some(start), &if job.returns_value { Tail::Return } else { Tail::No });
     } else if job.returns_value || job.kind == BodyKind::LocalFunction {
-        l.return_value(job.body, Some(job.body), Some(start));
+        l.return_value(job.body, Some(job.body), Some(start), true);
     } else {
         l.expr_stmt(job.body, job.body, Some(start));
     }
@@ -244,30 +261,33 @@ pub fn lower_body(
         .map(|n| TypeRef { from: job.symbol.clone(), name: n.clone(), relation: TypeRelation::Instantiates })
         .collect();
     let mut graph = l.b.finish(job.name.clone(), Language::Rust, src.span(job.decl));
-    copies(&mut graph, copy_types);
+    classify_value_access(&mut graph, copy_types, drop_types);
     Lowered { graph, type_refs }
 }
 
 /// A move of a `Copy` value is a copy.
-fn copies(graph: &mut FlowGraph, copy_types: &HashSet<String>) {
+fn classify_value_access(graph: &mut FlowGraph, copy_types: &HashSet<String>, drop_types: &HashMap<String, SymbolId>) {
     let types: HashMap<(String, String), Option<String>> = graph
         .nodes
         .iter()
         .flat_map(|n| n.outputs.iter().map(move |p| ((n.id.clone(), p.id.clone()), p.ty.clone())))
         .collect();
     for e in graph.edges.iter_mut().filter(|e| e.kind == FlowEdgeKind::Data && e.access == Some(Access::Move)) {
-        if let Some(Some(ty)) = types.get(&(e.from.clone(), e.from_pin.clone()))
-            && is_copy(ty, copy_types)
-        {
-            e.access = Some(Access::Copy);
-        }
+        let ty = types.get(&(e.from.clone(), e.from_pin.clone())).and_then(Option::as_deref);
+        e.access = Some(match ty {
+            Some(ty) if is_copy(ty, copy_types) => Access::Copy,
+            // A mutable reference may be implicitly reborrowed at a coercion site.
+            Some(ty) if drop_types.contains_key(ty) => Access::Move,
+            Some("std::string::String" | "alloc::string::String") => Access::Move,
+            _ => Access::ByValue,
+        });
     }
 }
 
 /// Primitive numbers, `bool`, `char`, shared references and project `Copy` types.
 pub fn is_copy(ty: &str, copy_types: &HashSet<String>) -> bool {
     let t = ty.trim();
-    if t.starts_with("&mut") {
+    if mutable_reference(t) {
         return false;
     }
     if t.starts_with('&') || t.starts_with("*const") || t.starts_with("fn(") {
@@ -281,6 +301,13 @@ pub fn is_copy(ty: &str, copy_types: &HashSet<String>) -> bool {
         "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "f32" | "f64" | "bool" | "char" | "()"
             | "{integer}" | "{float}"
     ) || copy_types.contains(&crate::syntax::bare_type_name(t))
+}
+
+fn mutable_reference(ty: &str) -> bool {
+    let Some(inner) = ty.trim().strip_prefix('&') else { return false };
+    let mut words = inner.split_ascii_whitespace();
+    let first = words.next();
+    first == Some("mut") || first.is_some_and(|part| part.starts_with('\'')) && words.next() == Some("mut")
 }
 
 /// The type a literal gives a fresh variable (`0` → `i32`), so pins and copies are known.
@@ -357,10 +384,10 @@ fn has_inner_statements(v: Node) -> bool {
 }
 
 /// Pattern of a `let` that binds just one name (`x`, `mut x`).
-fn single_name(src: Src, pattern: Node) -> Option<String> {
+fn single_binding(pattern: Node) -> Option<Node> {
     match pattern.kind() {
-        "identifier" => Some(src.text(pattern).to_owned()),
-        "mut_pattern" => named_children(pattern).into_iter().last().and_then(|p| single_name(src, p)),
+        "identifier" => Some(pattern),
+        "mut_pattern" => named_children(pattern).into_iter().last().and_then(single_binding),
         _ => None,
     }
 }
@@ -399,7 +426,7 @@ impl Lowering<'_, '_> {
     /// `x?` in the statement: an extra exec output for the early return of the error.
     fn propagate(&mut self, id: &String, node: Option<Node>) {
         if node.is_some_and(has_try) {
-            self.b.exec_out(id, "error", "If it fails (Err or None): return it right away");
+            self.b.exec_out(id, "error", self.propagation_label);
             if let Some(i) = self.b.index_of(id) {
                 self.b.add_flavor_at(i, "try");
             }
@@ -407,8 +434,19 @@ impl Lowering<'_, '_> {
     }
 
     fn simple(&mut self, s: Node, concept: Concept, label: String, expr: Option<Node>, flavors: Vec<String>, cur: Flow) -> Flow {
+        let focus = expr
+            .filter(|_| matches!(concept, Concept::Return | Concept::Yield))
+            .and_then(|e| self.src.focus(e));
+        self.simple_with_focus(s, concept, label, expr, flavors, focus, cur)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn simple_with_focus(
+        &mut self, s: Node, concept: Concept, label: String, expr: Option<Node>, flavors: Vec<String>, focus: Option<Focus>, cur: Flow,
+    ) -> Flow {
         let lowered = expr.map(|e| self.ex.lower(e));
-        let spec = NodeSpec::new(concept, self.label(label), self.src.norm(s), self.src.span(s)).flavors(flavors).expr(lowered);
+        let spec = NodeSpec::new(concept, self.label(label), self.src.norm(s), self.src.span(s))
+            .flavors(flavors).focus(focus).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, expr);
         self.propagate(&id, expr);
@@ -499,7 +537,7 @@ impl Lowering<'_, '_> {
             }
             _ => match tail {
                 Tail::Set(name) => self.set_value(s, e, name, cur),
-                _ => self.return_value(s, Some(e), cur),
+                _ => self.return_value(s, Some(e), cur, true),
             },
         }
     }
@@ -508,7 +546,8 @@ impl Lowering<'_, '_> {
     fn set_value(&mut self, s: Node, e: Node, name: &str, cur: Flow) -> Flow {
         let label = format!("{name} = {}", self.ex.natural(e));
         let lowered = Some(self.ex.lower(e));
-        let spec = NodeSpec::new(Concept::Assign, self.label(label), self.src.norm(s), self.src.span(s)).flavor("block-value").expr(lowered);
+        let spec = NodeSpec::new(Concept::Assign, self.label(label), self.src.norm(s), self.src.span(s))
+            .flavor("block-value").focus(Src::focus_text(name)).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, Some(e));
         self.propagate(&id, Some(e));
@@ -554,20 +593,20 @@ impl Lowering<'_, '_> {
         let value = s.child_by_field_name("value");
         let ty = s.child_by_field_name("type").map(|t| src.norm(t)).or_else(|| value.and_then(|v| self.infer(v)));
         let alternative = s.child_by_field_name("alternative");
-        let single = pattern.and_then(|p| single_name(src, p));
+        let binding = pattern.and_then(single_binding);
+        let single = binding.map(|b| src.text(b).to_owned());
+        let mutable = first_child_of_kind(s, "mutable_specifier").is_some()
+            || pattern.is_some_and(|p| p.kind() == "mut_pattern");
         // `let x = if … { …; a } else { b }`, `let x = loop { … break v; }`, `let x = 'b: { … }`:
         // the control flow is drawn, and each way out sets `x`.
         if let (Some(n), Some(v)) = (&single, value)
             && alternative.is_none()
             && has_inner_statements(v)
         {
-            return self.let_with_flow(s, n, v, ty, cur);
+            return self.let_with_flow(s, n, v, ty, mutable, cur);
         }
         let value_text = value.map(|v| self.ex.natural(v));
         let mut flavors = Vec::new();
-        if pattern.is_some_and(|p| p.kind() == "mut_pattern") {
-            flavors.push("mut".to_owned());
-        }
         if alternative.is_some() {
             flavors.push("let-else".to_owned());
         }
@@ -579,14 +618,14 @@ impl Lowering<'_, '_> {
             let path = callee_path(src, v)?;
             let (_, how) = SPAWNS.iter().find(|(p, _)| *p == path)?;
             let arg = v.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next());
-            Some(format!("run {} {how}", arg.map(|a| self.ex.natural(a)).unwrap_or_default()))
+            Some((format!("run {} {how}", arg.map(|a| self.ex.natural(a)).unwrap_or_default()), arg))
         });
         let shown = single.as_ref().map(|n| self.next_version(n));
-        let (concept, label) = match (&shown, &value_text) {
-            (Some(n), Some(_)) if spawn.is_some() => (Concept::Spawn, format!("{n} = {}", spawn.clone().unwrap_or_default())),
-            (Some(n), Some(v)) => (Concept::Var, format!("{n} = {v}")),
-            (Some(n), None) => (Concept::Var, format!("declare {n}")),
-            (None, v) => (
+        let (concept, label) = match (&shown, &value_text, &spawn) {
+            (Some(n), Some(_), Some((label, _))) => (Concept::Spawn, format!("{n} = {label}")),
+            (Some(n), Some(v), _) => (Concept::Var, format!("{n} = {v}")),
+            (Some(n), None, _) => (Concept::Var, format!("declare {n}")),
+            (None, v, _) => (
                 Concept::Destructure,
                 match (v, alternative.is_some()) {
                     (Some(v), true) => format!("if {v} matches {}, unpack it", pattern.map(|p| src.norm(p)).unwrap_or_default()),
@@ -600,7 +639,12 @@ impl Lowering<'_, '_> {
             None => src.norm(s),
         };
         let lowered = value.map(|v| self.ex.lower(v));
-        let spec = NodeSpec::new(concept, self.label(label), code, src.span(s)).flavors(flavors).expr(lowered);
+        let focus = match concept {
+            Concept::Var => binding.and_then(|b| src.focus(b)),
+            Concept::Spawn => spawn.and_then(|(_, operand)| operand).and_then(|a| src.focus(a)),
+            _ => None,
+        };
+        let spec = NodeSpec::new(concept, self.label(label), code, src.span(s)).flavors(flavors).focus(focus).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, value);
         self.propagate(&id, value);
@@ -610,12 +654,12 @@ impl Lowering<'_, '_> {
             self.block(body, Some(other), &Tail::No);
         }
         match (&single, pattern) {
-            (Some(n), _) => self.define_local(&id, n, ty),
+            (Some(n), _) => self.define_local(&id, n, ty, mutable, value.is_some()),
             (None, Some(p)) => {
                 let mut names = Vec::new();
-                pattern_names(src, p, &mut names);
-                for n in names {
-                    self.define_local(&id, &n, None);
+                pattern_bindings(src, p, mutable, &mut names);
+                for (name, mutable) in names {
+                    self.define_local(&id, &name, None, mutable, value.is_some());
                 }
             }
             _ => {}
@@ -625,7 +669,7 @@ impl Lowering<'_, '_> {
 
     /// `name` as shown for its next definition: `value`, then `value₂`, `value₃` (shadowing).
     fn next_version(&self, name: &str) -> String {
-        match self.defined.get(name) {
+        match self.b.lookup(name).and_then(|_| self.defined.get(name)) {
             Some(n) => format!("{name}{}", subscript(n + 1)),
             None => name.to_owned(),
         }
@@ -633,16 +677,13 @@ impl Lowering<'_, '_> {
 
     /// Defines a local, numbering shadowed versions and remembering locals that run code at
     /// the end of their scope.
-    fn define_local(&mut self, id: &String, name: &str, ty: Option<String>) {
-        let count = {
-            let c = self.defined.entry(name.to_owned()).or_insert(0);
-            *c += 1;
-            *c
-        };
-        self.b.define(id, name, ty.clone());
+    fn define_local(&mut self, id: &String, name: &str, ty: Option<String>, mutable: bool, initialized: bool) {
+        let shown = self.next_version(name);
+        *self.defined.entry(name.to_owned()).or_insert(0) += 1;
+        self.b.declare(id, name, ty.clone(), BindingForm::Let, mutable, initialized);
         let pin = format!("var:{name}");
-        if count > 1 {
-            self.b.set_pin_label(id, &pin, &format!("{name}{}", subscript(count)));
+        if shown != name {
+            self.b.set_pin_label(id, &pin, &shown);
         }
         if let Some(ty) = ty
             && (is_guard(&ty) || self.drop_types.contains_key(&crate::syntax::bare_type_name(&ty)))
@@ -653,7 +694,7 @@ impl Lowering<'_, '_> {
     }
 
     /// `let name = <control flow>;`: a declaration, then the flow, whose exits set `name`.
-    fn let_with_flow(&mut self, s: Node, name: &str, v: Node, ty: Option<String>, cur: Flow) -> Flow {
+    fn let_with_flow(&mut self, s: Node, name: &str, v: Node, ty: Option<String>, mutable: bool, cur: Flow) -> Flow {
         let src = self.src;
         let v = unparen(v);
         let what = match v.kind() {
@@ -665,12 +706,12 @@ impl Lowering<'_, '_> {
         let shown = self.next_version(name);
         let head = src.header(s, Some(v));
         let spec = NodeSpec::new(Concept::Var, self.label(format!("{shown} = the value {what} below gives")), format!("{head} …"), src.header_span(s, Some(v)))
+            .focus(s.child_by_field_name("pattern").and_then(single_binding).and_then(|binding| src.focus(binding)))
             .flavor("block-value");
         let id = self.place(spec, &cur);
-        self.define_local(&id, name, ty);
         let cur = Some(self.b.exec_out(&id, "out", ""));
         let tail = Tail::Set(name.to_owned());
-        match v.kind() {
+        let end = match v.kind() {
             "if_expression" => self.if_expr(v, v, cur, &tail),
             "match_expression" => self.match_expr(v, v, cur, &tail),
             "unsafe_block" => self.unsafe_block(v, v, cur, &tail),
@@ -688,7 +729,9 @@ impl Lowering<'_, '_> {
                 self.target = before;
                 end
             }
-        }
+        };
+        self.define_local(&id, name, ty, mutable, true);
+        end
     }
 
     /// The type of a value when the code shows it: literals, casts, constructors, other locals
@@ -788,7 +831,7 @@ impl Lowering<'_, '_> {
             "unsafe_block" => self.unsafe_block(s, e, cur, &Tail::No),
             "return_expression" => {
                 let v = named_children(e).into_iter().next();
-                self.return_value(s, v, cur)
+                self.return_value(s, v, cur, false)
             }
             "break_expression" | "continue_expression" => {
                 let label_name = first_child_of_kind(e, "label").map(|l| src.norm(l));
@@ -821,7 +864,8 @@ impl Lowering<'_, '_> {
                 {
                     let arg = inner.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next());
                     let label = format!("wait {}", arg.map(|a| duration_text(src, a).unwrap_or_else(|| self.ex.natural(a))).unwrap_or_default());
-                    return self.simple(s, Concept::Wait, label, Some(e), vec!["async".into()], cur);
+                    let focus = arg.and_then(|a| src.focus(a));
+                    return self.simple_with_focus(s, Concept::Wait, label, Some(e), vec!["async".into()], focus, cur);
                 }
                 let label = format!("wait for {}", self.ex.natural(inner));
                 self.simple(s, Concept::Await, label, Some(e), Vec::new(), cur)
@@ -838,7 +882,7 @@ impl Lowering<'_, '_> {
                 if let Some((id, _)) = &flow {
                     let id = id.clone();
                     if self.b.concept_of(&id).is_some() {
-                        self.b.exec_out(&id, "error", "If it fails (Err or None): return it right away");
+                        self.b.exec_out(&id, "error", self.propagation_label);
                         if let Some(i) = self.b.index_of(&id) {
                             self.b.add_flavor_at(i, "try");
                         }
@@ -867,8 +911,11 @@ impl Lowering<'_, '_> {
         }
     }
 
-    fn return_value(&mut self, s: Node, e: Option<Node>, cur: Flow) -> Flow {
+    fn return_value(&mut self, s: Node, e: Option<Node>, cur: Flow, implicit: bool) -> Flow {
         let mut flavors = Vec::new();
+        if implicit {
+            flavors.push("implicit-return".to_owned());
+        }
         let label = match e {
             Some(e) => {
                 let bare = unparen(e);
@@ -888,7 +935,7 @@ impl Lowering<'_, '_> {
     fn unsafe_block(&mut self, s: Node, e: Node, cur: Flow, tail: &Tail) -> Flow {
         let src = self.src;
         let body = first_child_of_kind(e, "block");
-        let spec = NodeSpec::new(Concept::Scope, "run this block without the compiler's safety checks", "unsafe".to_owned(), src.header_span(s, body)).flavor("unsafe");
+        let spec = NodeSpec::new(Concept::Scope, "allow specific unsafe operations in this block", "unsafe".to_owned(), src.header_span(s, body)).flavor("unsafe");
         let id = self.place(spec, &cur);
         let b = self.b.exec_out(&id, "body", "Body");
         let end = match body {
@@ -902,11 +949,11 @@ impl Lowering<'_, '_> {
     }
 
     /// The names bound by `if let` / `while let` conditions (also inside `&&` chains).
-    fn condition_names(&self, cond: Node, out: &mut Vec<String>) {
+    fn condition_names(&self, cond: Node, out: &mut Vec<(String, bool)>) {
         match cond.kind() {
             "let_condition" => {
                 if let Some(p) = cond.child_by_field_name("pattern") {
-                    pattern_names(self.src, p, out);
+                    pattern_bindings(self.src, p, first_child_of_kind(cond, "mutable_specifier").is_some(), out);
                 }
             }
             "let_chain" => {
@@ -943,7 +990,8 @@ impl Lowering<'_, '_> {
         }
         let lowered = cond.map(|c| self.ex.lower(c));
         let code = if s.id() == e.id() || s.kind() == "expression_statement" { src.header(e, cons) } else { src.header(s, cons) };
-        let spec = NodeSpec::new(Concept::Branch, self.label(label), code, src.header_span(e, cons)).flavors(flavors).expr(lowered);
+        let spec = NodeSpec::new(Concept::Branch, self.label(label), code, src.header_span(e, cons))
+            .flavors(flavors).focus(cond.and_then(|c| src.focus(c))).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, cond);
         self.propagate(&id, cond);
@@ -953,8 +1001,8 @@ impl Lowering<'_, '_> {
         if let Some(c) = cond {
             let mut names = Vec::new();
             self.condition_names(c, &mut names);
-            for n in names {
-                self.b.define(&id, &n, None);
+            for (name, mutable) in names {
+                self.b.declare(&id, &name, None, BindingForm::Pattern, mutable, false);
             }
         }
         let t_end = match cons {
@@ -980,7 +1028,8 @@ impl Lowering<'_, '_> {
         let label = format!("match {}", value.map(|v| self.ex.natural(v)).unwrap_or_default());
         let lowered = value.map(|v| self.ex.lower(v));
         let code = if s.kind() == "expression_statement" || s.id() == e.id() { src.header(e, body) } else { src.header(s, body) };
-        let spec = NodeSpec::new(Concept::Match, self.label(label), code, src.header_span(e, body)).expr(lowered);
+        let spec = NodeSpec::new(Concept::Match, self.label(label), code, src.header_span(e, body))
+            .focus(value.and_then(|v| src.focus(v))).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, value);
         self.propagate(&id, value);
@@ -998,12 +1047,18 @@ impl Lowering<'_, '_> {
                     if p.child_by_field_name("condition").is_some_and(|g| g.id() == c.id()) {
                         continue;
                     }
-                    pattern_names(src, c, &mut names);
+                    pattern_bindings(src, c, false, &mut names);
                 }
-                for n in names {
-                    self.b.define(&id, &n, None);
+                for (n, mutable) in names {
+                    self.b.declare_on(&id, format!("case:{i}:var:{n}"), &n, None, BindingForm::Pattern, mutable, false);
+                    if let Some(index) = self.b.index_of(&id) {
+                        self.b.add_flavor_at(index, &format!("match-binding:{i}:{n}"));
+                    }
                 }
                 if let Some(g) = p.child_by_field_name("condition") {
+                    if let Some(index) = self.b.index_of(&id) {
+                        self.b.add_flavor_at(index, &format!("match-guard:{i}"));
+                    }
                     self.read_all(&id, Some(g));
                 }
             }
@@ -1049,7 +1104,10 @@ impl Lowering<'_, '_> {
                 }
                 let (concept, label) = if text == "true" { (Concept::LoopInfinite, "repeat forever".to_owned()) } else { (Concept::LoopWhile, format!("while {text}")) };
                 let lowered = cond.map(|c| self.ex.lower(c));
-                let spec = NodeSpec::new(concept, self.label(label), code, span).flavors(flavors).expr(lowered);
+                let spec = NodeSpec::new(concept, self.label(label), code, span)
+                    .flavors(flavors)
+                    .focus(cond.filter(|_| concept == Concept::LoopWhile).and_then(|c| src.focus(c)))
+                    .expr(lowered);
                 let id = self.place(spec, &cur);
                 self.read_all(&id, cond);
                 self.propagate(&id, cond);
@@ -1065,13 +1123,14 @@ impl Lowering<'_, '_> {
                 );
                 let mut names = Vec::new();
                 if let Some(p) = pattern {
-                    pattern_names(src, p, &mut names);
+                    pattern_bindings(src, p, false, &mut names);
                 }
                 if value.is_some_and(|v| unparen(v).kind() == "range_expression") {
                     flavors.push("range".into());
                 }
                 let lowered = value.map(|v| self.ex.lower(v));
-                let spec = NodeSpec::new(Concept::LoopForEach, self.label(label), code, span).flavors(flavors).expr(lowered);
+                let spec = NodeSpec::new(Concept::LoopForEach, self.label(label), code, span)
+                    .flavors(flavors).focus(value.and_then(|v| src.focus(v))).expr(lowered);
                 let id = self.place(spec, &cur);
                 self.read_all(&id, value);
                 self.propagate(&id, value);
@@ -1079,8 +1138,8 @@ impl Lowering<'_, '_> {
             }
         };
         self.b.push_scope();
-        for n in defines {
-            self.b.define(&id, &n, None);
+        for (name, mutable) in defines {
+            self.b.declare(&id, &name, None, BindingForm::Pattern, mutable, false);
         }
         let b = self.b.exec_out(&id, "body", "Loop body");
         if let Some(body) = body {
@@ -1145,7 +1204,9 @@ impl Lowering<'_, '_> {
     fn macro_stmt(&mut self, s: Node, e: Node, cur: Flow) -> Flow {
         let src = self.src;
         let name = macro_name(src, e);
-        let args: Vec<String> = macro_args(src, e).into_iter().map(|(a, b)| nodex_lang_api::kit::normalize_ws(&src.text[a..b])).collect();
+        let ranges = macro_args(src, e);
+        let args: Vec<String> = ranges.iter().map(|&(a, b)| nodex_lang_api::kit::normalize_ws(&src.text[a..b])).collect();
+        let error_focus = || ranges.first().and_then(|&(a, b)| src.focus_range(a, b));
         let joined = args.join(", ");
         if PANICS.contains(&name.as_str()) {
             let label = match name.as_str() {
@@ -1155,7 +1216,7 @@ impl Lowering<'_, '_> {
                 _ if joined.is_empty() => "stop the program (panic)".to_owned(),
                 _ => format!("stop the program (panic): {joined}"),
             };
-            return self.simple(s, Concept::Throw, label, Some(e), vec!["panic".into()], cur);
+            return self.simple_with_focus(s, Concept::Throw, label, Some(e), vec!["panic".into()], error_focus(), cur);
         }
         let (concept, label, flavors) = match name.as_str() {
             "println" | "print" => (Concept::Call, format!("print {joined}"), vec!["macro".to_owned()]),
@@ -1176,7 +1237,8 @@ impl Lowering<'_, '_> {
             "bail" => (Concept::Throw, format!("fail with {joined}"), vec!["macro".to_owned()]),
             _ => (Concept::Macro, src.norm(e), Vec::new()),
         };
-        self.simple(s, concept, label, Some(e), flavors, cur)
+        let focus = if concept == Concept::Throw { error_focus() } else { None };
+        self.simple_with_focus(s, concept, label, Some(e), flavors, focus, cur)
     }
 
     fn call_stmt(&mut self, s: Node, e: Node, cur: Flow) -> Flow {
@@ -1186,15 +1248,18 @@ impl Lowering<'_, '_> {
             if let Some((_, how)) = SPAWNS.iter().find(|(p, _)| *p == path) {
                 let what = arg.map(|a| self.ex.natural(a)).unwrap_or_default();
                 let label = format!("run {what} {how}");
-                return self.simple(s, Concept::Spawn, label, Some(e), Vec::new(), cur);
+                let focus = arg.and_then(|a| src.focus(a));
+                return self.simple_with_focus(s, Concept::Spawn, label, Some(e), Vec::new(), focus, cur);
             }
             if SLEEPS.contains(&path.as_str()) {
                 let label = format!("wait {}", arg.map(|a| duration_text(src, a).unwrap_or_else(|| self.ex.natural(a))).unwrap_or_default());
-                return self.simple(s, Concept::Wait, label, Some(e), vec!["blocking".into()], cur);
+                let focus = arg.and_then(|a| src.focus(a));
+                return self.simple_with_focus(s, Concept::Wait, label, Some(e), vec!["blocking".into()], focus, cur);
             }
             if matches!(path.as_str(), "std::process::exit" | "process::exit" | "exit") {
                 let label = format!("end the program with exit code {}", arg.map(|a| self.ex.natural(a)).unwrap_or_default());
-                return self.simple(s, Concept::Return, label, Some(e), vec!["exits".into()], cur);
+                let focus = arg.and_then(|a| src.focus(a));
+                return self.simple_with_focus(s, Concept::Return, label, Some(e), vec!["exits".into()], focus, cur);
             }
             if matches!(path.as_str(), "drop" | "std::mem::drop" | "mem::drop") {
                 let label = format!("drop {} (free it now)", arg.map(|a| self.ex.natural(a)).unwrap_or_default());
@@ -1209,13 +1274,14 @@ impl Lowering<'_, '_> {
         {
             send = unparen(recv);
         }
-        if let Some((_, name)) = method_call(send) {
+        if let Some((receiver, name)) = method_call(send) {
             let name = src.norm(name);
             if name == "send" && self.ex.pipeline(send).is_none() {
                 let what = send.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next()).map(|a| self.ex.natural(a)).unwrap_or_default();
-                let target = method_call(send).map(|(r, _)| self.ex.natural(r)).unwrap_or_default();
+                let target = self.ex.natural(receiver);
                 let label = format!("send {what} through {target}");
-                return self.simple(s, Concept::Emit, label, Some(e), vec!["channel".into()], cur);
+                let focus = reference_focus(src, receiver);
+                return self.simple_with_focus(s, Concept::Emit, label, Some(e), vec!["channel".into()], focus, cur);
             }
         }
         let mut flavors = Vec::new();

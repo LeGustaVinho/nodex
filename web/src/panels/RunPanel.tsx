@@ -80,7 +80,7 @@ export function ConsolePanel() {
 }
 
 /** Step-by-step replay of the open Blueprint's recorded execution. */
-export function ReplayBar({ flow }: { flow: string }) {
+export function ReplayBar({ flow, hasObservedTransition }: { flow: string; hasObservedTransition?: boolean }) {
   const { replay, setReplay, setReplayIndex, status } = useTrace();
   const calls = useTrace((s) => s.calls[flow] ?? 0);
   const focusCode = useUi((s) => s.focusCode);
@@ -88,7 +88,10 @@ export function ReplayBar({ flow }: { flow: string }) {
 
   if (calls === 0 && !active) return null;
   const load = async () => {
+    const { codeIntent, flowSymbol } = useUi.getState();
     const page = await api.traceSteps(flow);
+    const current = useUi.getState();
+    if (current.view !== "blueprint" || current.flowSymbol !== flowSymbol || current.codeIntent !== codeIntent) return;
     setReplay(page.total > 0 ? { flow, page, index: 0 } : null);
   };
   if (!active) {
@@ -108,6 +111,7 @@ export function ReplayBar({ flow }: { flow: string }) {
   const go = (i: number) => setReplayIndex(Math.max(0, Math.min(max, i)));
   return (
     <div className="replaybar">
+      <strong>Recorded execution</strong>
       <button onClick={() => go(active.index - 1)} disabled={active.index === 0} title="Previous step">
         ◀
       </button>
@@ -122,7 +126,9 @@ export function ReplayBar({ flow }: { flow: string }) {
       {step && (
         <span className="replay-meta">
           t={(step.micros / 1000).toFixed(2)} ms · thread {step.thread}
-          {step.values.length > 0 && <span className="replay-values"> · {step.values.join(" · ")}</span>}
+          <span className="replay-values"> · {step.values.length ? step.values.join(" · ") : "No value recorded"}</span>
+          {!step.node && <span> · Source step not mapped</span>}
+          {step.node && step.index > 0 && <span> · {hasObservedTransition ? "Recorded transition" : "Transition not confirmed"}</span>}
         </span>
       )}
       <button onClick={() => void load()} title="Reload the recording">

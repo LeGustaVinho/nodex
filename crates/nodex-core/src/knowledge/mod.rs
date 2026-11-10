@@ -576,6 +576,9 @@ pub(crate) fn namespace_of(symbols: &HashMap<&str, &Symbol>, id: &str) -> Option
 
 fn external_class(id: &str, name: &str, language: Language) -> Symbol {
     Symbol {
+        syntax_sites: None,
+        type_info: None,
+        value_info: None,
         id: id.to_owned(),
         kind: SymbolKind::Class,
         name: simple_name(name),

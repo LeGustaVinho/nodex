@@ -34,6 +34,12 @@ export function operationColor(catalog: Catalog | undefined, op: OperationInfo):
 
 /** Looks a flavor up in the language table first, then in the shared table. */
 export function flavorInfo(catalog: Catalog | undefined, flavor: string, language?: Language): FlavorInfo | undefined {
+  if (flavor.startsWith("narrowed:")) return {
+    label: "Narrowed type",
+    phase: "Compile time",
+    effects: [["At this use", flavor.slice(9)]],
+    explain: `The TypeScript checker determines that this use has type ${flavor.slice(9)} based on the code reaching it.`,
+  };
   if (!catalog) return undefined;
   const lang = language ? catalog.flavors[language]?.[flavor] : undefined;
   if (lang) return lang;

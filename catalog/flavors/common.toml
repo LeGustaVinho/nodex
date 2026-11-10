@@ -147,7 +147,7 @@ explain = "The compiler's memory-safety guarantees are relaxed inside this regio
 
 [ref]
 label = "by reference"
-explain = "An alias to another variable's storage, not a copy: writing through it changes the original."
+explain = "An alias to another variable's storage. A write through a writable alias changes the original."
 
 [range]
 label = "range"

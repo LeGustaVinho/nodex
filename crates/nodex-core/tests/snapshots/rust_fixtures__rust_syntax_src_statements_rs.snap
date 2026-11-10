@@ -63,13 +63,13 @@ Destructure — if items.first() matches Some(first), unpack it
     Return — return total
 Var — scoped = first + 1
 Assign — add scoped to total
-Scope — run this block without the compiler's safety checks
+Scope — allow specific unsafe operations in this block
   body:
     Assign — add raw_read(&found as *const i32) to total
 Return — return total
 == crate::statements::raw_read
 Entry — when raw_read(p) is called
-Scope — run this block without the compiler's safety checks
+Scope — allow specific unsafe operations in this block
   body:
     Return — return *p
 == crate::statements::chains

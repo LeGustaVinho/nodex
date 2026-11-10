@@ -1,6 +1,6 @@
 //! Helpers over tree-sitter syntax trees shared by the language frontends.
 
-use nodex_ir::Span;
+use nodex_ir::{Focus, Span};
 use tree_sitter::Node;
 
 use crate::kit::{LineIndex, normalize_ws};
@@ -21,6 +21,45 @@ impl<'a> Src<'a> {
     /// Node text with whitespace collapsed.
     pub fn norm(&self, node: Node) -> String {
         normalize_ws(self.text(node))
+    }
+
+    /// Keep the whole operand and preserve whitespace within literals.
+    pub fn focus(&self, node: Node) -> Option<Focus> {
+        self.focus_range(node.start_byte(), node.end_byte())
+    }
+
+    pub fn focus_text(text: &str) -> Option<Focus> {
+        let text = text.trim();
+        (!text.is_empty()).then(|| Focus { primary: text.to_owned(), prefix: None, prefix_bytes: None, primary_bytes: None })
+    }
+
+    pub fn focus_range(&self, start: usize, end: usize) -> Option<Focus> {
+        let text = self.text.get(start..end)?;
+        let mut focus = Self::focus_text(text)?;
+        let start = start + text.len() - text.trim_start().len();
+        focus.primary_bytes = Some([start as u32, (start + focus.primary.len()) as u32]);
+        Some(focus)
+    }
+
+    /// Keep the receiver and punctuation together so the member can be emphasized separately.
+    pub fn member_focus(&self, access: Node, member: Node) -> Option<Focus> {
+        self.split_focus(access.start_byte(), member.start_byte(), member.end_byte())
+    }
+
+    /// Splits a qualified target while keeping the entire source suffix in the primary text.
+    pub fn split_focus(&self, start: usize, primary: usize, end: usize) -> Option<Focus> {
+        let mut focus = self.focus_range(primary, end)?;
+        let raw = self.text.get(start..primary)?;
+        let prefix = raw.trim_start();
+        const PREVIEW_BYTES: usize = 96;
+        if prefix.len() > PREVIEW_BYTES {
+            let limit = prefix.floor_char_boundary(PREVIEW_BYTES);
+            focus.prefix = Some(format!("{}…", &prefix[..limit]));
+            focus.prefix_bytes = Some([(primary - prefix.len()) as u32, primary as u32]);
+        } else if !prefix.is_empty() {
+            focus.prefix = Some(prefix.to_owned());
+        }
+        Some(focus)
     }
 
     pub fn span(&self, node: Node) -> Span {

@@ -8,6 +8,9 @@ import type { StructEdgeKind } from "./gen/StructEdgeKind";
 import { expansionKey, type DetailLevel } from "./graph/flowGraph";
 import { contextKey, toUmlScope, type ContextItem } from "./graph/context";
 import type { StructureIndex } from "./graph/structureGraph";
+import { closeCodeTabs, focusCodeFile, moveCodeTab, type CloseCodeTabs } from "./codeTabs";
+
+export type SidebarReveal = { tab: "files"; file: string } | { tab: "symbols"; file: string; id: string };
 
 /** Which edges the explorer views draw: all, or only those of the selected node. */
 export type EdgeMode = "all" | "selection" | "in" | "out";
@@ -86,13 +89,13 @@ function savePrefs(s: ExplorerPrefs) {
 export type View = "overview" | "hierarchy" | "knowledge" | "uml" | "architecture" | "types" | "calls" | "timeline" | "blueprint";
 
 /** What the inspector and code panel show. */
-export type Selection =
+export type Selection = (
   | { kind: "symbol"; id: string }
-  | { kind: "flow-node"; flow: string; id: string }
+  | { kind: "flow-node"; flow: string; id: string; pin?: string }
   | { kind: "expr"; flow: string; nodeId: string; path: string }
   /** A folder or namespace box of the Hierarchy (no symbol behind it). */
   | { kind: "container"; id: string }
-  | null;
+  ) & { syntax?: string } | null;
 
 interface UiState {
   view: View;
@@ -107,6 +110,12 @@ interface UiState {
   /** Span to reveal in the code panel. */
   codeFocus: Span | null;
   codeFocusRevision: string | null;
+  codeTabs: string[];
+  activeCodeFile: string | null;
+  codeIntent: number;
+  blueprintSourceIntent: number;
+  projectSession: number;
+  sidebarReveal: SidebarReveal | null;
   /** Statement nodes whose expression trees are expanded. */
   expanded: Record<string, boolean>;
   classOpen: Record<string, boolean>;
@@ -125,6 +134,9 @@ interface UiState {
   showUses: boolean;
   /** How much of each statement the Blueprint draws; remembered per project. */
   detail: DetailLevel;
+  blueprintExplanations: boolean;
+  blueprintGuide: boolean;
+  blueprintGuideOnOpen: boolean;
   /** localStorage key for `detail` (per project root). */
   detailKey: string | null;
   /** Folder being opened from the Open dialog. */
@@ -208,9 +220,17 @@ interface UiState {
   setCallDepth: (depth: number) => void;
   select: (s: Selection, span?: Span | null, revision?: string) => void;
   focusCode: (span: Span | null, revision?: string) => void;
+  focusBlueprintSource: (symbol: string, spans: readonly Span[]) => void;
+  openCodeFile: (file: string) => void;
+  closeCodeTabs: (file: string, mode: CloseCodeTabs) => void;
+  moveCodeTab: (file: string, target: string, after: boolean) => void;
+  revealInSidebar: (target: SidebarReveal) => void;
   /** Opens or closes a statement's details; `shown` is whether they are shown now. */
   toggleExpanded: (flow: string, nodeId: string, shown: boolean) => void;
   setDetail: (level: DetailLevel) => void;
+  setBlueprintExplanations: (enabled: boolean) => void;
+  setBlueprintGuide: (enabled: boolean) => void;
+  setBlueprintGuideOnOpen: (enabled: boolean) => void;
   /** Reads the remembered detail level of the project at `root`. */
   loadDetail: (root: string) => void;
   collapseAll: () => void;
@@ -266,6 +286,12 @@ export const useUi = create<UiState>((set, get) => {
   selection: null,
   codeFocus: null,
   codeFocusRevision: null,
+  codeTabs: [],
+  activeCodeFile: null,
+  codeIntent: 0,
+  blueprintSourceIntent: 0,
+  projectSession: 0,
+  sidebarReveal: null,
   expanded: {},
   classOpen: {},
   toggleClassMember: (id, shown) => set((s) => ({ classOpen: { ...s.classOpen, [id]: !shown } })),
@@ -318,6 +344,9 @@ export const useUi = create<UiState>((set, get) => {
   showUses: true,
   detail: "statements",
   detailKey: null,
+  blueprintExplanations: true,
+  blueprintGuide: false,
+  blueprintGuideOnOpen: false,
   projectLoading: null,
   setProjectLoading: (projectLoading) => set({ projectLoading, projectProgress: null }),
   projectProgress: null,
@@ -325,7 +354,7 @@ export const useUi = create<UiState>((set, get) => {
   resetForProject: () => {
     // Overview first: it shows the project at a glance and stays cheap on large projects.
     writeHash("overview", null);
-    set({
+    set((s) => ({
       view: "overview",
       flowSymbol: null,
       namespace: null,
@@ -333,12 +362,21 @@ export const useUi = create<UiState>((set, get) => {
       selection: null,
       codeFocus: null,
       codeFocusRevision: null,
+      codeTabs: [],
+      activeCodeFile: null,
+      codeIntent: s.codeIntent + 1,
+      blueprintSourceIntent: -1,
+      projectSession: s.projectSession + 1,
+      sidebarReveal: null,
       expanded: {},
       classOpen: {},
       context: [],
       contextKey: null,
       contextPickerOpen: false,
       detailKey: null,
+      blueprintExplanations: true,
+      blueprintGuide: false,
+      blueprintGuideOnOpen: false,
       projectLoading: null,
       projectProgress: null,
       umlScope: { kind: "Project" },
@@ -349,7 +387,7 @@ export const useUi = create<UiState>((set, get) => {
       knowledgeFocus: null,
       knowledgeHistory: [],
       overviewList: "summary",
-    });
+    }));
   },
   connected: false,
   environmentOpen: false,
@@ -422,11 +460,17 @@ export const useUi = create<UiState>((set, get) => {
   setView: (view) =>
     set((s) => {
       writeHash(view, s.flowSymbol, { kind: s.umlKind, scope: s.umlExplicitScope ? s.umlScope : undefined });
-      return { view };
+      return view === "blueprint" && s.view !== view
+        ? { view, codeIntent: s.codeIntent + 1, blueprintSourceIntent: s.codeIntent + 1 }
+        : { view };
     }),
   openFlow: (flowSymbol) => {
     writeHash("blueprint", flowSymbol);
-    set({ flowSymbol, view: "blueprint", expanded: {}, classOpen: {} });
+    set((s) => ({
+      flowSymbol, view: "blueprint", expanded: {}, classOpen: {},
+      codeIntent: s.codeIntent + 1, blueprintSourceIntent: s.codeIntent + 1,
+      blueprintGuide: s.blueprintGuide || s.blueprintGuideOnOpen,
+    }));
   },
   setNamespace: (namespace) => set({ namespace }),
   showCalls: (callFocus) => {
@@ -434,8 +478,28 @@ export const useUi = create<UiState>((set, get) => {
     set({ callFocus, view: "calls" });
   },
   setCallDepth: (callDepth) => set({ callDepth }),
-  select: (selection, span, revision) => set(span === undefined ? { selection } : { selection, codeFocus: span, codeFocusRevision: revision ?? null }),
-  focusCode: (codeFocus, revision) => set({ codeFocus, codeFocusRevision: revision ?? null }),
+  select: (selection, span, revision) => set((s) => span === undefined ? { selection } : {
+    selection, ...focusCodeFile(s, span, revision),
+  }),
+  focusCode: (span, revision) => set((s) => focusCodeFile(s, span, revision)),
+  focusBlueprintSource: (symbol, spans) => set((s) => {
+    if (!spans.length || s.view !== "blueprint" || s.flowSymbol !== symbol || s.blueprintSourceIntent !== s.codeIntent) return s;
+    const done = { blueprintSourceIntent: -1 };
+    if (spans.some((span) => span.file === s.activeCodeFile)) return done;
+    return { ...focusCodeFile(s, spans[0]), ...done, codeIntent: s.codeIntent };
+  }),
+  openCodeFile: (file) => set((s) => ({
+    codeTabs: s.codeTabs.includes(file) ? s.codeTabs : [...s.codeTabs, file],
+    activeCodeFile: file,
+    ...(file !== s.activeCodeFile ? { codeFocus: null, codeFocusRevision: null } : {}),
+    codeIntent: s.codeIntent + 1,
+  })),
+  closeCodeTabs: (file, mode) => set((s) => closeCodeTabs(s, file, mode)),
+  moveCodeTab: (file, target, after) => set((s) => {
+    const codeTabs = moveCodeTab(s.codeTabs, file, target, after);
+    return codeTabs === s.codeTabs ? s : { codeTabs };
+  }),
+  revealInSidebar: (target) => set({ sidebarReveal: { ...target } }),
   toggleExpanded: (flow, id, shown) => set((s) => ({ expanded: { ...s.expanded, [expansionKey(flow, id)]: !shown } })),
   setDetail: (detail) =>
     set((s) => {
@@ -450,14 +514,35 @@ export const useUi = create<UiState>((set, get) => {
     const detailKey = `nodex.detail:${root}`;
     if (get().detailKey === detailKey) return;
     let detail: DetailLevel = "statements";
+    let blueprintExplanations = true;
+    let blueprintGuideOnOpen = false;
     try {
       const saved = window.localStorage.getItem(detailKey);
       if (saved === "operations" || saved === "everything" || saved === "statements") detail = saved;
+      blueprintExplanations = window.localStorage.getItem(`${detailKey}:explanations`) !== "off";
+      blueprintGuideOnOpen = window.localStorage.getItem(`${detailKey}:guide`) === "on";
     } catch {
       // Ignore: default level.
     }
-    set({ detailKey, detail });
+    set({ detailKey, detail, blueprintExplanations, blueprintGuideOnOpen, blueprintGuide: blueprintGuideOnOpen });
   },
+  setBlueprintExplanations: (blueprintExplanations) => set((s) => {
+    try {
+      if (s.detailKey) window.localStorage.setItem(`${s.detailKey}:explanations`, blueprintExplanations ? "on" : "off");
+    } catch {
+      // The setting still applies in this session.
+    }
+    return { blueprintExplanations };
+  }),
+  setBlueprintGuide: (blueprintGuide) => set({ blueprintGuide }),
+  setBlueprintGuideOnOpen: (blueprintGuideOnOpen) => set((s) => {
+    try {
+      if (s.detailKey) window.localStorage.setItem(`${s.detailKey}:guide`, blueprintGuideOnOpen ? "on" : "off");
+    } catch {
+      // The setting still applies in this session.
+    }
+    return { blueprintGuideOnOpen };
+  }),
   collapseAll: () => set({ expanded: {} }),
   setShowDataWires: (showDataWires) => set({ showDataWires }),
   setShowUses: (showUses) => set({ showUses }),

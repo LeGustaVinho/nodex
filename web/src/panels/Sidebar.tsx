@@ -3,11 +3,13 @@ import { Fragment, type ReactNode, useLayoutEffect, useMemo, useRef, useState } 
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { openMenu } from "../components/ContextMenu";
+import { fileMenuItems } from "../fileMenu";
 import { navigationMenuItems } from "../navigation";
 import { blueprintMenuItems, contextMenuItems } from "../uml/contextMenu";
 import { Splitter } from "../components/Splitter";
 import type { Symbol } from "../gen/Symbol";
 import { type FileNode, fileTree } from "../graph/fileTree";
+import { sidebarSymbolRows, sidebarSymbolsInFile } from "../graph/sidebarSymbols";
 import { umlMenuItems } from "../uml/menu";
 import { isScopeKind, isTypeKind } from "../graph/structureGraph";
 import { useUi } from "../store";
@@ -48,13 +50,16 @@ export function Sidebar() {
       setView: s.setView,
       select: s.select,
       openFlow: s.openFlow,
-      focusCode: s.focusCode,
+      openCodeFile: s.openCodeFile,
+      sidebarReveal: s.sidebarReveal,
       showUml: s.showUml,
     })),
   );
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [tab, setTab] = useState<"symbols" | "files">("symbols");
+  const [revealed, setRevealed] = useState<{ tab: typeof tab; key: string } | null>(null);
+  const handledReveal = useRef<typeof ui.sidebarReveal>(null);
   const q = query.trim().toLowerCase();
   // Built only once the Files tab is shown.
   const files = useMemo(
@@ -62,27 +67,30 @@ export function Sidebar() {
     [project.data, tab],
   );
 
-  const namespaces = useMemo(() => {
-    if (!index) return [];
-    return index.graph.symbols
-      .filter((s) => isScopeKind(s.kind) && !s.external)
-      .sort((a, b) => a.qualified_name.localeCompare(b.qualified_name));
-  }, [index]);
-
-  // Top-level types of each namespace (nested types appear under their parent).
-  const topTypes = useMemo(() => {
-    const map = new Map<string, Symbol[]>();
-    if (!index) return map;
-    for (const ns of namespaces) {
-      map.set(ns.id, index.typesIn(ns.qualified_name).filter((t) => !t.parent || isScopeKind(index.byId.get(t.parent)?.kind ?? "Class")));
+  useLayoutEffect(() => {
+    const target = ui.sidebarReveal;
+    if (!target || handledReveal.current === target || !index || !project.data) return;
+    handledReveal.current = target;
+    let key: string;
+    let ancestors: string[];
+    if (target.tab === "files") {
+      if (!project.data.files.some((file) => file.path === target.file)) return;
+      key = `file:${target.file}`;
+      const parts = target.file.split("/");
+      ancestors = parts.slice(0, -1).map((_, i) => `file:${parts.slice(0, i + 1).join("/")}`);
+    } else {
+      const row = sidebarSymbolsInFile(index, target.file)?.get(target.id);
+      if (!row) return;
+      ({ key, ancestors } = row);
     }
-    return map;
-  }, [index, namespaces]);
+    setOpen((current) => ({ ...current, ...Object.fromEntries(ancestors.map((id) => [id, true])) }));
+    setQuery("");
+    setTab(target.tab);
+    setRevealed({ tab: target.tab, key });
+  }, [ui.sidebarReveal, index, project.data]);
 
   if (!index) return <aside className="sidebar">Loading…</aside>;
 
-  const matches = (s: Symbol) => !q || s.name.toLowerCase().includes(q);
-  const typeVisible = (t: Symbol): boolean => matches(t) || index.members(t.id).some(matches);
   const isOpen = (id: string) => (q ? true : !!open[id]);
   const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }));
 
@@ -96,18 +104,20 @@ export function Sidebar() {
     }
   };
 
-  const openFileBlueprint = (file: string) => {
-    if (ui.view !== "blueprint") return false;
-    const type = index.primaryTypeInFile(file);
-    if (!type) return false;
-    selectType(type, type.origins.find((origin) => origin.file === file));
+  const openFileBlueprint = (file: string, preservePosition = false) => {
+    const target = index.fileBlueprint(file, ui.view === "blueprint");
+    if (!target) return false;
+    ui.setNamespace(index.namespaceOf(target.id));
+    ui.select({ kind: "symbol", id: target.id }, preservePosition ? undefined : target.origins.find((origin) => origin.file === file));
+    if (ui.view !== "blueprint" || ui.flowSymbol !== target.id) ui.openFlow(target.id);
     return true;
   };
 
   const clickSymbol = (s: Symbol) => {
+    setRevealed(null);
     const origin = s.origins[0];
     if (isScopeKind(s.kind)) {
-      if (s.kind === "Module" && origin && !s.flavors.includes("inline-module") && openFileBlueprint(origin.file)) return;
+      if (ui.view === "blueprint" && s.kind === "Module" && origin && !s.flavors.includes("inline-module") && openFileBlueprint(origin.file)) return;
       ui.setNamespace(s.qualified_name);
       ui.setView("types");
       ui.select({ kind: "symbol", id: s.id }, origin ?? null);
@@ -124,53 +134,30 @@ export function Sidebar() {
 
   // The tree is a flat list of rows, so only the visible ones are rendered (a TypeScript project
   // has a module per file: tens of thousands of rows).
-  const symbolRows: VirtualRow[] = [];
-  const row = (symbol: Symbol, depth: number, extra: { caret?: string; onCaret?: () => void; active?: boolean } = {}) =>
-    symbolRows.push({ key: symbol.id, render: () => (
-      <TreeRow symbol={symbol} owner={index.byId.get(symbol.parent ?? "")} depth={depth} {...extra} onClick={() => clickSymbol(symbol)} />
-    ) });
-
-  const pushMembers = (owner: Symbol, depth: number) => {
-    for (const m of index.members(owner.id)) {
-      if (!(matches(m) || matches(owner) || (index.children.get(m.id) ?? []).some(matches))) continue;
-      row(m, depth, { active: ui.flowSymbol === m.id });
-      for (const a of (index.children.get(m.id) ?? []).filter((c) => c.has_flow)) row(a, depth + 1, { active: ui.flowSymbol === a.id });
-    }
-  };
-
-  const pushType = (t: Symbol, depth: number) => {
-    if (!typeVisible(t)) return;
-    row(t, depth, {
-      caret: isOpen(t.id) ? "▾" : "▸",
-      onCaret: () => toggle(t.id),
-      active: ui.selection?.kind === "symbol" && ui.selection.id === t.id,
-    });
-    if (!isOpen(t.id)) return;
-    pushMembers(t, depth + 1);
-    for (const n of (index.children.get(t.id) ?? []).filter((c) => isTypeKind(c.kind))) pushType(n, depth + 1);
-  };
-
-  if (tab === "symbols") {
-    for (const ns of namespaces) {
-      const types = topTypes.get(ns.id) ?? [];
-      const free = index.freeMembers(ns.id);
-      if (q && !types.some(typeVisible) && !free.some(matches) && !matches(ns)) continue;
-      row(ns, 0, {
-        caret: isOpen(ns.id) ? "▾" : "▸",
-        onCaret: () => toggle(ns.id),
-        active: ui.namespace === ns.qualified_name && ui.view === "types",
-      });
-      if (!isOpen(ns.id)) continue;
-      if (free.length > 0) pushMembers(ns, 1);
-      for (const t of types) pushType(t, 1);
-    }
-  }
+  const symbolRows: VirtualRow[] = tab !== "symbols" ? [] : sidebarSymbolRows(index, q, isOpen).map(({ key, symbol, kind, ancestors }) => {
+    const active = kind === "scope"
+      ? (ui.namespace === symbol.qualified_name && ui.view === "types") || (ui.view === "blueprint" && ui.flowSymbol === symbol.id)
+      : kind === "type" ? ui.selection?.kind === "symbol" && ui.selection.id === symbol.id : ui.flowSymbol === symbol.id;
+    const highlighted = revealed?.tab === "symbols" && revealed.key === key;
+    return { key, render: () => (
+      <TreeRow
+        rowKey={key}
+        symbol={symbol}
+        owner={index.byId.get(symbol.parent ?? "")}
+        depth={ancestors.length}
+        caret={kind === "member" ? undefined : isOpen(symbol.id) ? "▾" : "▸"}
+        onCaret={kind === "member" ? undefined : () => toggle(symbol.id)}
+        active={revealed?.tab === "symbols" ? highlighted : active}
+        onClick={() => clickSymbol(symbol)}
+      />
+    ) };
+  });
 
   const problems = project.data?.files.filter((f) => f.diagnostics.length > 0) ?? [];
 
   const fileMenu = (e: React.MouseEvent, node: FileNode) =>
     openMenu(e, [
-      ...(node.folder ? contextMenuItems({ kind: "folder", path: node.path }) : []),
+      ...(node.folder ? contextMenuItems({ kind: "folder", path: node.path }) : fileMenuItems(node.path)),
       ...umlMenuItems(node.folder ? { kind: "Folder", path: node.path } : { kind: "File", path: node.path }, `UML of ${node.name}`),
     ]);
   const fileRows: VirtualRow[] = [];
@@ -180,17 +167,21 @@ export function Sidebar() {
     fileRows.push({
       key,
       render: () => (
-        <div className="row" style={{ paddingLeft: 6 + depth * 14 }} onContextMenu={(e) => fileMenu(e, node)}>
+        <div className={`row ${revealed?.key === key ? "active" : ""}`} style={{ paddingLeft: 6 + depth * 14 }} onContextMenu={(e) => fileMenu(e, node)}>
           <span className="caret" onClick={() => node.folder && toggle(key)}>
             {node.folder ? (isOpen(key) ? "▾" : "▸") : ""}
           </span>
           <button
             className="row-main"
-            title={`${node.path} — right-click for UML diagrams`}
+            data-sidebar-row={key}
+            title={`${node.path} — right-click for more actions`}
             onClick={() => {
               if (node.folder) toggle(key);
-              else if (!openFileBlueprint(node.path)) {
-                ui.focusCode({ file: node.path, start_byte: 0, end_byte: 0, start_line: 1, start_col: 1, end_line: 1, end_col: 1 });
+              else {
+                setRevealed({ tab: "files", key });
+                const alreadyOpen = useUi.getState().codeTabs.includes(node.path);
+                ui.openCodeFile(node.path);
+                openFileBlueprint(node.path, alreadyOpen);
               }
             }}
           >
@@ -226,7 +217,7 @@ export function Sidebar() {
         <button className={tab === "symbols" ? "on" : ""} aria-selected={tab === "symbols"} onClick={() => setTab("symbols")}>
           Symbols
         </button>
-        <button className={tab === "files" ? "on" : ""} aria-selected={tab === "files"} onClick={() => setTab("files")} title="Folders and files; right-click for UML diagrams">
+        <button className={tab === "files" ? "on" : ""} aria-selected={tab === "files"} onClick={() => setTab("files")} title="Folders and files; right-click for more actions">
           Files
         </button>
       </div>
@@ -236,7 +227,7 @@ export function Sidebar() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
-      <VirtualList rows={tab === "files" ? fileRows : symbolRows} />
+      <VirtualList rows={tab === "files" ? fileRows : symbolRows} reveal={revealed?.tab === tab ? revealed : null} />
       {problems.length > 0 && (
         <Splitter size="problems-h" axis="y" target="next" grow={-1} min={40} max={(sidebar) => sidebar.clientHeight - 140} label="Resize the problems list" />
       )}
@@ -265,7 +256,7 @@ const ROW_HEIGHT = 22;
 /** Rows rendered above and below the visible ones, so fast scrolling shows no gap. */
 const OVERSCAN = 12;
 
-function VirtualList({ rows }: { rows: VirtualRow[] }) {
+function VirtualList({ rows, reveal }: { rows: VirtualRow[]; reveal: { key: string } | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState(0);
   const [height, setHeight] = useState(800);
@@ -279,6 +270,23 @@ function VirtualList({ rows }: { rows: VirtualRow[] }) {
   }, []);
   const first = Math.max(0, Math.floor(scroll / ROW_HEIGHT) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scroll + height) / ROW_HEIGHT) + OVERSCAN);
+  const focused = useRef<typeof reveal>(null);
+  useLayoutEffect(() => {
+    const list = ref.current;
+    if (!list || !reveal || focused.current === reveal) return;
+    const index = rows.findIndex((row) => row.key === reveal.key);
+    if (index < 0) return;
+    const top = index * ROW_HEIGHT;
+    if (top < list.scrollTop || top + ROW_HEIGHT > list.scrollTop + list.clientHeight) {
+      list.scrollTop = Math.max(0, top - Math.floor(list.clientHeight / 2));
+      setScroll(list.scrollTop);
+    }
+    const button = [...list.querySelectorAll<HTMLButtonElement>("[data-sidebar-row]")].find((el) => el.dataset.sidebarRow === reveal.key);
+    if (button) {
+      focused.current = reveal;
+      button.focus({ preventScroll: true });
+    }
+  }, [rows, reveal, first, last]);
   return (
     <div className="tree" ref={ref} onScroll={(e) => setScroll(e.currentTarget.scrollTop)}>
       <div style={{ height: rows.length * ROW_HEIGHT }}>
@@ -292,8 +300,8 @@ function VirtualList({ rows }: { rows: VirtualRow[] }) {
   );
 }
 
-function TreeRow(props: { symbol: Symbol; owner?: Symbol; depth: number; caret?: string; onCaret?: () => void; active?: boolean; onClick: () => void }) {
-  const { symbol, owner, depth, caret, onCaret, active, onClick } = props;
+function TreeRow(props: { rowKey: string; symbol: Symbol; owner?: Symbol; depth: number; caret?: string; onCaret?: () => void; active?: boolean; onClick: () => void }) {
+  const { rowKey, symbol, owner, depth, caret, onCaret, active, onClick } = props;
   return (
     <div
       className={`row ${active ? "active" : ""}`}
@@ -314,7 +322,7 @@ function TreeRow(props: { symbol: Symbol; owner?: Symbol; depth: number; caret?:
       >
         {caret ?? ""}
       </span>
-      <button className="row-main" onClick={onClick} title={[symbol.signature ?? symbol.qualified_name, symbol.doc].filter(Boolean).join("\n\n")}>
+      <button className="row-main" data-sidebar-row={rowKey} onClick={onClick} title={[symbol.signature ?? symbol.qualified_name, symbol.doc].filter(Boolean).join("\n\n")}>
         <span className={`sym-icon sym-${symbol.kind.toLowerCase()}`}>{ICON[symbol.kind] ?? "·"}</span>
         <span className="sym-name">
           {symbol.kind === "Namespace" ? symbol.qualified_name : symbol.kind === "Module" ? moduleLabel(symbol) : symbol.name}

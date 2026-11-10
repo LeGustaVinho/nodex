@@ -8,6 +8,7 @@
 
 pub mod cache;
 pub mod canon;
+pub mod borrow_origin;
 pub mod catalog;
 pub mod knowledge;
 pub mod link;
@@ -15,6 +16,7 @@ pub mod operations;
 pub mod perf;
 pub mod project;
 pub mod semantic;
+mod semantic_types;
 pub mod navigation;
 pub mod units;
 

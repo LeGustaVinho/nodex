@@ -2,18 +2,24 @@
 import type { CallTarget } from "./CallTarget";
 import type { Concept } from "./Concept";
 import type { Expr } from "./Expr";
+import type { Focus } from "./Focus";
 import type { Pin } from "./Pin";
 import type { Purity } from "./Purity";
 import type { Span } from "./Span";
+import type { SyntaxSite } from "./SyntaxSite";
 
 /**
  * One node of a Blueprint-style flow graph.
  */
-export type FlowNode = { id: string, concept: Concept, 
+export type FlowNode = { syntax_sites?: Array<SyntaxSite>, id: string, concept: Concept, 
 /**
  * Natural-language description (`for each order in _repository.All()`).
  */
 label: string, 
+/**
+ * The target or operand of this statement, independently of its expression's focus.
+ */
+focus?: Focus, 
 /**
  * The original code of the statement header, single line, trimmed.
  */

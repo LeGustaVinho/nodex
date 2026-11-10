@@ -8,6 +8,8 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
+
 - The **Context** picker limits six explorer views to one or more folders and symbols. Nodex remembers the selection for each project and dims Knowledge neighbors outside it.
 - **Open as Blueprint** on a type shows its fields and method cards in one box. Expand methods in place to follow calls and field writes.
 
@@ -20,6 +22,10 @@ The release workflow publishes the section of the version it builds as the relea
 - The palette has more commands (fit, export, edges shown, layouts, lists, reload the project) and highlights what matches.
 
 ### Changed
+
+- Blueprints explain TypeScript spread and rest, resource cleanup and recognized collection stages. Use **Guide** to follow possible paths. Replay highlights a transition when the recording identifies its execution wire. Type Blueprints also show contracts and enum variants.
+
+- In **Blueprint**, clicking a file with a clear main type opens that type's graph in C#, TypeScript and Rust. TypeScript and Rust files can also open a module graph with their free functions directly from **Files**.
 
 - Large projects open much faster. A Unity project of 1,500 C# files shows its Overview in about 1 second instead of more than 10, and a project of 10,000 TypeScript files in about 2 seconds.
 - A newly opened project starts on the Overview. Architecture groups namespaces and modules by folder when there are more than 300 of them.

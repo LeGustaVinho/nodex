@@ -6,11 +6,12 @@
 
 use std::collections::HashMap;
 
-use nodex_ir::{CallTarget, Concept, Expr, FlowGraph, Language, SymbolId, TypeRef, TypeRelation};
+use nodex_ir::{BindingForm, CallTarget, Concept, Expr, FlowGraph, Focus, Language, SymbolId, TypeRef, TypeRelation};
+use nodex_lang_api::blueprint_types::Continuations;
 use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, truncate};
 use tree_sitter::Node;
 
-use crate::expr::{ExprLowering, PipelineKind, reads, unparen};
+use crate::expr::{ExprLowering, PipelineKind, reads, reference_focus, unparen};
 use crate::frameworks::{self, Frameworks};
 use crate::structure::{BodyJob, BodyKind};
 use crate::syntax::{Src, children, first_child_of_kind, is_function_value, is_statement, named_children, parameters, pattern_names, string_value};
@@ -18,9 +19,63 @@ use crate::syntax::{Src, children, first_child_of_kind, is_function_value, is_st
 pub struct Lowered {
     pub graph: FlowGraph,
     pub type_refs: Vec<TypeRef>,
+    pub continuations: Continuations,
 }
 
 type Flow = Option<ExecCursor>;
+
+fn declaration_form(decl: Node, using: bool) -> BindingForm {
+    children(decl).into_iter().find_map(|token| match token.kind() {
+        "var" => Some(BindingForm::Var),
+        "const" => Some(BindingForm::Const),
+        _ => None,
+    }).unwrap_or(if using { BindingForm::Using } else { BindingForm::Let })
+}
+
+/// Record which names get a default value without visiting the default expression.
+fn default_bindings(src: Src, pattern: Node, out: &mut Vec<String>) {
+    match pattern.kind() {
+        "assignment_pattern" | "object_assignment_pattern" => {
+            if let Some(left) = pattern.child_by_field_name("left") {
+                let mut names = Vec::new();
+                pattern_names(src, left, &mut names);
+                out.extend(names.into_iter().map(|n| format!("binding-default:{n}")));
+                default_bindings(src, left, out);
+            }
+        }
+        "pair_pattern" => {
+            if let Some(value) = pattern.child_by_field_name("value") {
+                default_bindings(src, value, out);
+            }
+        }
+        "object_pattern" | "array_pattern" => {
+            for child in named_children(pattern) {
+                default_bindings(src, child, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The kind of remainder and the bindings that receive it, without visiting default expressions.
+fn rest_bindings(src: Src, pattern: Node, context: &str) -> Vec<String> {
+    match pattern.kind() {
+        "rest_pattern" => {
+            let mut names = Vec::new();
+            pattern_names(src, pattern, &mut names);
+            names.into_iter().map(|name| format!("{context}:{name}")).collect()
+        }
+        "array_pattern" | "object_pattern" => {
+            let context = if pattern.kind() == "array_pattern" { "rest-items" } else { "rest-properties" };
+            named_children(pattern).into_iter().flat_map(|p| rest_bindings(src, p, context)).collect()
+        }
+        "pair_pattern" => pattern.child_by_field_name("value").map_or_else(Vec::new, |p| rest_bindings(src, p, context)),
+        "assignment_pattern" | "object_assignment_pattern" => {
+            pattern.child_by_field_name("left").map_or_else(Vec::new, |p| rest_bindings(src, p, context))
+        }
+        _ => Vec::new(),
+    }
+}
 
 struct Lowering<'a, 'f> {
     src: Src<'a>,
@@ -32,6 +87,7 @@ struct Lowering<'a, 'f> {
     fw: Frameworks,
     /// React state setters declared in this body (`const [n, setN] = useState(0)` → `setN`).
     setters: Vec<String>,
+    continuations: Continuations,
     /// The body is a React component: its returned JSX is what it renders.
     component: bool,
 }
@@ -55,6 +111,7 @@ pub fn lower_body(src: Src, job: &BodyJob, functions: &HashMap<usize, SymbolId>,
         label_max: 96,
         fw,
         setters: Vec::new(),
+        continuations: Continuations::new(),
         component: job.flavors.iter().any(|f| f == "react:component")
             || (job.name == "render" && job.flavors.iter().any(|f| f == "react:lifecycle")),
     };
@@ -78,14 +135,32 @@ pub fn lower_body(src: Src, job: &BodyJob, functions: &HashMap<usize, SymbolId>,
     } else {
         src.header_span(job.decl, Some(job.body))
     };
-    let flavors = job.flavors.iter().filter(|f| ENTRY_FLAVORS.contains(&f.as_str()) || f.starts_with("attr:")).cloned();
+    let flavors = job.flavors.iter().filter(|f| ENTRY_FLAVORS.contains(&f.as_str()) || f.starts_with("attr:") || f.as_str() == "type-import").cloned();
     // A framework calls this body (lifecycle, render, registered callback): an event entry.
     let (concept, label) = match &job.event {
         Some(event) => (Concept::EventEntry, event.clone()),
         None => (Concept::Entry, label),
     };
     let flavors = flavors.chain(job.flavors.iter().filter(|f| f.contains(':') && !f.starts_with("attr:")).cloned());
-    let entry = l.b.add(NodeSpec::new(concept, label, job.signature.clone(), entry_span).flavors(flavors));
+    let mut parameter_flavors = Vec::new();
+    if let Some(params) = job.decl.child_by_field_name("parameters") {
+        for param in named_children(params) {
+            let pattern = match param.kind() {
+                "required_parameter" | "optional_parameter" => param.child_by_field_name("pattern"),
+                _ => Some(param),
+            };
+            if let Some(pattern) = pattern {
+                parameter_flavors.extend(rest_bindings(src, pattern, "rest-arguments"));
+                default_bindings(src, pattern, &mut parameter_flavors);
+                if param.child_by_field_name("value").is_some() {
+                    let mut names = Vec::new();
+                    pattern_names(src, pattern, &mut names);
+                    parameter_flavors.extend(names.into_iter().map(|n| format!("parameter-default:{n}")));
+                }
+            }
+        }
+    }
+    let entry = l.b.add(NodeSpec::new(concept, label, job.signature.clone(), entry_span).flavors(flavors.chain(parameter_flavors)));
     let start = l.b.exec_out(&entry, "out", "");
     for (name, ty) in &job.params {
         if !name.is_empty() {
@@ -118,7 +193,7 @@ pub fn lower_body(src: Src, job: &BodyJob, functions: &HashMap<usize, SymbolId>,
         .map(|n| TypeRef { from: job.symbol.clone(), name: n.clone(), relation: TypeRelation::Instantiates })
         .collect();
     let graph = l.b.finish(job.name.clone(), Language::Typescript, src.span(job.decl));
-    Lowered { graph, type_refs }
+    Lowered { graph, type_refs, continuations: l.continuations }
 }
 
 /// True if `expr` (anywhere) carries `flavor`.
@@ -153,13 +228,52 @@ impl Lowering<'_, '_> {
             for name in reads(self.src, n) {
                 self.b.read(id, &name);
             }
+            self.record_writes(id, n);
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Record writes even when the expression containing them is part of a larger statement.
+    fn record_writes(&mut self, id: &String, expr: Node<'_>) {
+        let mut pending = vec![expr];
+        while let Some(node) = pending.pop() {
+            if let Some(function) = nodex_lang_api::blueprint_types::immediately_called_script_function(node) {
+                for name in nodex_lang_api::blueprint_types::immediate_script_writes(self.src, function) {
+                    self.b.write(id, name);
+                }
+            }
+            if crate::syntax::is_function(node.kind()) {
+                continue;
+            }
+            let target = match node.kind() {
+                "assignment_expression" | "augmented_assignment_expression" => node.child_by_field_name("left"),
+                "update_expression" => node.child_by_field_name("argument"),
+                _ => None,
+            };
+            if let Some(target) = target.map(unparen) {
+                let mut names = Vec::new();
+                pattern_names(self.src, target, &mut names);
+                for name in names {
+                    self.b.write(id, &name);
+                }
+            }
+            pending.extend(named_children(node));
+        }
+    }
+
     fn simple(&mut self, s: Node, concept: Concept, label: String, expr: Option<Node>, flavors: Vec<String>, cur: Flow) -> Flow {
+        let focus = expr
+            .filter(|_| matches!(concept, Concept::Return | Concept::Throw | Concept::Yield))
+            .and_then(|e| self.src.focus(e));
+        self.simple_with_focus(s, concept, label, expr, flavors, focus, cur)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn simple_with_focus(
+        &mut self, s: Node, concept: Concept, label: String, expr: Option<Node>, flavors: Vec<String>, focus: Option<Focus>, cur: Flow,
+    ) -> Flow {
         let lowered = expr.map(|e| self.ex.lower(e));
-        let spec = NodeSpec::new(concept, self.label(label), self.src.norm(s), self.src.span(s)).flavors(flavors).expr(lowered);
+        let spec = NodeSpec::new(concept, self.label(label), self.src.norm(s), self.src.span(s))
+            .flavors(flavors).focus(focus).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, expr);
         if concept.is_terminal() { None } else { Some(self.b.exec_out(&id, "out", "")) }
@@ -255,7 +369,7 @@ impl Lowering<'_, '_> {
             }
             "function_declaration" | "generator_function_declaration" => {
                 let name = s.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_default();
-                self.define_function(s, s, &name, cur)
+                self.define_function(s, s, &name, None, cur)
             }
             "class_declaration" | "abstract_class_declaration" => {
                 let name = s.child_by_field_name("name").map(|n| src.norm(n)).unwrap_or_default();
@@ -283,7 +397,7 @@ impl Lowering<'_, '_> {
     }
 
     /// A named function with its own Blueprint, shown where it is defined.
-    fn define_function(&mut self, code: Node, func: Node, name: &str, cur: Flow) -> Flow {
+    fn define_function(&mut self, code: Node, func: Node, name: &str, form: Option<BindingForm>, cur: Flow) -> Flow {
         let src = self.src;
         let params: Vec<String> = parameters(src, func).into_iter().map(|(n, _)| n).collect();
         let body = func.child_by_field_name("body");
@@ -298,7 +412,11 @@ impl Lowering<'_, '_> {
             spec = spec.call(CallTarget { symbol: Some(id.clone()), display: format!("{name}({})", params.join(", ")), external: false });
         }
         let id = self.place(spec, &cur);
-        self.b.define(&id, name, None);
+        if let Some(form) = form {
+            self.b.declare(&id, name, None, form, !matches!(form, BindingForm::Const | BindingForm::Using), true);
+        } else {
+            self.b.define(&id, name, None);
+        }
         Some(self.b.exec_out(&id, "out", ""))
     }
 
@@ -316,11 +434,12 @@ impl Lowering<'_, '_> {
 
     fn local_declaration(&mut self, code: Node, decl: Node, extra: Vec<String>, mut cur: Flow) -> Flow {
         let src = self.src;
-        let keyword = children(decl).into_iter().find(|c| !c.is_named()).map(|c| src.text(c).to_owned()).unwrap_or_default();
+        let form = declaration_form(decl, extra.iter().any(|f| f == "dispose-at-end"));
+        let reassignable = !matches!(form, BindingForm::Const | BindingForm::Using);
         let mut flavors = extra;
-        if keyword == "var" {
+        if form == BindingForm::Var {
             flavors.push("var".into());
-        } else if keyword == "const" {
+        } else if form == BindingForm::Const {
             flavors.push("const".into());
         }
         let declarators: Vec<Node> = named_children(decl).into_iter().filter(|c| c.kind() == "variable_declarator").collect();
@@ -340,7 +459,7 @@ impl Lowering<'_, '_> {
                 && is_function_value(v.kind())
                 && self.functions.contains_key(&v.start_byte())
             {
-                cur = self.define_function(code_node, v, &src.norm(name_node), cur);
+                cur = self.define_function(code_node, v, &src.norm(name_node), Some(form), cur);
                 continue;
             }
 
@@ -352,6 +471,7 @@ impl Lowering<'_, '_> {
                 let mut spec = NodeSpec::new(Concept::Var, self.label(format!("{names_text} = {label}")), src.norm(code_node), src.span(code_node))
                     .flavors(flavors.clone())
                     .flavor(flavor)
+                    .focus(src.focus(name_node))
                     .expr(Some(self.ex.lower(v)));
                 if let Some(t) = target {
                     spec = spec.call(t);
@@ -361,7 +481,7 @@ impl Lowering<'_, '_> {
                 let mut names = Vec::new();
                 pattern_names(src, name_node, &mut names);
                 for n in names {
-                    self.b.define(&id, &n, None);
+                    self.b.declare(&id, &n, None, form, reassignable, value.is_some());
                 }
                 cur = Some(self.b.exec_out(&id, "out", ""));
                 continue;
@@ -381,6 +501,7 @@ impl Lowering<'_, '_> {
                 let mut spec = NodeSpec::new(Concept::Var, self.label(label), src.norm(code_node), src.span(code_node))
                     .flavors(flavors.clone())
                     .flavor(flavor)
+                    .focus(src.focus(name_node))
                     .expr(value.map(|v| self.ex.lower(v)));
                 // `useCallback(() => { … })`: the function has its own Blueprint.
                 if let Some(inner) = v.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next()).map(unparen)
@@ -391,7 +512,7 @@ impl Lowering<'_, '_> {
                 let id = self.place(spec, &cur);
                 self.read_all(&id, value);
                 for n in &names {
-                    self.b.define(&id, n, None);
+                    self.b.declare(&id, n, None, form, reassignable, value.is_some());
                 }
                 cur = Some(self.b.exec_out(&id, "out", ""));
                 continue;
@@ -401,6 +522,8 @@ impl Lowering<'_, '_> {
                 let mut names = Vec::new();
                 pattern_names(src, name_node, &mut names);
                 let mut fl = flavors.clone();
+                fl.extend(rest_bindings(src, name_node, "rest-items"));
+                default_bindings(src, name_node, &mut fl);
                 let concept = if bare.is_some_and(|v| v.kind() == "await_expression") {
                     fl.push("destructure".into());
                     Concept::Await
@@ -413,7 +536,7 @@ impl Lowering<'_, '_> {
                 let id = self.place(spec, &cur);
                 self.read_all(&id, value);
                 for n in names {
-                    self.b.define(&id, &n, None);
+                    self.b.declare(&id, &n, None, form, reassignable, value.is_some());
                 }
                 cur = Some(self.b.exec_out(&id, "out", ""));
                 continue;
@@ -446,10 +569,13 @@ impl Lowering<'_, '_> {
                 None => (Concept::Var, format!("declare {name}")),
             };
             let lowered = value.map(|v| self.ex.lower(v));
-            let spec = NodeSpec::new(concept, self.label(label), src.norm(code_node), src.span(code_node)).flavors(fl).expr(lowered);
+            let spec = NodeSpec::new(concept, self.label(label), src.norm(code_node), src.span(code_node))
+                .flavors(fl)
+                .focus(if concept == Concept::Var { src.focus(name_node) } else { None })
+                .expr(lowered);
             let id = self.place(spec, &cur);
             self.read_all(&id, value);
-            self.b.define(&id, &name, ty);
+            self.b.declare(&id, &name, ty, form, reassignable, value.is_some());
             cur = Some(self.b.exec_out(&id, "out", ""));
         }
         cur
@@ -482,8 +608,9 @@ impl Lowering<'_, '_> {
                 if unparen(inner).kind() == "assignment_expression" && src.text(inner).starts_with("using ") {
                     return self.using_declaration(s, unparen(inner), true, cur);
                 }
-                if let Some(label) = self.wait_label(inner) {
-                    return self.simple(s, Concept::Wait, label, Some(e), Vec::new(), cur);
+                if let Some((label, operand)) = self.wait(inner) {
+                    let focus = src.focus(operand);
+                    return self.simple_with_focus(s, Concept::Wait, label, Some(e), Vec::new(), focus, cur);
                 }
                 let label = format!("wait for {}", self.ex.natural(inner));
                 self.simple(s, Concept::Await, label, Some(e), Vec::new(), cur)
@@ -500,9 +627,10 @@ impl Lowering<'_, '_> {
                 self.simple(s, Concept::Yield, label, value, flavors, cur)
             }
             "new_expression" if self.fw.node && e.child_by_field_name("constructor").is_some_and(|c| src.norm(c).ends_with("Worker")) => {
-                let script = e.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next()).map(|a| self.ex.natural(a)).unwrap_or_default();
-                let label = format!("run {script} on another thread (worker)");
-                self.simple(s, Concept::Spawn, label, Some(e), vec!["node:worker".into()], cur)
+                let script = e.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next());
+                let label = format!("run {} on another thread (worker)", script.map(|a| self.ex.natural(a)).unwrap_or_default());
+                let focus = script.and_then(|a| src.focus(a));
+                self.simple_with_focus(s, Concept::Spawn, label, Some(e), vec!["node:worker".into()], focus, cur)
             }
             "new_expression" => {
                 let label = format!("create {}", self.ex.natural(e));
@@ -582,7 +710,8 @@ impl Lowering<'_, '_> {
             flavors.push("async".into());
         }
         let lowered = value.map(|v| self.ex.lower(v));
-        let spec = NodeSpec::new(Concept::Var, self.label(label), src.norm(s), src.span(s)).flavors(flavors).expr(lowered);
+        let spec = NodeSpec::new(Concept::Var, self.label(label), src.norm(s), src.span(s))
+            .flavors(flavors).focus(left.and_then(|l| src.focus(l))).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, value);
         if !name.is_empty() {
@@ -618,7 +747,7 @@ impl Lowering<'_, '_> {
             && self.functions.contains_key(&r.start_byte())
         {
             let name = src.norm(l).replace(".prototype.", ".");
-            return self.define_function(s, r, &name, cur);
+            return self.define_function(s, r, &name, None, cur);
         }
 
         // `this.subscription = source$.subscribe(v => { … })`.
@@ -648,7 +777,10 @@ impl Lowering<'_, '_> {
                 flavors.push("index".to_owned());
                 Concept::Assign
             }
-            Some("object_pattern" | "array_pattern") => Concept::Destructure,
+            Some("object_pattern" | "array_pattern") => {
+                flavors.extend(rest_bindings(src, left.unwrap(), "rest-items"));
+                Concept::Destructure
+            }
             _ => Concept::SetMember,
         };
         if left_text == "module.exports" || left_text.starts_with("exports.") || left_text.starts_with("module.exports.") {
@@ -717,6 +849,7 @@ impl Lowering<'_, '_> {
             None => (String::new(), None),
         };
         let target_text = target.map(|t| self.ex.natural(t)).unwrap_or_default();
+        let first_arg = args.first().copied();
         let event = args.first().map(|a| if a.kind() == "string" { format!("'{}'", string_value(src, *a)) } else { self.ex.natural(*a) });
 
         // A callback handed to a framework or an event source.
@@ -724,8 +857,16 @@ impl Lowering<'_, '_> {
             let callback = self.functions.get(&reg.callback.start_byte()).cloned();
             let run = if callback.is_some() { format!("run {}", reg.name) } else { format!("run {}", self.ex.natural(reg.callback)) };
             let label = reg.statement.replace("run …", &run);
+            let focus = match reg.flavor {
+                "event-handler" | "node:route" => first_arg.and_then(|a| src.focus(a)),
+                "vue:watch" if method == "watch" => first_arg.and_then(|a| src.focus(a)),
+                "node:middleware" => first_arg.filter(|a| a.kind() == "string").and_then(|a| src.focus(a)),
+                "rxjs:subscribe" | "node:listen" => target.and_then(|t| reference_focus(src, t)),
+                _ => None,
+            };
             let mut spec = NodeSpec::new(Concept::Subscribe, self.label(label), src.header(s, Some(reg.callback)), src.span(s))
                 .flavor(reg.flavor)
+                .focus(focus)
                 .expr(Some(self.ex.lower(e)));
             if method == "once" {
                 spec = spec.flavor("once");
@@ -741,7 +882,8 @@ impl Lowering<'_, '_> {
         }
         // `process.exit(1)`, `readFileSync(…)`, `spawn('git', …)`.
         if let Some((concept, label, flavor)) = frameworks::node_call(src, self.fw, e) {
-            return self.simple(s, concept, label, Some(e), vec![flavor.into()], cur);
+            let focus = first_arg.filter(|_| matches!(concept, Concept::Spawn | Concept::Return)).and_then(|a| src.focus(a));
+            return self.simple_with_focus(s, concept, label, Some(e), vec![flavor.into()], focus, cur);
         }
         // React state changes: `setCount(c => c + 1)`, `this.setState({ … })`.
         let setter = target.is_none() && (self.setters.contains(&method) || self.fw.react && frameworks::is_setter_name(&method));
@@ -754,30 +896,39 @@ impl Lowering<'_, '_> {
             let rest: Vec<String> = args.iter().skip(1).map(|a| self.ex.natural(*a)).collect();
             let with = if rest.is_empty() { String::new() } else { format!(" with {}", rest.join(", ")) };
             let label = format!("raise {} to the parent component{with}", event.clone().unwrap_or_default());
-            return self.simple(s, Concept::Emit, label, Some(e), vec!["vue:emit".into()], cur);
+            let focus = first_arg.and_then(|a| src.focus(a));
+            return self.simple_with_focus(s, Concept::Emit, label, Some(e), vec!["vue:emit".into()], focus, cur);
         }
-        // `this.saved.emit(hero)` (Angular outputs, RxJS subjects): the value is the event.
-        if target.is_some() && method == "emit" && args.len() == 1 && args[0].kind() != "string" {
-            let label = format!("send {} through {target_text}", self.ex.natural(args[0]));
+        // Angular outputs emit their payload through the receiver. Node emitters take an event name.
+        let emits_value = !self.fw.node && (self.fw.angular && args.len() <= 1 || args.len() == 1 && args[0].kind() != "string");
+        if target.is_some() && method == "emit" && emits_value {
+            let label = first_arg.map_or_else(
+                || format!("raise {target_text}"),
+                |arg| format!("send {} through {target_text}", self.ex.natural(arg)),
+            );
             let flavors = if self.fw.angular { vec!["angular:output".to_owned()] } else { Vec::new() };
-            return self.simple(s, Concept::Emit, label, Some(e), flavors, cur);
+            let focus = target.and_then(|t| reference_focus(src, t));
+            return self.simple_with_focus(s, Concept::Emit, label, Some(e), flavors, focus, cur);
         }
 
         if target.is_some() && args.len() >= 2 && SUBSCRIBE.contains(&method.as_str()) {
             let handler = self.ex.natural(args[1]);
             let label = format!("on {target_text} {}, run {handler}", event.unwrap_or_default());
             let flavors = if method == "once" { vec!["once".to_owned()] } else { Vec::new() };
-            return self.simple(s, Concept::Subscribe, label, Some(e), flavors, cur);
+            let focus = first_arg.and_then(|a| src.focus(a));
+            return self.simple_with_focus(s, Concept::Subscribe, label, Some(e), flavors, focus, cur);
         }
         if target.is_some() && !args.is_empty() && UNSUBSCRIBE.contains(&method.as_str()) {
             let label = format!("stop listening to {} on {target_text}", event.unwrap_or_default());
-            return self.simple(s, Concept::Subscribe, label, Some(e), vec!["unsubscribe".into()], cur);
+            let focus = first_arg.and_then(|a| src.focus(a));
+            return self.simple_with_focus(s, Concept::Subscribe, label, Some(e), vec!["unsubscribe".into()], focus, cur);
         }
         if target.is_some() && !args.is_empty() && EMIT.contains(&method.as_str()) {
             let rest: Vec<String> = args.iter().skip(1).map(|a| self.ex.natural(*a)).collect();
             let with = if rest.is_empty() { String::new() } else { format!(" with {}", rest.join(", ")) };
             let label = format!("raise {} on {target_text}{with}", event.unwrap_or_default());
-            return self.simple(s, Concept::Emit, label, Some(e), Vec::new(), cur);
+            let focus = first_arg.and_then(|a| src.focus(a));
+            return self.simple_with_focus(s, Concept::Emit, label, Some(e), Vec::new(), focus, cur);
         }
         if target.is_none() && matches!(method.as_str(), "setTimeout" | "setInterval" | "setImmediate" | "queueMicrotask" | "requestAnimationFrame") {
             let callback = args.first().map(|a| self.ex.natural(*a)).unwrap_or_default();
@@ -788,7 +939,8 @@ impl Lowering<'_, '_> {
                 _ => format!("soon, run {callback}"),
             };
             let flavors = if method == "setInterval" { vec!["repeating".to_owned()] } else { Vec::new() };
-            return self.simple(s, Concept::Spawn, self.label(label), Some(e), flavors, cur);
+            let focus = first_arg.and_then(|a| src.focus(a));
+            return self.simple_with_focus(s, Concept::Spawn, self.label(label), Some(e), flavors, focus, cur);
         }
 
         // `(async () => { … })()` with its own Blueprint.
@@ -824,10 +976,10 @@ impl Lowering<'_, '_> {
     }
 
     /// `await sleep(100)`, `await new Promise(r => setTimeout(r, 100))`: a pause.
-    fn wait_label(&self, inner: Node) -> Option<String> {
+    fn wait<'t>(&self, inner: Node<'t>) -> Option<(String, Node<'t>)> {
         let src = self.src;
         let inner = unparen(inner);
-        match inner.kind() {
+        let ms = match inner.kind() {
             "call_expression" => {
                 let f = inner.child_by_field_name("function")?;
                 let name = src.norm(f);
@@ -835,19 +987,14 @@ impl Lowering<'_, '_> {
                 if !matches!(short, "sleep" | "delay" | "wait" | "setTimeout" | "timeout") {
                     return None;
                 }
-                let ms = inner.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next())?;
-                Some(wait_text(&src.norm(ms)))
+                inner.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next())
             }
-            "new_expression" => {
-                let ctor = inner.child_by_field_name("constructor").map(|c| src.norm(c))?;
-                let text = src.norm(inner);
-                (ctor == "Promise" && text.contains("setTimeout")).then(|| {
-                    let ms = text.rsplit(',').next().unwrap_or("").trim_end_matches([')', ' ', ';', '}']).trim();
-                    wait_text(ms)
-                })
+            "new_expression" if inner.child_by_field_name("constructor").is_some_and(|c| src.text(c) == "Promise") => {
+                promise_timeout(src, inner)
             }
             _ => None,
-        }
+        }?;
+        Some((wait_text(&src.norm(ms)), ms))
     }
 
     fn return_value(&mut self, s: Node, e: Option<Node>, cur: Flow) -> Flow {
@@ -902,7 +1049,9 @@ impl Lowering<'_, '_> {
             .map(|a| if a.kind() == "else_clause" { named_children(a).into_iter().next().unwrap_or(a) } else { a });
         let label = format!("if {}", cond.map(|c| self.ex.natural(c)).unwrap_or_default());
         let lowered = cond.map(|c| self.ex.lower(c));
-        let mut spec = NodeSpec::new(Concept::Branch, self.label(label), src.header(s, cons), src.header_span(s, cons)).expr(lowered);
+        let mut spec = NodeSpec::new(Concept::Branch, self.label(label), src.header(s, cons), src.header_span(s, cons))
+            .focus(cond.and_then(|c| src.focus(c)))
+            .expr(lowered);
         if cond.is_some_and(|c| self.truthiness(c)) {
             spec = spec.flavor("truthiness");
         }
@@ -918,7 +1067,9 @@ impl Lowering<'_, '_> {
         if alt.is_some() && t_end.is_none() && f_end.is_none() {
             return None;
         }
-        Some(self.b.exec_out(&id, "out", "Then"))
+        let out = self.b.exec_out(&id, "out", "Then");
+        self.continuations.insert(out.clone(), [t_end, f_end].into_iter().flatten().collect());
+        Some(out)
     }
 
     fn switch_statement(&mut self, s: Node, cur: Flow) -> Flow {
@@ -927,16 +1078,20 @@ impl Lowering<'_, '_> {
         let body = s.child_by_field_name("body");
         let label = format!("match {}", value.map(|v| self.ex.natural(v)).unwrap_or_default());
         let lowered = value.map(|v| self.ex.lower(v));
-        let spec = NodeSpec::new(Concept::Match, self.label(label), src.header(s, body), src.header_span(s, body)).expr(lowered);
+        let spec = NodeSpec::new(Concept::Match, self.label(label), src.header(s, body), src.header_span(s, body))
+            .focus(value.and_then(|v| src.focus(v)))
+            .expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, value);
         let Some(body) = body else { return Some(self.b.exec_out(&id, "out", "Then")) };
         // Empty cases fall through to the next one: `case "a": case "b": …` is one path.
         let mut labels: Vec<String> = Vec::new();
+        let mut fallthrough: Flow = None;
         let mut pin_index = 0;
         let cases: Vec<Node> = named_children(body).into_iter().filter(|c| matches!(c.kind(), "switch_case" | "switch_default")).collect();
         let count = cases.len();
         for (i, case) in cases.into_iter().enumerate() {
+            self.read_all(&id, case.child_by_field_name("value"));
             let case_label = match case.kind() {
                 "switch_case" => case.child_by_field_name("value").map(|v| src.norm(v)).unwrap_or_default(),
                 "switch_default" => "default".to_owned(),
@@ -951,7 +1106,7 @@ impl Lowering<'_, '_> {
                 continue;
             }
             let ends_with_break = stmts.last().is_some_and(|l| l.kind() == "break_statement" && l.child_by_field_name("label").is_none());
-            if ends_with_break {
+            if ends_with_break && stmts.len() > 1 {
                 stmts.pop();
             }
             let pin_label = truncate(&labels.join(" | "), 40);
@@ -962,9 +1117,20 @@ impl Lowering<'_, '_> {
             let before = self.b.node_count();
             let end = self.statements(&stmts, Some(pin));
             self.b.pop_scope();
-            // A path that neither breaks nor leaves continues into the next case.
+            if let Some(first) = self.b.node_id_at(before).map(str::to_owned) {
+                if let Some(previous) = fallthrough.take() {
+                    self.b.link(&previous, &first);
+                    if let Some(index) = self.b.index_of(&previous.0) {
+                        self.b.add_flavor_at(index, &format!("fallthrough-out:{}", previous.1));
+                    }
+                }
+            } else if ends_with_break {
+                fallthrough = None;
+            }
+            // Only a path with a live exit can continue into the next case.
             if !ends_with_break && end.is_some() && self.b.node_count() > before && i + 1 < count {
                 self.b.add_flavor_at(before, "fallthrough");
+                fallthrough = end;
             }
         }
         Some(self.b.exec_out(&id, "out", "Then"))
@@ -998,18 +1164,22 @@ impl Lowering<'_, '_> {
         }
         let label = format!("repeat: {}", parts.join("; "));
         let lowered = cond.map(|c| self.ex.lower(c));
-        let spec = NodeSpec::new(Concept::LoopRange, self.label(label), src.header(s, body), src.header_span(s, body)).expr(lowered);
+        let spec = NodeSpec::new(Concept::LoopRange, self.label(label), src.header(s, body), src.header_span(s, body))
+            .focus(cond.and_then(|c| src.focus(unparen(c))))
+            .expr(lowered);
         let id = self.place(spec, &cur);
         self.b.push_scope();
         if let Some(i) = init {
             if matches!(i.kind(), "lexical_declaration" | "variable_declaration") {
+                let form = declaration_form(i, false);
                 for d in named_children(i).into_iter().filter(|d| d.kind() == "variable_declarator") {
-                    self.read_all(&id, d.child_by_field_name("value"));
+                    let value = d.child_by_field_name("value");
+                    self.read_all(&id, value);
                     if let Some(n) = d.child_by_field_name("name") {
                         let mut names = Vec::new();
                         pattern_names(src, n, &mut names);
                         for name in names {
-                            self.b.define(&id, &name, None);
+                            self.b.declare(&id, &name, None, form, form != BindingForm::Const, value.is_some());
                         }
                     }
                 }
@@ -1018,6 +1188,9 @@ impl Lowering<'_, '_> {
             }
         }
         self.read_all(&id, cond);
+        if let Some(update) = update {
+            self.record_writes(&id, update);
+        }
         let b = self.b.exec_out(&id, "body", "Loop body");
         self.body(body, Some(b));
         self.b.pop_scope();
@@ -1030,6 +1203,13 @@ impl Lowering<'_, '_> {
         let right = s.child_by_field_name("right");
         let body = s.child_by_field_name("body");
         let tokens: Vec<String> = children(s).into_iter().filter(|c| !c.is_named()).map(|c| src.text(c).to_owned()).collect();
+        let form = tokens.iter().find_map(|token| match token.as_str() {
+            "const" => Some(BindingForm::Const),
+            "let" => Some(BindingForm::Let),
+            "var" => Some(BindingForm::Var),
+            "using" => Some(BindingForm::Using),
+            _ => None,
+        });
         let is_of = tokens.iter().any(|t| t == "of");
         let mut flavors = Vec::new();
         if tokens.iter().any(|t| t == "await") {
@@ -1056,6 +1236,7 @@ impl Lowering<'_, '_> {
         };
         let lowered = right.map(|r| self.ex.lower(r));
         let spec = NodeSpec::new(Concept::LoopForEach, self.label(label), src.header(s, body), src.header_span(s, body))
+            .focus(right.and_then(|r| src.focus(r)))
             .flavors(flavors)
             .expr(lowered);
         let id = self.place(spec, &cur);
@@ -1065,7 +1246,11 @@ impl Lowering<'_, '_> {
             let mut names = Vec::new();
             pattern_names(src, l, &mut names);
             for n in names {
-                self.b.define(&id, &n, None);
+                if let Some(form) = form {
+                    self.b.declare(&id, &n, None, form, !matches!(form, BindingForm::Const | BindingForm::Using), true);
+                } else {
+                    self.b.write(&id, &n);
+                }
             }
         }
         let b = self.b.exec_out(&id, "body", "Loop body");
@@ -1096,7 +1281,10 @@ impl Lowering<'_, '_> {
             (src.header(s, body), src.header_span(s, body))
         };
         let lowered = cond.map(|c| self.ex.lower(c));
-        let spec = NodeSpec::new(concept, self.label(label), code, span).flavors(flavors).expr(lowered);
+        let spec = NodeSpec::new(concept, self.label(label), code, span)
+            .flavors(flavors)
+            .focus(cond.filter(|_| concept == Concept::LoopWhile).and_then(|c| src.focus(c)))
+            .expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, cond);
         let b = self.b.exec_out(&id, "body", "Loop body");
@@ -1139,6 +1327,29 @@ impl Lowering<'_, '_> {
         }
         Some(self.b.exec_out(&id, "out", "Then"))
     }
+}
+
+/// Finds the duration in a Promise executor that directly calls `setTimeout`.
+fn promise_timeout<'t>(src: Src, promise: Node<'t>) -> Option<Node<'t>> {
+    let executor = named_children(promise.child_by_field_name("arguments")?).into_iter().next().map(unparen)?;
+    let body = executor.child_by_field_name("body")?;
+    let timeout = |expr| {
+        let call = unparen(expr);
+        if call.kind() != "call_expression"
+            || !matches!(src.text(call.child_by_field_name("function")?), "setTimeout" | "globalThis.setTimeout" | "window.setTimeout")
+        {
+            return None;
+        }
+        named_children(call.child_by_field_name("arguments")?).into_iter().nth(1)
+    };
+    if body.kind() != "statement_block" {
+        return timeout(body);
+    }
+    let mut timers = named_children(body).into_iter()
+        .filter(|statement| matches!(statement.kind(), "expression_statement" | "return_statement"))
+        .filter_map(|statement| named_children(statement).into_iter().next().and_then(timeout));
+    let duration = timers.next()?;
+    timers.next().is_none().then_some(duration)
 }
 
 /// `wait 100 ms`, `wait delayMs`; never `wait ms ms`.

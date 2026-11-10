@@ -35,6 +35,8 @@ const ARG: u8 = 6;
 const THROW: u8 = 7;
 const DROPPED: u8 = 9;
 const SEQUENCE: u8 = 10;
+const LOCAL_TYPE: u8 = 11;
+const ARG_TYPE: u8 = 12;
 
 const HEADER: usize = 1 + 4 + 8 + 4 + 4 + 2;
 const MAX_PENDING: usize = 16 * 1024 * 1024;
@@ -277,6 +279,17 @@ pub fn local(method: i32, slot: i32, text: String) {
     }
 }
 
+#[doc(hidden)]
+pub fn observe<T: ?Sized>(method: i32, slot: i32, parameter: bool, value: &T) {
+    if let Some(t) = tracer() {
+        let native = std::any::type_name_of_val(value);
+        if native.len() <= 1024 {
+            let descriptor = format!("\n{native}");
+            t.record(if parameter { ARG_TYPE } else { LOCAL_TYPE }, method, slot, Some(&descriptor));
+        }
+    }
+}
+
 /// The value the function returns, already formatted.
 pub fn ret(method: i32, text: String) {
     if let Some(t) = tracer() {
@@ -382,7 +395,9 @@ macro_rules! value {
 macro_rules! nx_arg {
     ($m:expr, $i:expr, $e:expr) => {
         if $crate::on() {
-            $crate::arg($m, $i, $crate::value!($e));
+            let value = &$e;
+            $crate::arg($m, $i, $crate::value!(*value));
+            $crate::observe($m, $i, true, value);
         }
     };
 }
@@ -392,7 +407,9 @@ macro_rules! nx_arg {
 macro_rules! nx_local {
     ($m:expr, $s:expr, $e:expr) => {
         if $crate::on() {
-            $crate::local($m, $s, $crate::value!($e));
+            let value = &$e;
+            $crate::local($m, $s, $crate::value!(*value));
+            $crate::observe($m, $s, false, value);
         }
     };
 }

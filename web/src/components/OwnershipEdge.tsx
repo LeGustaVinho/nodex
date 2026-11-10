@@ -1,10 +1,12 @@
 import { BaseEdge, type EdgeProps, getBezierPath } from "@xyflow/react";
 import { memo } from "react";
-import { typeColor } from "../catalog";
+import { blueprintTypeColor } from "../graph/blueprintTypes";
 import type { Access } from "../gen/Access";
+import type { TypeShape } from "../gen/TypeShape";
 
 export interface OwnershipData {
   ty: string | null;
+  shape?: TypeShape;
   access: Access;
 }
 
@@ -14,6 +16,15 @@ export const ACCESS_TEXT: Record<Access, string> = {
   Copy: "copies: the source keeps its own value",
   Borrow: "borrows (&): reads the value, the owner keeps it",
   BorrowMut: "borrows to change (&mut): exclusive access while it is used",
+  ByValue: "uses this value: Rust can copy, move or reborrow it depending on its type and how it is used",
+};
+
+export const ACCESS_LABEL: Record<Access, string> = {
+  Move: "Transfer ownership",
+  Copy: "Copy value",
+  Borrow: "Shared borrow",
+  BorrowMut: "Borrow to change",
+  ByValue: "Value input",
 };
 
 /**
@@ -21,9 +32,9 @@ export const ACCESS_TEXT: Record<Access, string> = {
  * (outline only), a mutable borrow a double wire, a copy a thin wire.
  */
 function OwnershipEdgeImpl({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
-  const { ty, access } = data as unknown as OwnershipData;
+  const { ty, shape, access } = data as unknown as OwnershipData;
   const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
-  const color = typeColor(ty);
+  const color = blueprintTypeColor(shape, ty);
   const bg = "var(--bg)";
   const title = <title>{ACCESS_TEXT[access]}</title>;
   switch (access) {
@@ -50,7 +61,14 @@ function OwnershipEdgeImpl({ sourceX, sourceY, targetX, targetY, sourcePosition,
           <path d={path} fill="none" style={{ stroke: bg, strokeWidth: 1.8 }} />
         </g>
       );
-    default:
+    case "ByValue":
+      return (
+        <g className="edge-own">
+          {title}
+          <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.4, strokeDasharray: "3 3", opacity: 0.85 }} />
+        </g>
+      );
+    case "Copy":
       return (
         <g className="edge-own edge-copy">
           {title}

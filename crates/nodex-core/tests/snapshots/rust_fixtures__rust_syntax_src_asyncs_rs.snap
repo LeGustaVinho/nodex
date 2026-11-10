@@ -22,7 +22,7 @@ Entry — when local function noop(_) is called
 Entry — when noop_waker() is called
 Lambda — define function clone(_)
 Lambda — define function noop(_)
-Scope — run this block without the compiler's safety checks
+Scope — allow specific unsafe operations in this block
   body:
     Return — return Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE))
 == crate::asyncs::fetch

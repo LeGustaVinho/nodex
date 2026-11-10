@@ -10,7 +10,7 @@ import type { TypeRef } from "./TypeRef";
 /**
  * Everything a language frontend extracts from one source file.
  */
-export type FileIr = { file: string, language: Language, symbols: Array<Symbol>, flows: Array<FlowGraph>, imports: Array<ImportRef>, type_refs: Array<TypeRef>, diagnostics: Array<Diagnostic>, 
+export type FileIr = { source_revision?: string, file: string, language: Language, symbols: Array<Symbol>, flows: Array<FlowGraph>, imports: Array<ImportRef>, type_refs: Array<TypeRef>, diagnostics: Array<Diagnostic>, 
 /**
  * Routes, HTTP calls, DI, configuration, tests, entry points and data models.
  */

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nodex_core::Project;
+use nodex_ir::types::TypeShape;
 use nodex_lang_api::LanguageFrontend;
 use nodex_server::runner::RunState;
 use nodex_server::{AppState, ServerEvent, runner};
@@ -51,6 +52,18 @@ async fn runs_the_sample_and_records_its_execution() {
     let steps = state.run.recorder().unwrap().lock().unwrap().steps(total, 0, 1000);
     assert!(steps.total > 10);
     assert!(steps.steps.iter().any(|s| s.values.iter().any(|v| v == "total = 195")));
+    assert!(steps.steps.iter().flat_map(|step| step.observations.iter().flatten()).any(|observation| {
+        observation.name == "total" && observation.shape == TypeShape::scalar("Decimal")
+    }), "{steps:?}");
+
+    let mut items = vec![TypeShape::scalar("Int32"); 7];
+    items.push(TypeShape::Tuple { items: vec![TypeShape::scalar("Int32"), TypeShape::scalar("String")] });
+    items.push(TypeShape::scalar("Int32"));
+    let tuple = TypeShape::Tuple { items };
+    let main = state.run.recorder().unwrap().lock().unwrap().steps("Sample.Program.Main(string[])", 0, 1000);
+    assert!(main.steps.iter().flat_map(|step| step.observations.iter().flatten()).any(|observation| {
+        observation.name == "tuple" && observation.shape == tuple
+    }), "{main:?}");
 
     // Async locals live in state-machine fields and are still captured.
     let ship = "Sample.Services.OrderService.ShipAsync(int)";
@@ -133,6 +146,35 @@ async fn runs_the_typescript_sample_and_records_its_execution() {
     assert_eq!(snapshot.calls.get(listener), Some(&1), "{:?}", snapshot.calls.keys().collect::<Vec<_>>());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs Node.js and the TypeScript sidecar"]
+async fn run_captures_changing_javascript_types_in_recursive_steps() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ts/TraceTypes");
+    let project = Project::open(&root, vec![Arc::new(nodex_lang_typescript::TypeScriptFrontend)]).unwrap();
+    let id = project.flows().find(|flow| flow.name == "typed").unwrap().symbol.clone();
+    let state = AppState::new(project, "t".into(), 7470, Vec::new());
+    let mut events = state.events.subscribe();
+    runner::start(&state).unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv()).await.expect("run finishes").expect("event");
+        if let ServerEvent::RunStatus(status) = event
+            && matches!(status.state, RunState::Exited | RunState::Failed)
+        {
+            assert_eq!(status.state, RunState::Exited, "{status:?}");
+            break;
+        }
+    }
+    let steps = state.run.recorder().unwrap().lock().unwrap().steps(&id, 0, 100);
+    let captures = |name: &str| steps.steps.iter().flat_map(|step| step.observations.iter().flatten())
+        .filter(|observation| observation.name == name).map(|observation| observation.shape.clone()).collect::<Vec<_>>();
+    assert_eq!(captures("depth"), vec![TypeShape::scalar("Number"); 3], "{steps:?}");
+    assert_eq!(captures("x"), [vec![TypeShape::scalar("String"); 3], vec![TypeShape::scalar("Number"); 3]].concat(), "{steps:?}");
+    assert_eq!(captures("items"), vec![TypeShape::collection(nodex_ir::types::CollectionKind::Array, vec![TypeShape::Unknown]); 3]);
+    assert!(steps.steps.iter().filter(|step| step.observations.iter().flatten().any(|observation| observation.name == "depth"))
+        .all(|step| step.observations.iter().flatten().any(|observation| observation.name == "x" && observation.shape == TypeShape::scalar("String"))));
+}
+
 /// Same scenario for the Rust sample: needs cargo, then
 /// `cargo test -p nodex-server --test run -- --ignored`.
 #[tokio::test(flavor = "multi_thread")]
@@ -167,6 +209,10 @@ async fn runs_the_rust_sample_and_records_its_execution() {
     let counts = &snapshot.counts[total];
     assert!(counts.values().any(|&c| c == 3), "the loop body ran for each order: {counts:?}");
     assert_eq!(snapshot.vars[total].get("total").map(String::as_str), Some("195"), "{:?}", snapshot.vars[total]);
+    let steps = state.run.recorder().unwrap().lock().unwrap().steps(total, 0, 1000);
+    assert!(steps.steps.iter().flat_map(|step| step.observations.iter().flatten()).any(|observation| {
+        observation.name == "total" && observation.shape == TypeShape::scalar("Int64")
+    }), "{steps:?}");
 
     let ship = "crate::services::order_service::OrderService::ship";
     assert_eq!(snapshot.calls.get(ship), Some(&2));

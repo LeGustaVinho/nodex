@@ -33,5 +33,8 @@ public static class Program
         {
             Console.WriteLine($"Could not ship: {ex.Message}");
         }
+
+        var tuple = (1, 2, 3, 4, 5, 6, 7, (8, "eight"), 9);
+        GC.KeepAlive(tuple);
     }
 }

@@ -113,6 +113,8 @@ pub fn remaining_parse_errors(text: &str) -> Vec<(usize, String)> {
 pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     let mut parser = tree_sitter::Parser::new();
     let mut ir = FileIr {
+        borrow_models: Default::default(),
+        source_revision: None,
         file: rel_path.to_owned(),
         language: Language::Csharp,
         symbols: Vec::new(),
@@ -209,5 +211,8 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     ir.symbols = symbols;
     ir.imports = imports;
     ir.type_refs = type_refs;
+    nodex_lang_api::syntax_sites::annotate(&mut ir, root, src, false);
+    nodex_lang_api::value_shapes::annotate(&mut ir, root, src);
+    nodex_lang_api::blueprint_types::annotate(&mut ir, root, src, &Default::default());
     ir
 }

@@ -77,11 +77,22 @@ describe("selected frame variables", () => {
     const store = useDebug.getState();
     store.setFrame(2);
     expect(useDebug.getState().scopes).toBeNull();
-    store.setFrameScopes(1, [scope("x", "stale")]);
+    store.setFrameScopes(store.stopId, 1, [scope("x", "stale")]);
     expect(useDebug.getState().scopes).toBeNull();
-    store.setFrameScopes(2, [scope("orders", "Array(3)")]);
+    store.setFrameScopes(store.stopId, 2, [scope("orders", "Array(3)")]);
     expect(useDebug.getState().scopes?.[0].variables[0].name).toBe("orders");
     store.setFrame(1);
     expect(useDebug.getState().scopes?.[0].variables[0].name).toBe("total");
+  });
+
+  it("rejects late results from an earlier stop that reused the frame id", () => {
+    const store = useDebug.getState();
+    const previousStop = store.stopId;
+    store.setStatus({ state: "running", detail: "", missing_adapter: null });
+    expect(useDebug.getState().scopes).toBeNull();
+    store.setStopped(stopped);
+    store.setFrame(2);
+    store.setFrameScopes(previousStop, 2, [scope("x", "stale")]);
+    expect(useDebug.getState().scopes).toBeNull();
   });
 });

@@ -302,8 +302,12 @@ mod tests {
 
     fn e(concept: Concept, label: &str, children: Vec<Expr>) -> Expr {
         Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept,
             label: label.into(),
+            focus: None,
             span: Span::default(),
             flavors: Vec::new(),
             children,
@@ -312,6 +316,7 @@ mod tests {
             op: None,
             ty: None,
             params: Vec::new(),
+            param_pins: None,
         }
     }
 

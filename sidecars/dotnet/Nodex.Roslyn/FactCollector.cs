@@ -32,8 +32,19 @@ public sealed class FactCollector(
     private static readonly SymbolDisplayFormat TypeDisplay = SymbolDisplayFormat.MinimallyQualifiedFormat
         .RemoveMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
+    private static readonly SymbolDisplayFormat BlueprintTypeDisplay = new(
+        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
+        miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes
+            | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier
+            | SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers);
+
     private readonly List<SemanticRef> _refs = [];
     private readonly List<LocalTypeFact> _locals = [];
+    private readonly List<ExpressionFact> _expressions = [];
+    private readonly List<ValueFact> _values = [];
+    private readonly List<TypeFact> _types = [];
+    private readonly List<BindingUseFact> _bindingUses = [];
     private readonly List<NavigationFact> _navigation = [];
     private readonly Dictionary<ISymbol, SemanticTarget> _navigationTargets = new(SymbolEqualityComparer.Default);
     private int _unresolvedCalls;
@@ -43,6 +54,10 @@ public sealed class FactCollector(
     {
         _refs.AddRange(other._refs);
         _locals.AddRange(other._locals);
+        _expressions.AddRange(other._expressions);
+        _values.AddRange(other._values);
+        _types.AddRange(other._types);
+        _bindingUses.AddRange(other._bindingUses);
         _navigation.AddRange(other._navigation);
         _unresolvedCalls += other._unresolvedCalls;
     }
@@ -56,12 +71,15 @@ public sealed class FactCollector(
 
         foreach (var node in root.DescendantNodes())
         {
-            if (node is ExpressionSyntax expression &&
-                node.Parent is not CastExpressionSyntax &&
-                model.GetConversion(expression).MethodSymbol is { } implicitConversion)
+            if (node is ExpressionSyntax expression)
             {
-                AddUsage(map, expression.Span, implicitConversion);
+                var conversion = model.GetConversion(expression);
+                if (node.Parent is not CastExpressionSyntax && conversion.MethodSymbol is { } implicitConversion)
+                    AddUsage(map, expression.Span, implicitConversion);
+                if (!sharedDocument)
+                    CollectExpressionFact(model, map, expression, conversion);
             }
+            CollectValue(model, map, node);
             switch (node)
             {
                 case InvocationExpressionSyntax inv:
@@ -162,6 +180,13 @@ public sealed class FactCollector(
     private void AddUsage(ByteMap map, TextSpan site, ISymbol? symbol)
     {
         if (symbol is IAliasSymbol alias) symbol = alias.Target;
+        if (symbol is ILocalSymbol or IParameterSymbol)
+        {
+            var declaration = symbol.Locations.FirstOrDefault(location => location.IsInSource);
+            if (declaration?.SourceTree is { } tree && host.IsSourceFile(tree.FilePath))
+                _bindingUses.Add(new BindingUseFact(map.Range(site), MapFor(tree).Range(declaration.SourceSpan)));
+            return;
+        }
         if (symbol is not (INamedTypeSymbol or IMethodSymbol or IFieldSymbol or IPropertySymbol or IEventSymbol)) return;
         // The same token in a linked document can bind to a local member in one
         // compilation and a metadata member in another. Keep both for the Blueprint.
@@ -341,8 +366,174 @@ public sealed class FactCollector(
         }
         return shared
             ? new SemanticFacts(source, MergeReferences(), _locals.DistinctBy(local => (local.Site, local.Name)).ToList(),
+                _expressions.Distinct().ToList(), _values.Distinct().ToList(), _types, _bindingUses.Distinct().ToList(),
                 _navigation.Distinct().ToList(), messages)
-            : new SemanticFacts(source, _refs, _locals, _navigation, messages);
+            : new SemanticFacts(source, _refs, _locals, _expressions, _values, _types, _bindingUses, _navigation, messages);
+    }
+
+    private void CollectValue(SemanticModel model, ByteMap map, SyntaxNode node)
+    {
+        switch (node)
+        {
+            case ParameterSyntax p when model.GetDeclaredSymbol(p) is IParameterSymbol parameter:
+                AddValue(p.Identifier.Span, "binding", parameter.Type, Mode(parameter.RefKind), parameter.RefKind != Microsoft.CodeAnalysis.RefKind.None);
+                break;
+            case VariableDeclaratorSyntax d:
+                switch (model.GetDeclaredSymbol(d))
+                {
+                    case ILocalSymbol local:
+                        AddValue(d.Identifier.Span, "binding", local.Type, AliasMode(local.RefKind), local.RefKind != Microsoft.CodeAnalysis.RefKind.None);
+                        break;
+                    case IFieldSymbol field:
+                        AddValue(d.Identifier.Span, "member", field.Type, AliasMode(field.RefKind), field.RefKind != Microsoft.CodeAnalysis.RefKind.None);
+                        break;
+                }
+                break;
+            case SingleVariableDesignationSyntax d when model.GetDeclaredSymbol(d) is ILocalSymbol local:
+                AddValue(d.Identifier.Span, "binding", local.Type);
+                break;
+            case ForEachStatementSyntax f when model.GetDeclaredSymbol(f) is ILocalSymbol local:
+                AddValue(f.Identifier.Span, "binding", local.Type, AliasMode(local.RefKind), local.RefKind != Microsoft.CodeAnalysis.RefKind.None);
+                break;
+            case PropertyDeclarationSyntax p when model.GetDeclaredSymbol(p) is IPropertySymbol property:
+                AddValue(p.Identifier.Span, "member", property.Type, AliasMode(property.RefKind), property.RefKind != Microsoft.CodeAnalysis.RefKind.None);
+                break;
+            case MethodDeclarationSyntax m when model.GetDeclaredSymbol(m) is IMethodSymbol method && !method.ReturnsVoid:
+                AddValue(m.Identifier.Span, "member", method.ReturnType, AliasMode(method.RefKind), method.RefKind != Microsoft.CodeAnalysis.RefKind.None);
+                break;
+            case ExpressionSyntax expression when node is not TypeSyntax || node is IdentifierNameSyntax:
+                var expressionType = model.GetTypeInfo(expression);
+                var type = expressionType.Type;
+                if (expression.Parent is ArgumentSyntax argument &&
+                    model.GetOperation(argument) is IArgumentOperation { Parameter: { } formal })
+                {
+                    AddValue(expression.Span, "expression", type, Mode(formal.RefKind), flowState: expressionType.Nullability.FlowState);
+                }
+                else if (expression is InvocationExpressionSyntax &&
+                    model.GetSymbolInfo(expression).Symbol is IMethodSymbol called && !called.ReturnsVoid)
+                {
+                    AddValue(expression.Span, "expression", type, AliasMode(called.RefKind), called.RefKind != Microsoft.CodeAnalysis.RefKind.None,
+                        expressionType.Nullability.FlowState);
+                }
+                else if (type is not null && type.SpecialType != SpecialType.System_Void)
+                {
+                    AddValue(expression.Span, "expression", type, flowState: expressionType.Nullability.FlowState);
+                }
+                break;
+        }
+
+        void AddValue(TextSpan span, string target, ITypeSymbol? type, string? passing = null, bool alias = false,
+            NullableFlowState flowState = NullableFlowState.None)
+        {
+            var (kind, qualifier) = alias ? ("Reference", "Alias") : type switch
+            {
+                { TypeKind: TypeKind.Pointer or TypeKind.FunctionPointer } => ("Pointer", "Raw"),
+                { TypeKind: TypeKind.Error } or null => ("Unknown", null),
+                { IsValueType: true } => ("Value", null),
+                { IsReferenceType: true } => ("Reference", "Object"),
+                _ => ("Unknown", null),
+            };
+            _values.Add(new ValueFact(map.Range(span), target, new ValueInfo(kind, "TypeAnalysis", qualifier, passing)));
+            if (type is null && node is not LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression })
+                return;
+            var written = node switch
+            {
+                ParameterSyntax { Type: not null } => true,
+                VariableDeclaratorSyntax { Parent: VariableDeclarationSyntax declaration } => !declaration.Type.IsVar,
+                ForEachStatementSyntax loop => !loop.Type.IsVar,
+                PropertyDeclarationSyntax or MethodDeclarationSyntax => true,
+                _ => false,
+            };
+            if (type is { IsReferenceType: true } && !written)
+            {
+                // An implicitly typed local can be nullable even when its initializer is known
+                // to be non-null. The type at a read also follows Roslyn's flow state.
+                if (flowState == NullableFlowState.None && ImplicitInitializer(node) is { } initializer)
+                    flowState = initializer is BaseObjectCreationExpressionSyntax or ArrayCreationExpressionSyntax
+                        or ImplicitArrayCreationExpressionSyntax or LiteralExpressionSyntax { RawKind: (int)SyntaxKind.StringLiteralExpression }
+                        ? NullableFlowState.NotNull : model.GetTypeInfo(initializer).Nullability.FlowState;
+                if (flowState == NullableFlowState.NotNull)
+                    type = type.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            }
+            var shape = type is null ? new { kind = "Scalar", name = "Null" } : BlueprintTypes.Shape(type);
+            if (alias) shape = new { kind = "Indirect", pointer = false, target = shape };
+            _types.Add(new TypeFact(map.Range(span), target, new TypeInfo(shape, written ? "Declared" : "Compiler",
+                type?.ToDisplayString(BlueprintTypeDisplay))));
+        }
+    }
+
+    private static ExpressionSyntax? ImplicitInitializer(SyntaxNode node)
+    {
+        if (node is VariableDeclaratorSyntax variable) return variable.Initializer?.Value;
+        if (node is not SingleVariableDesignationSyntax designation) return null;
+        VariableDesignationSyntax pattern = designation;
+        var elements = new Stack<int>();
+        while (pattern.Parent is ParenthesizedVariableDesignationSyntax group)
+        {
+            elements.Push(group.Variables.IndexOf(pattern));
+            pattern = group;
+        }
+        if (pattern.Parent is not DeclarationExpressionSyntax declaration || !declaration.Type.IsVar ||
+            declaration.Parent is not AssignmentExpressionSyntax assignment || assignment.Left != declaration)
+            return null;
+        var value = assignment.Right;
+        while (elements.TryPop(out var index))
+        {
+            while (value is ParenthesizedExpressionSyntax parens) value = parens.Expression;
+            if (value is not TupleExpressionSyntax tuple || index < 0 || index >= tuple.Arguments.Count) return null;
+            value = tuple.Arguments[index].Expression;
+        }
+        return value;
+    }
+
+    private static string? AliasMode(Microsoft.CodeAnalysis.RefKind kind) =>
+        kind == Microsoft.CodeAnalysis.RefKind.None ? null :
+        kind == Microsoft.CodeAnalysis.RefKind.In ? "RefReadonly" : Mode(kind);
+
+    private static string Mode(Microsoft.CodeAnalysis.RefKind kind) => kind switch
+    {
+        Microsoft.CodeAnalysis.RefKind.Ref => "Ref",
+        Microsoft.CodeAnalysis.RefKind.Out => "Out",
+        Microsoft.CodeAnalysis.RefKind.In => "In",
+        Microsoft.CodeAnalysis.RefKind.RefReadOnlyParameter => "RefReadonly",
+        _ => "ByValue",
+    };
+
+    private void CollectExpressionFact(SemanticModel model, ByteMap map, ExpressionSyntax expression, Conversion conversion)
+    {
+        if (conversion.IsBoxing ||
+            (expression is CastExpressionSyntax cast && model.GetTypeInfo(cast.Type).Type is { } target &&
+             model.ClassifyConversion(cast.Expression, target, isExplicitInSource: true).IsBoxing))
+        {
+            _expressions.Add(new(map.Range(expression.Span), ExpressionFactKind.Boxing));
+            return;
+        }
+        if (expression is InvocationExpressionSyntax invocation && model.GetOperation(invocation) is IDynamicInvocationOperation)
+        {
+            _expressions.Add(new(map.Range(expression.Span), ExpressionFactKind.Dynamic));
+            return;
+        }
+        if (expression is not (IdentifierNameSyntax or MemberAccessExpressionSyntax or ElementAccessExpressionSyntax))
+            return;
+        // The context belongs to the outer expression, while the graph uses the operand span.
+        var value = expression;
+        while (value.Parent is ParenthesizedExpressionSyntax parens)
+            value = parens;
+        if (value.Parent is not EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax } &&
+            !(value.Parent is AssignmentExpressionSyntax assignment &&
+              assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && assignment.Right == value))
+            return;
+        if (value != expression)
+            conversion = model.GetConversion(value);
+        if (!conversion.IsIdentity && !conversion.IsReference)
+            return;
+        var type = model.GetTypeInfo(value).ConvertedType;
+        if (type is null || type.TypeKind is TypeKind.Error or TypeKind.Dynamic or TypeKind.TypeParameter)
+            return;
+        if (type.IsValueType)
+            _expressions.Add(new(map.Range(expression.Span), ExpressionFactKind.ValueCopy));
+        else if (type.IsReferenceType)
+            _expressions.Add(new(map.Range(expression.Span), ExpressionFactKind.ReferenceCopy));
     }
 
     private List<SemanticRef> MergeReferences()

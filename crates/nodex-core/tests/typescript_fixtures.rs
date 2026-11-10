@@ -31,6 +31,74 @@ fn has_opaque(e: &Expr) -> bool {
 }
 
 #[test]
+fn switch_links_only_live_case_exits_to_the_following_case() {
+    let ir = lower_source("cases.ts", r#"
+        function route(code: number) {
+            switch (code) {
+                case 1: first();
+                case 2: return second();
+                case 3: third(); break;
+                case 4: fourth();
+                case 5: break;
+                default: last();
+            }
+        }
+    "#);
+    let flow = ir.flows.iter().find(|flow| flow.name == "route").unwrap();
+    let id = |code: &str| flow.nodes.iter().find(|n| n.code.starts_with(code)).unwrap().id.as_str();
+    let connects = |from: &str, to: &str| flow.edges.iter().any(|edge| {
+        edge.kind == nodex_ir::FlowEdgeKind::Exec && edge.from == id(from) && edge.to == id(to)
+    });
+    assert!(connects("first()", "return second()"));
+    assert!(connects("fourth()", "break"));
+    assert!(!connects("return second()", "third()"));
+    assert!(!connects("third()", "fourth()"));
+    assert!(!connects("break", "last()"));
+}
+
+#[test]
+fn blueprint_distinguishes_spreading_from_collecting_values() {
+    let ir = lower_source("spread.ts", r#"
+        export function gather(...items: number[]) {
+            const [first, ...tail] = items;
+            const { secret, ...profile } = { secret: 1, active: true };
+            const list = [...tail, first];
+            const copy = { ...profile, active: false };
+            return consume(...list);
+        }
+    "#);
+    let flow = ir.flows.iter().find(|flow| flow.name == "gather").expect("gather flow");
+    for (flavor, pin) in [("rest-arguments:items", "var:items"), ("rest-items:tail", "var:tail"), ("rest-properties:profile", "var:profile")] {
+        let node = flow.nodes.iter().find(|node| node.flavors.iter().any(|f| f == flavor)).expect(flavor);
+        assert!(node.outputs.iter().any(|p| p.id == pin), "{flavor} binds {pin}");
+    }
+    fn has_spread(expr: &Expr, kind: &str) -> bool {
+        expr.flavors.iter().any(|f| f == kind) || expr.children.iter().any(|child| has_spread(child, kind))
+    }
+    for kind in ["spread-arguments", "spread-items", "spread-properties"] {
+        assert!(flow.nodes.iter().filter_map(|node| node.expr.as_ref()).any(|expr| has_spread(expr, kind)), "{kind}");
+    }
+}
+
+#[test]
+fn nullish_fallback_keeps_zero_and_empty_string_as_left_operands() {
+    let ir = lower_source("fallback.ts", r#"
+        function defaults() {
+            const count = 0 ?? 10;
+            const name = "" ?? "default";
+            return [count, name];
+        }
+    "#);
+    let flow = ir.flows.iter().find(|flow| flow.name == "defaults").unwrap();
+    let fallbacks: Vec<_> = flow.nodes.iter().filter_map(|node| node.expr.as_ref())
+        .filter(|expr| expr.concept == Concept::Fallback).collect();
+    assert_eq!(fallbacks.len(), 2);
+    for (fallback, expected) in fallbacks.into_iter().zip([["0", "10"], ["\"\"", "\"default\""]]) {
+        assert_eq!(fallback.children.iter().map(|expr| expr.label.as_str()).collect::<Vec<_>>(), expected);
+    }
+}
+
+#[test]
 fn compiler_configuration_changes_invalidate_typescript_analysis() {
     use nodex_ir::{Language, semantic::{SemanticFacts, SemanticState}};
 

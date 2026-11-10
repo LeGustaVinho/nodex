@@ -200,7 +200,7 @@ impl<'a> Resolver<'a> {
                         }
                         // TypeScript parameter properties: `this.repo` from `constructor(private repo: Repo)`.
                         if is_self && let Some(o) = owner {
-                            return self.type_of(&Expr { label: field.to_owned(), children: Vec::new(), ..inner.clone() }, caller, Some(o), flow, depth + 1);
+                            return self.type_of(&Expr { syntax_sites: None, type_info: None, value_info: None, label: field.to_owned(), children: Vec::new(), ..inner.clone() }, caller, Some(o), flow, depth + 1);
                         }
                         None
                     }

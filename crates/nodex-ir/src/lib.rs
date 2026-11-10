@@ -113,6 +113,15 @@ impl SymbolKind {
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Symbol {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub syntax_sites: Option<Vec<SyntaxSite>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub value_info: Option<ValueInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub type_info: Option<types::TypeInfo>,
     pub id: SymbolId,
     pub kind: SymbolKind,
     /// Short display name (`OrderService`).
@@ -256,6 +265,9 @@ impl StructEdge {
 #[derive(Serialize, Deserialize, TS, Clone, Debug, Default, PartialEq)]
 #[ts(export)]
 pub struct StructureGraph {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_revisions: Option<std::collections::BTreeMap<String, String>>,
     pub symbols: Vec<Symbol>,
     pub edges: Vec<StructEdge>,
 }
@@ -318,6 +330,13 @@ pub struct Diagnostic {
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct FileIr {
+    /// Rust's symbolic borrow origins. The server resolves the requested site on demand.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[ts(skip)]
+    pub borrow_models: std::collections::BTreeMap<SymbolId, borrow::BorrowModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_revision: Option<String>,
     pub file: String,
     pub language: Language,
     pub symbols: Vec<Symbol>,
@@ -481,12 +500,58 @@ pub enum PinKind {
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq)]
 #[ts(export)]
 pub struct Pin {
+    /// Exact written name of a declaration, used to join facts about this binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub declaration: Option<Span>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub value_info: Option<ValueInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub type_info: Option<types::TypeInfo>,
     /// Unique within its node (`in`, `out`, `body`, `true`, `var:total`, ...).
     pub id: String,
     pub kind: PinKind,
     pub label: String,
     /// Type as written in the source, when known.
     pub ty: Option<String>,
+    /// Declaration rules for this name, independent of access through the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub binding: Option<Binding>,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub enum BindingForm {
+    Let,
+    Var,
+    Inferred,
+    Const,
+    Local,
+    Parameter,
+    Pattern,
+    Using,
+    RefReadonly,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub struct Binding {
+    pub form: BindingForm,
+    pub reassignable: bool,
+    pub has_initializer: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shadows: Option<BindingOrigin>,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub struct BindingOrigin {
+    pub node: NodeId,
+    pub pin: String,
 }
 
 /// Blueprint purity: impure nodes sit on the execution chain; pure nodes only compute values.
@@ -497,14 +562,45 @@ pub enum Purity {
     Impure,
 }
 
+/// The source text emphasized in a Blueprint node.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub struct Focus {
+    pub primary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub prefix: Option<String>,
+    /// The full qualifier's UTF-8 byte range in the node's file, when the prefix is a preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub prefix_bytes: Option<[u32; 2]>,
+    /// Byte range of the emphasized text in the source file, when it was written there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub primary_bytes: Option<[u32; 2]>,
+}
+
 /// An expression tree under a statement node. The frontend shows statements collapsed and
 /// expands this tree into pure nodes on demand (statement-level granularity by default).
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Expr {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub syntax_sites: Option<Vec<SyntaxSite>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub value_info: Option<ValueInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub type_info: Option<types::TypeInfo>,
     pub concept: Concept,
     /// Short natural-language label (`Where`, `+`, `order.Amount`).
     pub label: String,
+    /// The written target or operand shown as the expression's focus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub focus: Option<Focus>,
     pub span: Span,
     pub flavors: Vec<String>,
     pub children: Vec<Expr>,
@@ -526,16 +622,92 @@ pub struct Expr {
     /// Parameter names of a `Lambda`.
     #[serde(default)]
     pub params: Vec<String>,
+    /// Typed parameter pins of an inline function, identified by their declarations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub param_pins: Option<Vec<Pin>>,
+}
+
+/// A language construct as written in the source. The span identifies one occurrence.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub struct SyntaxSite {
+    pub key: String,
+    pub span: Span,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pin: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub enum ValueKind {
+    Value,
+    Reference,
+    Pointer,
+    Mixed,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub enum ValueBasis {
+    Syntax,
+    TypeAnalysis,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub enum ValueQualifier {
+    Object,
+    Alias,
+    SharedBorrow,
+    ExclusiveBorrow,
+    Raw,
+    Unique,
+    Shared,
+    Weak,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub enum PassingMode {
+    ByValue,
+    Ref,
+    In,
+    Out,
+    RefReadonly,
+}
+
+/// What a site represents, independently of how it is transferred.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[ts(export)]
+pub struct ValueInfo {
+    pub kind: ValueKind,
+    pub basis: ValueBasis,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub qualifier: Option<ValueQualifier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub passing: Option<PassingMode>,
 }
 
 /// One node of a Blueprint-style flow graph.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct FlowNode {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub syntax_sites: Option<Vec<SyntaxSite>>,
     pub id: NodeId,
     pub concept: Concept,
     /// Natural-language description (`for each order in _repository.All()`).
     pub label: String,
+    /// The target or operand of this statement, independently of its expression's focus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub focus: Option<Focus>,
     /// The original code of the statement header, single line, trimmed.
     pub code: String,
     pub span: Span,
@@ -547,6 +719,10 @@ pub struct FlowNode {
     pub expr: Option<Expr>,
     /// Local variables written by this node.
     pub writes: Vec<String>,
+    /// Definitions updated by this statement, resolved in the lowerer's lexical scope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(skip)]
+    pub binding_writes: Vec<BindingOrigin>,
     /// Functions this statement calls or types it creates, resolved by a semantic provider.
     #[serde(default)]
     pub calls: Vec<CallTarget>,
@@ -597,6 +773,8 @@ pub enum Access {
     Borrow,
     /// Exclusive borrow for changing it (`&mut x`).
     BorrowMut,
+    /// A value use without enough information to distinguish copying, moving or reborrowing.
+    ByValue,
 }
 
 /// The Blueprint graph of one function, method, constructor or accessor body.
@@ -607,6 +785,10 @@ pub struct FlowGraph {
     pub name: String,
     pub language: Language,
     pub span: Span,
+    /// Identifies the source revision that these spans refer to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_revision: Option<String>,
     pub nodes: Vec<FlowNode>,
     pub edges: Vec<FlowEdge>,
 }
@@ -624,8 +806,10 @@ impl FlowGraph {
     }
 }
 
+pub mod borrow;
 pub mod knowledge;
 pub mod semantic;
+pub mod types;
 
 /// Builds a stable node id from the owning symbol, the concept and a content anchor.
 ///

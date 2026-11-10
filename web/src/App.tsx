@@ -22,7 +22,7 @@ import { ContextMenuHost, useContextMenu } from "./components/ContextMenu";
 import { ContextPicker } from "./panels/ContextPicker";
 import { contextLabel } from "./graph/context";
 import { classMembers } from "./graph/classBlueprint";
-import { isTypeKind } from "./graph/structureGraph";
+import { isBlueprintContainer } from "./graph/structureGraph";
 import { ConnectionOverlay, Toasts } from "./components/Toasts";
 import { EnvironmentDialog } from "./panels/EnvironmentDialog";
 import { SettingsDialog, useSettingsMenu } from "./panels/SettingsDialog";
@@ -41,7 +41,8 @@ function InspectorSlot() {
 
 /** The code panel loads Monaco (megabytes): only once there is code to show, or when idle. */
 function CodeSlot() {
-  const hasCode = useUi((s) => s.codeFocus !== null);
+  const hasCode = useUi((s) => s.activeCodeFile !== null);
+  const session = useUi((s) => s.projectSession);
   useEffect(() => {
     const later = setTimeout(() => void loadCodePanel(), 5000);
     return () => clearTimeout(later);
@@ -49,7 +50,7 @@ function CodeSlot() {
   if (!hasCode) return <div className="code-empty muted">Select something to see its code.</div>;
   return (
     <Suspense fallback={<Loading label="Loading the code editor…" />}>
-      <CodePanel />
+      <CodePanel key={session} />
     </Suspense>
   );
 }
@@ -127,9 +128,9 @@ function useLiveUpdates() {
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys =
               event.type === "graph-changed"
-                ? ["structure", "knowledge", "project", "flow", "flows", "source", "uml", "uml-availability", "navigation"]
+                ? ["structure", "knowledge", "project", "flow", "flows", "borrow-origin", "source", "uml", "uml-availability", "navigation"]
                 : event.data.graph
-                  ? ["structure", "knowledge", "project", "flow", "flows", "uml", "uml-availability", "navigation"]
+                  ? ["structure", "knowledge", "project", "flow", "flows", "borrow-origin", "uml", "uml-availability", "navigation"]
                   : // Only the analysis status (shown from the project summary) changed.
                     ["project", "navigation"];
             for (const key of keys) {
@@ -148,7 +149,7 @@ function TopBar() {
   const project = useQuery({ queryKey: ["project"], queryFn: api.project });
   const { index } = useStructure();
   const flowSymbol = ui.flowSymbol ? index?.byId.get(ui.flowSymbol) : undefined;
-  const classMode = ui.view === "blueprint" && !!flowSymbol && isTypeKind(flowSymbol.kind);
+  const classMode = ui.view === "blueprint" && !!flowSymbol && isBlueprintContainer(flowSymbol);
   const classIds = useMemo(() => index && flowSymbol && classMode
     ? classMembers(index, flowSymbol.id).map((m) => m.id) : [], [index, flowSymbol, classMode]);
   const root = project.data?.root;
@@ -241,7 +242,7 @@ function TopBar() {
                 {classMode ? flowSymbol.name : flowSymbol.qualified_name}
               </span>
               {classIds.length > 0 && (
-                <div className="segmented" role="group" aria-label="Class methods">
+                <div className="segmented" role="group" aria-label={flowSymbol.kind === "Module" ? "File functions" : "Class methods"}>
                   <button onClick={() => ui.setClassOpen(classIds, true)}>Open all</button>
                   <button onClick={() => ui.setClassOpen(classIds, false)}>Close all</button>
                 </div>
@@ -269,6 +270,15 @@ function TopBar() {
               <label className="toggle" title="Wires from where a variable is created to where it is used">
                 <input type="checkbox" checked={ui.showDataWires} onChange={(e) => ui.setShowDataWires(e.target.checked)} /> data wires
               </label>
+              <label className="toggle" title="Explain language-specific behavior on the graph">
+                <input type="checkbox" checked={ui.blueprintExplanations} onChange={(e) => ui.setBlueprintExplanations(e.target.checked)} /> explanations
+              </label>
+              {ui.blueprintExplanations && <span className="muted blueprint-value-legend"
+                title="V Value · R Reference · P Pointer · V/R Value or reference · ? Unknown"
+                aria-label="Value badges: V Value, R Reference, P Pointer, V/R Value or reference, question mark Unknown">
+                V · R · P
+              </span>}
+              <button aria-pressed={ui.blueprintGuide} onClick={() => ui.setBlueprintGuide(!ui.blueprintGuide)}>Guide</button>
               {ui.detail === "statements" && (
                 <button onClick={ui.collapseAll} title="Hide all expression details">
                   Collapse
@@ -319,6 +329,7 @@ export function App() {
   useLiveUpdates();
   useSettingsMenu();
   const view = useUi((s) => s.view);
+  const session = useUi((s) => s.projectSession);
   const project = useQuery({ queryKey: ["project"], queryFn: api.project, retry: false });
 
   if (!token || (project.error instanceof ApiError && project.error.status === 401)) {
@@ -360,7 +371,7 @@ export function App() {
   return (
     <div className="app">
       <TopBar />
-      <Sidebar />
+      <Sidebar key={session} />
       <main className="main">
         <Suspense fallback={loading}>
           {view === "overview" && <OverviewView />}
@@ -384,7 +395,7 @@ export function App() {
         <CodeSlot />
       </section>
       <Palette />
-      <ContextMenuHost />
+      <ContextMenuHost projectRoot={project.data?.root} />
       {overlays}
     </div>
   );

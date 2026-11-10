@@ -27,6 +27,14 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
                             existing.flavors.push(f.clone());
                         }
                     }
+                    if let Some(sites) = &s.syntax_sites {
+                        let existing_sites = existing.syntax_sites.get_or_insert_with(Vec::new);
+                        for site in sites {
+                            if !existing_sites.contains(site) {
+                                existing_sites.push(site.clone());
+                            }
+                        }
+                    }
                     existing.has_flow |= s.has_flow;
                     if existing.origins.len() > 1 && existing.kind.is_type() && !existing.flavors.iter().any(|f| f == "partial") {
                         existing.flavors.push("partial".into());
@@ -143,7 +151,12 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
 
     let mut all: Vec<Symbol> = symbols.into_values().collect();
     all.extend(external.into_values());
+    let revisions: BTreeMap<_, _> = files.iter()
+        .filter(|f| f.symbols.iter().any(|s| s.syntax_sites.is_some()))
+        .filter_map(|f| Some((f.file.clone(), f.source_revision.clone()?)))
+        .collect();
     StructureGraph {
+        source_revisions: (!revisions.is_empty()).then_some(revisions),
         symbols: all,
         edges: edges.into_iter().map(|(from, to, kind)| StructEdge::new(from, to, kind)).collect(),
     }
@@ -194,6 +207,9 @@ fn merge_impl_blocks(symbols: &mut BTreeMap<String, Symbol>) -> HashMap<String, 
 
 fn external_symbol(id: &str, kind: SymbolKind, name: &str, language: Language) -> Symbol {
     Symbol {
+        syntax_sites: None,
+        type_info: None,
+        value_info: None,
         id: id.to_owned(),
         kind,
         name: name.rsplit('.').next().unwrap_or(name).to_owned(),

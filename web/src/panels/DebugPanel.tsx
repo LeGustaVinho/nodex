@@ -173,23 +173,23 @@ function InstallCard({ language }: { language: string }) {
 
 /** Call stack, variables and watch expressions while debugging. */
 export function DebugPanel() {
-  const { status, stopped, frame, setFrame, setFrameScopes, scopes: frameScopes } = useDebug();
+  const { status, stopped, stopId, frame, setFrame, setFrameScopes, scopes: frameScopes } = useDebug();
   const { index } = useStructure();
   const [watches, setWatches] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [allFrames, setAllFrames] = useState(false);
   const isTop = frame !== null && frame === topFrame(stopped);
   const scopes = useQuery({
-    queryKey: ["debug-scopes", frame, stopped],
+    queryKey: ["debug-scopes", stopId, frame],
     queryFn: () => api.debugScopes(frame!),
     enabled: frame !== null && !!stopped && !isTop,
   });
   // Other frames' variables also go to the store, for the pins of their Blueprint.
   useEffect(() => {
-    if (frame !== null && !isTop && scopes.data) setFrameScopes(frame, scopes.data);
-  }, [frame, isTop, scopes.data, setFrameScopes]);
+    if (frame !== null && !isTop && scopes.data) setFrameScopes(stopId, frame, scopes.data);
+  }, [stopId, frame, isTop, scopes.data, setFrameScopes]);
   const watchValues = useQuery({
-    queryKey: ["debug-watch", watches, frame, stopped],
+    queryKey: ["debug-watch", stopId, watches, frame],
     queryFn: () => Promise.all(watches.map((w) => api.debugEvaluate(w, frame).catch((e: Error) => ({ name: w, value: e.message.replace(/^\d+ /, ""), ty: null, reference: 0 })))),
     enabled: !!stopped && watches.length > 0,
   });

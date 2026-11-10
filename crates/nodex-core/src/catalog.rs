@@ -41,6 +41,15 @@ pub struct ConceptInfo {
 pub struct FlavorInfo {
     pub label: String,
     pub explain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cue: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effects: Option<Vec<[String; 2]>>,
 }
 
 /// A family of operations (math, text, ...): its title and node color.

@@ -1,13 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import { conceptColor, conceptInfo, flavorInfo, operationColor, operationInfo, typeColor, useCatalog } from "../catalog";
+import { conceptColor, conceptInfo, flavorInfo, operationColor, operationInfo, useCatalog } from "../catalog";
 import type { Access } from "../gen/Access";
 import type { Concept } from "../gen/Concept";
 import type { Expr } from "../gen/Expr";
 import type { Language } from "../gen/Language";
 import { useUi } from "../store";
 import { useStructure } from "../views/Views";
+import type { StructureIndex } from "../graph/structureGraph";
+import { borrowExpressionPath, expressionSites, statementSites } from "../graph/syntaxSites";
+import { ValueExplanation } from "../components/ValueBadge";
+import { BorrowInspector } from "./BorrowInspector";
+import { SyntaxInspector } from "./SyntaxInspector";
 import { ContainerInspector, SymbolInspector } from "./SymbolInspector";
+import { bindingDetails } from "../graph/bindingDetails";
+import { expressionDetailFlavors, expressionExplanations, isExplanationFlavor, pinSyntaxDetails, statementDetailFlavors, withoutExpressionFacts } from "../graph/blueprintExplanation";
+import { pointerBadge } from "../graph/pointers";
+import { ACCESS_LABEL, ACCESS_TEXT } from "../components/OwnershipEdge";
+import { ExecutionTypes, TypeDetails } from "./TypeInspector";
 
 function Flavors({ flavors, language }: { flavors: string[]; language?: Language }) {
   const catalog = useCatalog();
@@ -99,6 +109,8 @@ function usesVerb(access: Access | null | undefined): string {
       return "takes (moves)";
     case "Copy":
       return "copies";
+    case "ByValue":
+      return "uses";
     case "Borrow":
       return "borrows";
     case "BorrowMut":
@@ -115,15 +127,30 @@ function exprAt(root: Expr | null, path: string): Expr | null {
 }
 
 export function Inspector() {
-  const { selection } = useUi();
   const { index } = useStructure();
+  return (
+    <div className="inspector">
+      <ExecutionTypes index={index} />
+      <InspectorContent index={index} />
+    </div>
+  );
+}
+
+function InspectorContent({ index }: { index?: StructureIndex }) {
+  const { selection } = useUi();
   const flowSymbol = selection && (selection.kind === "flow-node" || selection.kind === "expr") ? selection.flow : null;
   const flow = useQuery({ queryKey: ["flow", flowSymbol], queryFn: () => api.flow(flowSymbol!), enabled: !!flowSymbol });
+  const file = flow.data?.span.file;
+  const source = useQuery({
+    queryKey: ["source", file],
+    queryFn: ({ signal }) => api.sourceFile(file!, signal),
+    enabled: false,
+  });
   const openFlow = useUi((s) => s.openFlow);
 
   if (!selection) {
     return (
-      <div className="inspector empty-note">
+      <div className="empty-note">
         Select a node to see what it does in plain language. Double-click a namespace to see its types, double-click a member to open
         its Blueprint.
       </div>
@@ -131,23 +158,41 @@ export function Inspector() {
   }
 
   if (selection.kind === "flow-node" || selection.kind === "expr") {
-    const node = flow.data?.nodes.find((n) => n.id === (selection.kind === "flow-node" ? selection.id : selection.nodeId));
-    if (!node || !flow.data) return <div className="inspector">…</div>;
+    const original = flow.data?.nodes.find((n) => n.id === (selection.kind === "flow-node" ? selection.id : selection.nodeId));
+    const stale = !!source.data && !!flow.data?.source_revision && source.data.revision !== flow.data.source_revision;
+    const node = stale && original?.expr ? { ...original, expr: withoutExpressionFacts(original.expr) } : original;
+    if (!node || !flow.data) return <div>…</div>;
     if (selection.kind === "expr") {
       const expr = exprAt(node.expr, selection.path);
-      if (!expr) return <div className="inspector">…</div>;
+      if (!expr) return <div>…</div>;
       return (
-        <div className="inspector">
+        <>
+          <SyntaxInspector key={selection.syntax ?? selection.path} sites={expressionSites(expr)} language={flow.data.language}
+            revision={() => flow.data?.source_revision} active={selection.syntax} />
+          <div className="insp-section">
+            <TypeDetails info={expr.type_info} native={expr.ty} revision={flow.data.source_revision ?? undefined} />
+            <ValueExplanation info={expr.value_info} language={flow.data.language} />
+          </div>
+          {selection.path === "0" && node.concept === "Return" && !stale && index?.byId.get(selection.flow)?.value_info && (
+            <div className="insp-section">
+              <div className="section-title">Return type</div>
+              <ValueExplanation info={index.byId.get(selection.flow)?.value_info} language={flow.data.language} />
+            </div>
+          )}
+          {flow.data.language === "rust" && !stale && (expr.value_info?.kind === "Reference" ||
+            expr.syntax_sites?.some((site) => site.key === "borrow" || site.key === "borrow-mut")) &&
+            <BorrowInspector key={node.id + ":" + selection.path} flow={selection.flow} node={node.id} path={selection.path} />}
           <ConceptHeader concept={expr.concept} label={expr.label} />
           <OperationSection op={expr.op} language={flow.data.language} />
           {expr.params.length > 0 && (
             <div className="insp-section">
               <div className="section-title">Parameters</div>
-              <div className="value-row">
-                {expr.params.map((p) => (
-                  <code key={p}>{p}</code>
-                ))}
-              </div>
+              {expr.param_pins?.map((pin) => (
+                <div key={pin.id}>
+                  <code>{pin.label}</code>
+                  <TypeDetails info={pin.type_info} native={pin.ty} />
+                </div>
+              )) ?? <div className="value-row">{expr.params.map((name) => <code key={name}>{name}</code>)}</div>}
             </div>
           )}
           {expr.target && (
@@ -161,13 +206,55 @@ export function Inspector() {
               </div>
             </div>
           )}
-          <Flavors flavors={expr.flavors} language={flow.data.language} />
-        </div>
+          <Flavors flavors={[...new Set([...expr.flavors.filter((f) => !isExplanationFlavor(f)), ...expressionDetailFlavors(expr, flow.data.language)])]} language={flow.data.language} />
+          {expressionExplanations(expr, flow.data.language).map((explanation) => (
+            <p className="explain" key={explanation}>{explanation}</p>
+          ))}
+        </>
       );
     }
     const owner = node.concept === "Entry" || node.concept === "EventEntry" ? index?.byId.get(flow.data.symbol) : undefined;
+    const pins = [...node.inputs, ...node.outputs];
+    const borrowPath = flow.data.language === "rust" && !stale && selection.syntax
+      ? borrowExpressionPath(node.expr, selection.syntax) : undefined;
+    const pinDetails = pins.flatMap((pin) => {
+      if (selection.pin !== undefined && selection.pin !== pin.id) return [];
+      const details = [...pinSyntaxDetails(node, pin.id), ...(pin.binding ? bindingDetails(pin.binding, flow.data!.language) : [])];
+      const pointer = pointerBadge(pin.ty);
+      if (pointer) details.push(pointer);
+      const accesses = new Set(flow.data!.edges.filter((e) => e.to === node.id && e.to_pin === pin.id).flatMap((e) => e.access ? [e.access] : []));
+      for (const access of accesses) details.push({ label: ACCESS_LABEL[access], explain: ACCESS_TEXT[access] });
+      return details.length || pin.kind === "Data" ? [{ pin, details }] : [];
+    });
     return (
-      <div className="inspector">
+      <>
+        <SyntaxInspector key={selection.syntax ?? selection.pin ?? node.id}
+          sites={selection.pin !== undefined ? statementSites(node, false, false, selection.pin) : [...statementSites(node), ...pins.flatMap((p) => statementSites(node, false, false, p.id))]}
+          language={flow.data.language} revision={() => flow.data?.source_revision} active={selection.syntax} />
+        {borrowPath && <BorrowInspector key={node.id + ":" + borrowPath} flow={selection.flow} node={node.id} path={borrowPath} />}
+        {pinDetails.map(({ pin, details }) => {
+          const shadows = pin.binding?.shadows;
+          const previous = shadows && flow.data!.nodes.find((n) => n.id === shadows.node);
+          return (
+            <div className="insp-section" key={pin.id}>
+              <div className="section-title">
+                {pin.kind === "Data" && (node.outputs.includes(pin)
+                  ? (pin.id.startsWith("write:") ? "Updates" : "Defines")
+                  : usesVerb(flow.data!.edges.find((e) => e.to === node.id && e.to_pin === pin.id)?.access)) || "Pin"} · {pin.label}
+              </div>
+              {pin.kind === "Data" && <TypeDetails info={stale ? undefined : pin.type_info} native={pin.ty} revision={flow.data?.source_revision ?? undefined} />}
+              {pin.kind === "Data" && <ValueExplanation info={stale && pin.value_info?.basis === "TypeAnalysis" ? undefined : pin.value_info} language={flow.data!.language} />}
+              {flow.data!.language === "rust" && !stale && selection.pin === pin.id && pin.value_info?.kind === "Reference" &&
+                <BorrowInspector key={node.id + ":" + pin.id} flow={selection.flow} node={node.id} pin={pin.id} />}
+              {details.map((detail) => <div className="flavor" key={detail.label}>
+                <span className="badge">{detail.label}</span><span className="flavor-explain">{detail.explain}</span>
+              </div>)}
+              {previous && <button onClick={() => useUi.getState().select({
+                kind: "flow-node", flow: selection.flow, id: previous.id, pin: shadows.pin,
+              })}>Previous binding</button>}
+            </div>
+          );
+        })}
         <ConceptHeader concept={node.concept} label={node.label} />
         {node.concept === "Call" && <OperationSection op={node.expr?.op ?? null} language={flow.data.language} />}
         {owner?.doc && (
@@ -188,27 +275,10 @@ export function Inspector() {
             ))}
           </div>
         )}
-        <Flavors flavors={node.flavors} language={flow.data.language} />
-        {(node.inputs.some((p) => p.kind === "Data") || node.outputs.some((p) => p.kind === "Data")) && (
+        <Flavors flavors={[...new Set([...node.flavors.filter((f) => !isExplanationFlavor(f)), ...statementDetailFlavors(node, flow.data.language, false)])]} language={flow.data.language} />
+        {node.writes.some((name) => !node.outputs.some((pin) => pin.label === name)) && (
           <div className="insp-section">
             <div className="section-title">Values</div>
-            {node.outputs
-              .filter((p) => p.kind === "Data")
-              .map((p) => (
-                <div key={p.id} className="value-row">
-                  <span className="dot" style={{ background: typeColor(p.ty) }} /> defines <code>{p.label}</code>
-                  {p.ty && <span className="muted"> : {p.ty}</span>}
-                </div>
-              ))}
-            {node.inputs
-              .filter((p) => p.kind === "Data")
-              .map((p) => (
-                <div key={p.id} className="value-row">
-                  <span className="dot" style={{ background: typeColor(p.ty) }} /> {usesVerb(flow.data!.edges.find((e) => e.to === node.id && e.to_pin === p.id)?.access)}{" "}
-                  <code>{p.label}</code>
-                  {p.ty && <span className="muted"> : {p.ty}</span>}
-                </div>
-              ))}
             {node.writes
               .filter((w) => !node.outputs.some((p) => p.label === w))
               .map((w) => (
@@ -222,12 +292,12 @@ export function Inspector() {
           <div className="section-title">Code</div>
           <pre className="code-snippet">{node.code}</pre>
         </div>
-      </div>
+      </>
     );
   }
 
-  if (selection.kind === "container") return <ContainerInspector id={selection.id} />;
+  if (selection.kind === "container") return <ContainerInspector id={selection.id} embedded />;
   const symbol = index?.byId.get(selection.id);
-  if (!symbol || !index) return <div className="inspector">…</div>;
-  return <SymbolInspector key={symbol.id} symbol={symbol} index={index} />;
+  if (!symbol || !index) return <div>…</div>;
+  return <SymbolInspector key={symbol.id} symbol={symbol} index={index} syntax={selection.syntax} embedded />;
 }

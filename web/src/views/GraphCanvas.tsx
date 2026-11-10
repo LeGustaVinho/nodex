@@ -18,7 +18,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Positions as SavedPositions } from "../api";
-import { typeColor } from "../catalog";
+import { blueprintTypeColor } from "../graph/blueprintTypes";
+import type { TypeShape } from "../gen/TypeShape";
 import { BlueprintNode } from "../components/BlueprintNode";
 import { CallNode } from "../components/CallNode";
 import { ClassBox, FieldCard, MethodNode } from "../components/ClassNodes";
@@ -101,18 +102,17 @@ export function edgeStyle(e: GEdge): Partial<Edge> {
 }
 
 function kindStyle(e: GEdge): Partial<Edge> {
-  const ty = (e.data as { ty?: string | null } | undefined)?.ty;
+  const { ty, shape, access } = (e.data as { ty?: string | null; shape?: TypeShape; access?: string | null } | undefined) ?? {};
   switch (e.kind) {
     case "exec":
       return { style: { stroke: "#e8e8e8", strokeWidth: 2.4 }, className: "edge-exec" };
     case "data": {
       // Rust: how the value travels (move, copy, borrow) shapes the wire.
-      const access = (e.data as { access?: string | null } | undefined)?.access;
-      if (access) return { type: "ownership", data: { ty: ty ?? null, access }, className: "edge-data" };
-      return { style: { stroke: typeColor(ty), strokeWidth: 1.6, opacity: 0.75 }, className: "edge-data" };
+      if (access) return { type: "ownership", data: { ty: ty ?? null, shape, access }, className: "edge-data" };
+      return { style: { stroke: blueprintTypeColor(shape, ty), strokeWidth: 1.6, opacity: 0.75 }, className: "edge-data" };
     }
     case "expr":
-      return { style: { stroke: "#8fa3b8", strokeWidth: 1.3 } };
+      return { style: { stroke: blueprintTypeColor(shape, ty), strokeWidth: 1.3 } };
     case "inherits":
       return { type: "smoothstep", style: { stroke: "#d0d4da", strokeWidth: 1.8 }, markerEnd: { type: MarkerType.ArrowClosed, color: "#d0d4da" }, label: "extends" };
     case "implements":
@@ -155,6 +155,7 @@ interface Props {
   /** Key under which manual positions are saved (`flow:<symbol>`, `types:<ns>`, ...). */
   layoutKey: string;
   selectedId: string | null;
+  observedEdge?: string;
   onNodeClick?: (node: Node) => void;
   onNodeDoubleClick?: (node: Node) => void;
   /** Right-click on a node (the app's context menu). */
@@ -192,7 +193,7 @@ interface Props {
 
 function Canvas(props: Props) {
   const { graph, layoutKey, selectedId, onNodeClick, onNodeDoubleClick, onNodeContextMenu, emptyText, loadingText, error, onRetry, fitFirst, fitSelection = true, savePositions = true, refit = false } = props;
-  const { explore, anchorId, nodeTip, edgeTip, exportName } = props;
+  const { explore, anchorId, nodeTip, edgeTip, exportName, observedEdge } = props;
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [busy, setBusy] = useState(false);
@@ -332,6 +333,10 @@ function Canvas(props: Props) {
     return nodes.map((n) => (lit.has(n.id) ? n : { ...n, className: "dim" }));
   }, [nodes, focus]);
   const shownEdges = useMemo(() => {
+    if (observedEdge) return edges.map((edge) => edge.id === observedEdge ? {
+      ...edge, label: "Recorded transition", style: { ...edge.style, stroke: "#7ee787", strokeWidth: 4 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#7ee787" }, zIndex: 5,
+    } : edge);
     if (!focus) return edges;
     const faint = !focus.litNodes && edges.length > FAINT_EDGES;
     const coloured = edgeMode !== "all";
@@ -349,7 +354,7 @@ function Canvas(props: Props) {
       const markerEnd = color && e.markerEnd && typeof e.markerEnd === "object" ? { ...e.markerEnd, color } : e.markerEnd;
       return { ...e, style, markerEnd, label: lit ? e.label : undefined, zIndex: lit ? 5 : 0 };
     });
-  }, [edges, focus, edgeMode]);
+  }, [edges, focus, edgeMode, observedEdge]);
 
   const fitAll = useCallback(() => void fitView({ padding: 0.1, duration: 250 }), [fitView]);
   const exportPng = useCallback(async () => {

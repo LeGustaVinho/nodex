@@ -59,6 +59,9 @@ label = "macro"
 explain = "Code that writes code at compile time. name!(...) expands into ordinary Rust before it is compiled."
 
 # --- Functions -----------------------------------------------------------------------------
+cue = "!"
+phase = "Compile time"
+effects = [["name!(tokens)", "Expand the macro before compiling the resulting code"]]
 
 ["&self"]
 label = "&self"
@@ -91,10 +94,13 @@ explain = "Computed while compiling (const fn may also run then); its value neve
 [mut]
 label = "mut"
 explain = "The variable can be changed later. Rust variables are fixed unless marked mut."
+cue = "mut"
+phase = "Compile time"
+effects = [["let mut n = 1; n = 2", "The binding can be reassigned"]]
 
 [unsafe]
 label = "unsafe"
-explain = "The compiler cannot check this is safe (raw pointers, foreign code); the author promises it is."
+explain = "Rust allows specific operations here that require extra safety conditions, such as dereferencing a raw pointer. The author must uphold those conditions. Type checking still applies."
 
 [extern]
 label = "extern"
@@ -114,7 +120,10 @@ explain = "A function written inline and handed to another function, which calls
 
 [move]
 label = "move"
-explain = "The closure takes ownership of the variables it uses, instead of borrowing them (needed to send it to another thread)."
+explain = "The closure captures the values it uses by value. Copy values can be copied into it. Other values are moved."
+cue = "move"
+phase = "Compile time"
+effects = [["Capture a Copy value", "Copy it into the closure"], ["Capture a non-Copy value", "Move it into the closure"]]
 
 [async-trait]
 label = "async trait"
@@ -145,6 +154,9 @@ explain = "More variants or fields may be added later, so code outside the crate
 [let-else]
 label = "let … else"
 explain = "Unpacks a value if it has the expected shape; otherwise runs the else block, which must leave (return, break, panic)."
+cue = "else"
+phase = "Runtime"
+effects = [["Pattern matches", "Continue with the new bindings"], ["Pattern fails", "Run the diverging else block"]]
 
 [if-let]
 label = "if let"
@@ -156,7 +168,10 @@ explain = "Repeats while the value has the given shape, for example while a queu
 
 [try]
 label = "?"
-explain = "The ? operator: if the value is an error (Err) or empty (None), the function returns it right away; otherwise it continues with the inner value."
+explain = "Continue with the successful value or return early. For Result, this propagates Err with any required error conversion. For Option, it propagates None."
+cue = "?"
+phase = "Runtime"
+effects = [["Success or presence", "Continue with the inner value"], ["Propagation is needed", "Return early from the enclosing context"]]
 
 [panic]
 label = "panic"
@@ -191,14 +206,23 @@ explain = "The thread stops here until it finishes; nothing else runs on it mean
 [borrow]
 label = "&"
 explain = "A shared borrow: read access to the value; the owner keeps it."
+cue = "&"
+phase = "Runtime"
+effects = [["let r = &x", "r accesses x through a shared reference"]]
 
 [borrow-mut]
 label = "&mut"
 explain = "A mutable borrow: exclusive access to change the value; nobody else may use it meanwhile."
+cue = "&mut"
+phase = "Runtime"
+effects = [["let r = &mut x", "r provides exclusive access to x"], ["*r = 2", "Write 2 through the reference"]]
 
 [deref]
 label = "*"
 explain = "Follows a reference (or smart pointer) to the value it points to."
+cue = "*"
+phase = "Runtime"
+effects = [["Read *r", "Access the referenced place"], ["Write through a writable *r", "Update the referenced place"]]
 
 [clone]
 label = "clone"
@@ -236,6 +260,10 @@ explain = "The value moves here: the previous owner can no longer use it."
 label = "dropped here"
 explain = "Rust frees this value here on its own, because its scope ends: for types with a Drop implementation that runs their drop method; for a lock guard it releases the lock."
 
+[implicit-return]
+label = "implicit return"
+explain = "The final expression supplies the return value of the function or closure."
+
 [block-value]
 label = "value of a block"
 explain = "The variable takes the value the control flow below ends with (the last expression of a block or branch, or the value a loop leaves with)."
@@ -251,3 +279,56 @@ explain = "RefCell checks the borrowing rules while the program runs: a second m
 [unsafe-attribute]
 label = "unsafe attribute"
 explain = "An attribute the compiler cannot check (no_mangle, export_name, link_section): the author vouches it is used correctly."
+
+[lifetime]
+label = "Reference lifetimes"
+explain = "A lifetime name relates how long references must stay valid. It describes a constraint the compiler checks."
+cue = "'a"
+phase = "Compile time"
+effects = [["Input and output both use 'a", "The compiler checks that the returned reference remains valid for the required lifetime"]]
+
+[cfg]
+label = "Build condition"
+explain = "This declaration is compiled only when the condition matches the build configuration."
+
+[raw-borrow]
+label = "Raw borrow"
+explain = "Create a raw pointer to a place. Its validity is the programmer's responsibility."
+cue = "&raw"
+phase = "Runtime"
+effects = [["&raw const x", "Produce a raw pointer to x"]]
+
+[match-guard]
+label = "Match guard"
+explain = "Check the guard after the arm pattern matches."
+cue = "if"
+phase = "Runtime"
+effects = [["Pattern matches and guard passes", "Take the arm"], ["Guard fails", "Continue checking later arms"]]
+
+[tail-expression]
+label = "Tail expression"
+explain = "The trailing expression supplies the block's value."
+cue = "tail"
+phase = "Runtime"
+effects = [["{ 42 }", "The block yields 42"], ["{ 42; }", "The block yields ()"]]
+
+[range-open]
+label = "Range open"
+explain = "The end bound of this range is excluded when present."
+cue = ".."
+phase = "Runtime"
+effects = [["1..3", "1, 2"]]
+
+[range-inclusive]
+label = "Range inclusive"
+explain = "The end bound is included."
+cue = "..="
+phase = "Runtime"
+effects = [["1..=3", "1, 2, 3"]]
+
+[explicit-type-args]
+label = "Explicit type args"
+explain = "Supply type arguments at the use site."
+cue = "::<T>"
+phase = "Compile time"
+effects = [["parse::<i32>()", "Use i32 as the explicit result type argument"]]

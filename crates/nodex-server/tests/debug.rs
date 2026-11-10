@@ -31,6 +31,7 @@ async fn next_stop(events: &mut Receiver<ServerEvent>, output: &mut Vec<String>)
 }
 
 async fn debug_sample(frontend: Arc<dyn LanguageFrontend>, rel: &str, file: &str, line: u32, flow_suffix: &str) {
+    let language = frontend.id();
     // SAFETY: set before the server's threads read the environment.
     unsafe {
         std::env::set_var("NODEX_NO_SEMANTIC", "1");
@@ -63,7 +64,17 @@ async fn debug_sample(frontend: Arc<dyn LanguageFrontend>, rel: &str, file: &str
     assert!(top.flow.as_deref().is_some_and(|f| f.ends_with(flow_suffix)), "{stop:?}");
     assert!(top.node.is_some(), "the line maps to a Blueprint node: {stop:?}");
     let vars: Vec<_> = stop.scopes.iter().flat_map(|s| s.variables.iter()).collect();
-    assert!(vars.iter().any(|v| v.name == "total"), "{vars:?}");
+    let total = vars.iter().find(|v| v.name == "total").unwrap_or_else(|| panic!("{vars:?}"));
+    assert_eq!(total.type_shape.is_some(), total.ty.is_some());
+    if let Some(ty) = &total.ty {
+        assert_eq!(total.type_shape.as_ref(), Some(&nodex_ir::types::native_shape(language, ty)));
+    }
+    if let Some(caller) = stop.frames.iter().filter(|f| f.file.is_some()).nth(1) {
+        let manager = state.clone();
+        let id = caller.id;
+        let scopes = tokio::task::spawn_blocking(move || manager.debug.scopes(id)).await.unwrap().unwrap();
+        assert!(!scopes.is_empty(), "{caller:?}");
+    }
 
     // Step over the addition: `total` changed.
     let s2 = state.clone();

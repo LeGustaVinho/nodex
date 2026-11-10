@@ -10,7 +10,7 @@
 
 const WS_URL = "__NODEX_WS_URL__";
 
-const KIND = { enter: 1, step: 2, exit: 3, local: 4, ret: 5, arg: 6, thrown: 7, dropped: 9, sequence: 10 };
+const KIND = { enter: 1, step: 2, exit: 3, local: 4, ret: 5, arg: 6, thrown: 7, dropped: 9, sequence: 10, localType: 11, argType: 12 };
 const MAX_PENDING = 16 * 1024 * 1024;
 const MAX_TEXT = 96;
 const HEADER = 23;
@@ -169,6 +169,31 @@ function start() {
     }
   }
 
+
+  const typeMapHas = Map.prototype.has;
+  const typeSetHas = Set.prototype.has;
+  const typeApply = Reflect.apply;
+  const typeIsArray = Array.isArray;
+  const typeKey = Symbol();
+
+  function typeOf(v) {
+    if (v === null) return "Null\nnull";
+    switch (typeof v) {
+      case "undefined": return "Undefined\nundefined";
+      case "string": return "String\nstring";
+      case "number": return "Number\nnumber";
+      case "boolean": return "Bool\nboolean";
+      case "bigint": return "BigInt\nbigint";
+      case "symbol": return "Symbol\nsymbol";
+      case "function": return "Function\nfunction";
+    }
+    try { if (typeIsArray(v)) return "Array<?>\nArray"; } catch {}
+    // Intrinsic brand checks do not read properties, invoke getters, or inspect elements.
+    try { typeApply(typeMapHas, v, [typeKey]); return "Dictionary<?, ?>\nMap"; } catch {}
+    try { typeApply(typeSetHas, v, [typeKey]); return "Set<?>\nSet"; } catch {}
+    return "Object\nobject";
+  }
+
   function fmt(v) {
     return truncate(short(v, 1));
   }
@@ -178,8 +203,14 @@ function start() {
     enter: (m) => record(KIND.enter, m, 0),
     step: (m, p) => record(KIND.step, m, p),
     exit: (m) => record(KIND.exit, m, 0),
-    local: (m, slot, v) => record(KIND.local, m, slot, fmt(v)),
-    arg: (m, index, v) => record(KIND.arg, m, index, fmt(v)),
+    local: (m, slot, v) => {
+      record(KIND.local, m, slot, fmt(v));
+      record(KIND.localType, m, slot, typeOf(v));
+    },
+    arg: (m, index, v) => {
+      record(KIND.arg, m, index, fmt(v));
+      record(KIND.argType, m, index, typeOf(v));
+    },
     ret: (m, v) => {
       record(KIND.ret, m, 0, fmt(v));
       return v;

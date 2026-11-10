@@ -1,0 +1,549 @@
+use crate::syntax::{Src, children};
+use nodex_ir::{Concept, Expr, FileIr, Language, Span, SymbolKind, SyntaxSite};
+use tree_sitter::Node;
+
+struct Occurrence {
+    site: SyntaxSite,
+    owner: Span,
+    operand: Option<Span>,
+    declaration: bool,
+    field_modifier: bool,
+    statement: bool,
+}
+
+pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
+    let mut occurrences = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        // Token trees are macro input, and extras and missing nodes aren't written syntax.
+        if node.is_extra() || node.is_error() || node.is_missing() || node.kind() == "token_tree" {
+            continue;
+        }
+        let mut add = |key: &str,
+                       token: Node,
+                       owner: Node,
+                       declaration: bool,
+                       statement: bool,
+                       pin: Option<String>| {
+            if token.start_byte() == token.end_byte() || src.text(token).trim().is_empty() {
+                return;
+            }
+            let operand = match owner.kind() {
+                "non_null_expression"
+                | "postfix_unary_expression"
+                | "try_expression"
+                | "unary_expression" => crate::syntax::named_children(owner).into_iter().next(),
+                "reference_expression" => owner.child_by_field_name("value"),
+                _ => None,
+            }
+            .map(|n| src.span(n));
+            occurrences.push(Occurrence {
+                site: SyntaxSite {
+                    key: key.into(),
+                    span: syntax_span(ir.language, key, src, token, owner),
+                    pin,
+                },
+                owner: src.span(owner),
+                operand,
+                declaration,
+                field_modifier: declaration && owner.kind() == "field_declaration",
+                statement,
+            });
+        };
+        collect(ir.language, javascript, src, node, &mut add);
+        stack.extend(children(node).into_iter().rev());
+    }
+    occurrences.sort_by_key(|o| (o.site.span.start_byte, o.site.span.end_byte));
+    occurrences.dedup_by(|a, b| a.site == b.site && a.owner == b.owner);
+    let field_modifiers: Vec<_> = occurrences.iter().filter(|o| o.field_modifier).collect();
+
+    // Each declaration gets only its header's details; a method body belongs to its flow.
+    for symbol in &mut ir.symbols {
+        let mut sites = Vec::new();
+        for origin in &symbol.origins {
+            // C# field symbols can start at the declarator, after the shared modifiers.
+            if symbol.kind == SymbolKind::Field {
+                let end =
+                    field_modifiers.partition_point(|o| o.owner.start_byte <= origin.start_byte);
+                for o in field_modifiers[..end]
+                    .iter()
+                    .rev()
+                    .take_while(|o| o.owner.end_byte >= origin.end_byte)
+                {
+                    sites.push(o.site.clone());
+                }
+            }
+            for o in in_span(&occurrences, origin).filter(|o| o.declaration) {
+                if (o.site.key == "type-import") != (symbol.kind == SymbolKind::Module) {
+                    continue;
+                }
+                if symbol.kind == SymbolKind::Module
+                    || o.owner.start_byte == origin.start_byte
+                    || (o.owner.end_byte >= origin.end_byte
+                        && origin.start_byte <= o.site.span.start_byte)
+                {
+                    if !sites.contains(&o.site) {
+                        sites.push(o.site.clone());
+                    }
+                }
+            }
+        }
+        if !sites.is_empty() {
+            symbol.syntax_sites = Some(sites);
+        }
+    }
+
+    for flow in &mut ir.flows {
+        let sites: Vec<_> = in_span(&occurrences, &flow.span)
+            .filter(|o| o.site.key != "type-import")
+            .collect();
+        let mut targets: Vec<Option<usize>> = vec![None; sites.len()];
+        for (i, node) in flow
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| !node.flavors.iter().any(|f| f == "implicit-drop"))
+        {
+            let start = sites.partition_point(|o| o.site.span.start_byte < node.span.start_byte);
+            for (j, o) in sites
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take_while(|(_, o)| o.site.span.start_byte < node.span.end_byte)
+            {
+                if o.site.span.end_byte > node.span.end_byte {
+                    continue;
+                }
+                let size = |s: &Span| s.end_byte - s.start_byte;
+                if targets[j]
+                    .is_none_or(|previous| size(&node.span) < size(&flow.nodes[previous].span))
+                {
+                    targets[j] = Some(i);
+                }
+            }
+        }
+        for (o, target) in sites.iter().zip(&mut targets) {
+            if o.site.key == "match-guard" {
+                *target = flow.nodes.iter().position(|n| {
+                    n.concept == Concept::Match && n.span.start_byte == o.owner.start_byte
+                });
+            }
+        }
+        for (o, i) in sites
+            .into_iter()
+            .zip(targets)
+            .filter_map(|(o, i)| i.map(|i| (o, i)))
+        {
+            let node = &mut flow.nodes[i];
+            if o.declaration && !matches!(node.concept, Concept::Entry | Concept::EventEntry) {
+                continue;
+            }
+            if !o.statement
+                && o.site.pin.is_none()
+                && node.expr.as_mut().is_some_and(|e| attach_expr(e, o))
+            {
+                continue;
+            }
+            let mut site = o.site.clone();
+            site.pin = site.pin.filter(|pin| {
+                node.inputs
+                    .iter()
+                    .chain(&node.outputs)
+                    .any(|p| &p.id == pin)
+            });
+            node.syntax_sites.get_or_insert_with(Vec::new).push(site);
+        }
+        for node in &mut flow.nodes {
+            if node.flavors.iter().any(|f| f == "implicit-return")
+                && node.span.start_byte < node.span.end_byte
+            {
+                let span = node.expr.as_ref().map_or(&node.span, |e| &e.span).clone();
+                node.syntax_sites
+                    .get_or_insert_with(Vec::new)
+                    .push(SyntaxSite {
+                        key: "tail-expression".into(),
+                        span,
+                        pin: None,
+                    });
+            }
+        }
+    }
+}
+
+fn syntax_span(language: Language, key: &str, src: Src, token: Node, owner: Node) -> Span {
+    let part = |kind: &str| {
+        children(owner)
+            .into_iter()
+            .find(|n| n.kind() == kind && !n.is_extra())
+    };
+    let (start, end) = match (language, key) {
+        (Language::Csharp, "safe-access" | "conditional-index") => {
+            let binding =
+                part("member_binding_expression").or_else(|| part("element_binding_expression"));
+            let end = binding.map_or(token.end_byte(), |n| n.start_byte() + 1);
+            (token.start_byte(), end)
+        }
+        (Language::Csharp, "pass-readonly") => {
+            let end = token
+                .parent()
+                .and_then(|p| {
+                    children(p)
+                        .into_iter()
+                        .find(|n| !n.is_extra() && src.text(*n) == "readonly")
+                })
+                .map_or(token.end_byte(), |readonly| readonly.end_byte());
+            (token.start_byte(), end)
+        }
+        (Language::Rust, "borrow-mut") => (
+            part("&").map_or(token.start_byte(), |n| n.start_byte()),
+            token.end_byte(),
+        ),
+        (Language::Rust, "explicit-type-args") => (
+            token.start_byte(),
+            part("type_arguments").map_or(token.end_byte(), |n| n.end_byte()),
+        ),
+        (Language::Typescript, "as-const") => (
+            token.start_byte(),
+            part("const").map_or(token.end_byte(), |n| n.end_byte()),
+        ),
+        _ => return src.span(token),
+    };
+    if end - start > 96 || src.text.get(start..end).is_none() {
+        return src.span(token);
+    }
+    src.index.span(src.file, start, end)
+}
+
+fn in_span<'a>(sites: &'a [Occurrence], span: &Span) -> impl Iterator<Item = &'a Occurrence> {
+    let start = sites.partition_point(|o| o.site.span.start_byte < span.start_byte);
+    sites[start..]
+        .iter()
+        .take_while(|o| o.site.span.start_byte < span.end_byte)
+        .filter(|o| o.site.span.end_byte <= span.end_byte)
+}
+
+fn attach_expr(expr: &mut Expr, occurrence: &Occurrence) -> bool {
+    if expr.children.iter_mut().any(|e| attach_expr(e, occurrence)) {
+        return true;
+    }
+    let same = |s: &Span| s.start_byte == expr.span.start_byte && s.end_byte == expr.span.end_byte;
+    if same(&occurrence.owner) || occurrence.operand.as_ref().is_some_and(same) {
+        expr.syntax_sites
+            .get_or_insert_with(Vec::new)
+            .push(occurrence.site.clone());
+        return true;
+    }
+    false
+}
+
+fn collect(
+    language: Language,
+    javascript: bool,
+    src: Src,
+    n: Node,
+    add: &mut impl FnMut(&str, Node, Node, bool, bool, Option<String>),
+) {
+    let kind = n.kind();
+    let token = |s: &str| {
+        children(n)
+            .into_iter()
+            .find(|c| !c.is_extra() && c.kind() == s && src.text(*c) == s)
+    };
+    let text = |c: Node| src.text(c);
+    let mut emit = |key, t, declaration, statement| {
+        if let Some(t) = t {
+            add(key, t, n, declaration, statement, None);
+        }
+    };
+    match language {
+        Language::Csharp => match kind {
+            "conditional_access_expression" => {
+                let key = if children(n)
+                    .iter()
+                    .any(|c| c.kind() == "element_binding_expression")
+                {
+                    "conditional-index"
+                } else {
+                    "safe-access"
+                };
+                emit(key, token("?"), false, false);
+            }
+            "binary_expression" | "assignment_expression" => {
+                for op in ["??", "??="] {
+                    emit("fallback", token(op), false, false);
+                }
+            }
+            "postfix_unary_expression" => emit("null-forgiving", token("!"), false, false),
+            "prefix_unary_expression" => emit("index-from-end", token("^"), false, false),
+            "range_expression" => emit("range", token(".."), false, false),
+            "spread_element" => emit("collection-spread", token(".."), false, false),
+            "modifier" => {
+                if matches!(text(n), "readonly" | "required")
+                    && let Some(parent) = n.parent()
+                {
+                    let key = match (text(n), parent.kind()) {
+                        ("readonly", "field_declaration") => "readonly-field",
+                        ("readonly", "struct_declaration" | "record_struct_declaration") => {
+                            "readonly-struct"
+                        }
+                        (
+                            "readonly",
+                            "method_declaration"
+                            | "property_declaration"
+                            | "indexer_declaration"
+                            | "accessor_declaration",
+                        ) => "readonly-member",
+                        (key, _) => key,
+                    };
+                    let owner = if key == "readonly-member"
+                        && parent.kind() == "accessor_declaration"
+                        && parent.child_by_field_name("body").is_none()
+                        && !children(parent).iter().any(|child| {
+                            matches!(child.kind(), "block" | "arrow_expression_clause")
+                        }) {
+                        // Auto-accessors have no separate Blueprint symbol.
+                        parent
+                            .parent()
+                            .and_then(|list| list.parent())
+                            .filter(|owner| {
+                                matches!(
+                                    owner.kind(),
+                                    "property_declaration" | "indexer_declaration"
+                                )
+                            })
+                            .unwrap_or(parent)
+                    } else {
+                        parent
+                    };
+                    add(key, n, owner, true, true, None);
+                }
+            }
+            "accessor_declaration" => {
+                if let Some(t) = token("init") {
+                    let owner = n.parent().and_then(|p| p.parent()).unwrap_or(n);
+                    add("init", t, owner, true, true, None);
+                }
+            }
+            "argument" | "parameter" | "ref_type" | "ref_expression" => {
+                let passing = children(n).into_iter().find(|c| {
+                    matches!(text(*c), "ref" | "in" | "out" | "ref readonly")
+                        && (c.kind() == "modifier" || !c.is_named())
+                });
+                if let Some(t) = passing {
+                    let mode = match text(t) {
+                        "in" => "pass-in",
+                        "out" => "pass-out",
+                        "ref readonly" => "pass-readonly",
+                        "ref"
+                            if children(n)
+                                .iter()
+                                .any(|c| !c.is_extra() && text(*c) == "readonly") =>
+                        {
+                            "pass-readonly"
+                        }
+                        _ => "pass-ref",
+                    };
+                    let owner = if kind == "ref_type" {
+                        n.parent().unwrap_or(n)
+                    } else {
+                        n
+                    };
+                    let pin = (kind == "parameter")
+                        .then(|| {
+                            n.child_by_field_name("name")
+                                .map(|name| format!("var:{}", text(name)))
+                        })
+                        .flatten();
+                    add(
+                        mode,
+                        t,
+                        owner,
+                        kind == "ref_type"
+                            && matches!(
+                                owner.kind(),
+                                "method_declaration" | "property_declaration"
+                            ),
+                        kind == "parameter",
+                        pin,
+                    );
+                }
+            }
+            _ => {}
+        },
+        Language::Typescript => match kind {
+            "optional_chain" => {
+                if text(n) == "?." {
+                    add(
+                        "safe-access",
+                        n,
+                        n.parent().unwrap_or(n),
+                        false,
+                        false,
+                        None,
+                    );
+                }
+            }
+            "call_expression" => emit("safe-access", token("?."), false, false),
+            "binary_expression" | "augmented_assignment_expression" => {
+                for (op, key) in [
+                    ("??", "fallback"),
+                    ("??=", "fallback"),
+                    ("||", "falsy-fallback"),
+                    ("||=", "falsy-fallback"),
+                    ("==", "loose-equality"),
+                    ("!=", "loose-equality"),
+                    ("===", "strict-equality"),
+                    ("!==", "strict-equality"),
+                ] {
+                    emit(key, token(op), false, false);
+                }
+            }
+            "for_in_statement" => {
+                emit("keys", token("in"), false, true);
+                emit("iterate-values", token("of"), false, true);
+            }
+            "spread_element" => {
+                let key = match n.parent().map(|p| p.kind()) {
+                    Some("arguments") => "spread-arguments",
+                    Some("object") => "spread-properties",
+                    _ => "spread-items",
+                };
+                emit(key, token("..."), false, false);
+            }
+            "rest_pattern" => {
+                let parent = n.parent().map(|p| p.kind());
+                let key = match parent {
+                    Some("array_pattern") => "rest-items",
+                    Some("object_pattern") => "rest-properties",
+                    _ => "rest-arguments",
+                };
+                let pin = crate::syntax::named_children(n)
+                    .into_iter()
+                    .find(|c| c.kind() == "identifier")
+                    .map(|c| format!("var:{}", text(c)));
+                if let Some(t) = token("...") {
+                    add(key, t, n, false, true, pin);
+                }
+            }
+            "as_expression" if !javascript => {
+                let key = if token("const").is_some() {
+                    "as-const"
+                } else {
+                    "type-assertion"
+                };
+                emit(key, token("as"), false, false);
+            }
+            "type_assertion" if !javascript => emit("type-assertion", token("<"), false, false),
+            "satisfies_expression" if !javascript => {
+                emit("satisfies", token("satisfies"), false, false)
+            }
+            "non_null_expression" if !javascript => emit("non-null", token("!"), false, false),
+            "import_statement" | "import_specifier" if !javascript => {
+                emit("type-import", token("type"), true, true)
+            }
+            "accessibility_modifier" if !javascript && text(n) == "private" => {
+                if let Some(parent) = n.parent() {
+                    add("private", n, parent, true, true, None);
+                }
+            }
+            "public_field_definition"
+            | "property_signature"
+            | "required_parameter"
+            | "optional_parameter"
+                if !javascript =>
+            {
+                emit("readonly", token("readonly"), true, true)
+            }
+            "private_property_identifier" => {
+                if let Some(parent) = n.parent() {
+                    let decl = parent
+                        .child_by_field_name("name")
+                        .is_some_and(|name| name.id() == n.id());
+                    add("runtime-private", n, parent, decl, decl, None);
+                }
+            }
+            _ => {}
+        },
+        Language::Rust => match kind {
+            "reference_expression" | "reference_type" | "self_parameter" => {
+                let key = if token("raw").is_some() {
+                    "raw-borrow"
+                } else if children(n).iter().any(|c| c.kind() == "mutable_specifier") {
+                    "borrow-mut"
+                } else {
+                    "borrow"
+                };
+                let t = if key == "borrow-mut" {
+                    children(n)
+                        .into_iter()
+                        .find(|c| c.kind() == "mutable_specifier")
+                } else {
+                    token("&")
+                };
+                emit(key, t, false, kind != "reference_expression");
+            }
+            "mutable_specifier"
+                if n.parent().is_some_and(|p| {
+                    !matches!(
+                        p.kind(),
+                        "reference_expression" | "reference_type" | "pointer_type"
+                    )
+                }) =>
+            {
+                emit("mut", Some(n), false, true)
+            }
+            "unary_expression" => emit("deref", token("*"), false, false),
+            "try_expression" => emit("try", token("?"), false, false),
+            "let_declaration" => emit("let-else", token("else"), false, true),
+            "match_pattern" => {
+                if let Some(t) = token("if")
+                    && let Some(arm) = n.parent()
+                    && let Some(block) = arm.parent()
+                    && let Some(owner) = block.parent()
+                    && let Some(index) = children(block)
+                        .into_iter()
+                        .filter(|a| a.kind() == "match_arm")
+                        .position(|a| a.id() == arm.id())
+                {
+                    add(
+                        "match-guard",
+                        t,
+                        owner,
+                        false,
+                        true,
+                        Some(format!("case:{index}")),
+                    );
+                }
+            }
+            "range_expression" | "range_pattern" => {
+                emit("range-open", token(".."), false, false);
+                emit("range-inclusive", token("..="), false, false);
+            }
+            "macro_invocation" => emit("macro", token("!"), false, false),
+            "generic_function" => emit("explicit-type-args", token("::"), false, false),
+            "lifetime" => {
+                let mut parent = n.parent();
+                while let Some(p) = parent {
+                    if matches!(
+                        p.kind(),
+                        "function_item"
+                            | "function_signature_item"
+                            | "struct_item"
+                            | "enum_item"
+                            | "trait_item"
+                            | "impl_item"
+                    ) {
+                        add("lifetime", n, p, true, true, None);
+                        break;
+                    }
+                    if p.kind() == "block" {
+                        break;
+                    }
+                    parent = p.parent();
+                }
+            }
+            "closure_expression" => emit("move", token("move"), false, false),
+            _ => {}
+        },
+    }
+}

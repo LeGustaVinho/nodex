@@ -3,12 +3,76 @@
 
 use std::collections::HashMap;
 
-use nodex_ir::{Access, Concept, Expr, SymbolId};
+use nodex_ir::{Access, Concept, Expr, Focus, SymbolId};
 use nodex_lang_api::kit::truncate;
 use nodex_lang_api::ops::{self, Equality};
 use tree_sitter::Node;
 
 use crate::syntax::{Src, children, last_segment, named_children, parameters, unparen};
+
+pub(crate) fn reference_focus(src: Src, node: Node) -> Option<Focus> {
+    let mut node = unparen(node);
+    if node.kind() == "generic_function" {
+        node = node.child_by_field_name("function")?;
+    }
+    let member = match node.kind() {
+        "field_expression" => node.child_by_field_name("field"),
+        "scoped_identifier" | "scoped_type_identifier" => node.child_by_field_name("name"),
+        _ => None,
+    };
+    member.map_or_else(|| src.focus(node), |member| src.member_focus(node, member))
+}
+
+fn type_focus(src: Src, operand: Node) -> Option<Focus> {
+    let mut ty = operand;
+    while matches!(ty.kind(), "generic_type" | "generic_type_with_turbofish" | "struct_pattern" | "tuple_struct_pattern") {
+        let Some(inner) = ty.child_by_field_name("type") else { break };
+        ty = inner;
+    }
+    if matches!(ty.kind(), "scoped_identifier" | "scoped_type_identifier")
+        && let Some(name) = ty.child_by_field_name("name")
+    {
+        return src.split_focus(operand.start_byte(), name.start_byte(), operand.end_byte());
+    }
+    src.focus(operand)
+}
+
+fn expression_focus(src: Src, node: Node, concept: Concept) -> Option<Focus> {
+    let operand = match concept {
+        Concept::Var | Concept::GetMember | Concept::Index => return reference_focus(src, node),
+        Concept::Call if node.kind() == "macro_invocation" => {
+            let mut focus = reference_focus(src, node.child_by_field_name("macro")?)?;
+            focus.primary.push('!');
+            focus.primary_bytes = focus.primary_bytes.and_then(|[start, end]| {
+                (src.text.as_bytes().get(end as usize) == Some(&b'!')).then_some([start, end + 1])
+            });
+            return Some(focus);
+        }
+        Concept::Call => {
+            let callee = unparen(node.child_by_field_name("function")?);
+            if callee.kind() == "closure_expression" {
+                return None;
+            }
+            return reference_focus(src, callee);
+        }
+        Concept::Construct if node.kind() == "call_expression" => {
+            let mut callee = node.child_by_field_name("function")?;
+            if callee.kind() == "generic_function" {
+                callee = callee.child_by_field_name("function")?;
+            }
+            return type_focus(src, callee.child_by_field_name("path")?);
+        }
+        Concept::Construct => return type_focus(src, node.child_by_field_name("name")?),
+        Concept::Assign => return reference_focus(src, node.child_by_field_name("left")?),
+        Concept::Choose => node.child_by_field_name("condition"),
+        Concept::Convert => return type_focus(src, node.child_by_field_name("type")?),
+        Concept::TypeCheck => return type_focus(src, node.child_by_field_name("pattern")?),
+        Concept::Match if node.kind() == "match_expression" => node.child_by_field_name("value"),
+        Concept::Await | Concept::Return | Concept::Yield => named_children(node).into_iter().next(),
+        _ => None,
+    };
+    src.focus(unparen(operand?))
+}
 
 /// Iterator adapters and consumers. A method chain with two or more of these is a `Pipeline`.
 const ITER_OPS: &[&str] = &[
@@ -205,8 +269,12 @@ impl<'a> ExprLowering<'a> {
 
     fn mk(&self, node: Node, concept: Concept, label: String, children: Vec<Expr>) -> Expr {
         Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept,
             label,
+            focus: expression_focus(self.src, node, concept),
             span: self.src.span(node),
             flavors: Vec::new(),
             children,
@@ -215,6 +283,7 @@ impl<'a> ExprLowering<'a> {
             op: None,
             ty: None,
             params: Vec::new(),
+            param_pins: None,
         }
     }
 
@@ -283,9 +352,12 @@ impl<'a> ExprLowering<'a> {
             }
             "reference_expression" => {
                 let inner = node.child_by_field_name("value");
-                let mutable = children(node).iter().any(|c| c.kind() == "mutable_specifier");
+                let tokens = children(node);
+                let flavor = if tokens.iter().any(|c| c.kind() == "raw") { "raw-borrow" }
+                    else if tokens.iter().any(|c| c.kind() == "mutable_specifier") { "borrow-mut" }
+                    else { "borrow" };
                 match inner {
-                    Some(i) => with(self.lower(i), if mutable { "borrow-mut" } else { "borrow" }),
+                    Some(i) => with(self.lower(i), flavor),
                     None => self.mk(node, Concept::Literal, text(), Vec::new()),
                 }
             }
@@ -597,6 +669,7 @@ impl<'a> ExprLowering<'a> {
             for cap in format_captures(&src.text[*s..*e]) {
                 if !kids.iter().any(|k| k.concept == Concept::Var && k.label == cap) {
                     let mut v = self.mk(node, Concept::Var, cap, Vec::new());
+                    v.focus = Src::focus_text(&v.label);
                     v.flavors.push("captured".into());
                     kids.push(v);
                 }
@@ -619,8 +692,12 @@ impl<'a> ExprLowering<'a> {
         let text = &src.text[start..end];
         let mut parser = tree_sitter::Parser::new();
         let leaf = |concept: Concept, ty: Option<&str>| Expr {
+            syntax_sites: None,
+            type_info: None,
+            value_info: None,
             concept,
             label: truncate(&nodex_lang_api::kit::normalize_ws(text), 40),
+            focus: None,
             span: src.index.span(src.file, start, end),
             flavors: Vec::new(),
             children: Vec::new(),
@@ -629,6 +706,7 @@ impl<'a> ExprLowering<'a> {
             op: None,
             ty: ty.map(str::to_owned),
             params: Vec::new(),
+            param_pins: None,
         };
         if text.starts_with('"') || text.starts_with("r#") || text.starts_with("r\"") {
             return leaf(Concept::Literal, Some("text"));
@@ -697,7 +775,7 @@ pub fn reads(src: Src, node: Node) -> Vec<Read> {
 fn push(out: &mut Vec<Read>, name: String, access: Option<Access>) {
     let rank = |a: Option<Access>| match a {
         Some(Access::BorrowMut) => 4,
-        Some(Access::Move) => 3,
+        Some(Access::Move | Access::ByValue) => 3,
         Some(Access::Borrow) => 2,
         Some(Access::Copy) => 1,
         None => 0,
@@ -715,7 +793,9 @@ fn access_of(src: Src, id: Node) -> Option<Access> {
     let is_field = |f: &str| parent.child_by_field_name(f).is_some_and(|c| c.id() == id.id());
     match parent.kind() {
         "reference_expression" => {
-            Some(if children(parent).iter().any(|c| c.kind() == "mutable_specifier") { Access::BorrowMut } else { Access::Borrow })
+            let tokens = children(parent);
+            if tokens.iter().any(|c| c.kind() == "raw") { return None; }
+            Some(if tokens.iter().any(|c| c.kind() == "mutable_specifier") { Access::BorrowMut } else { Access::Borrow })
         }
         // `x.len()`, `x.field`, `x[i]`, `*x`, operators: the language borrows or copies on its own.
         "field_expression" | "index_expression" | "unary_expression" | "binary_expression" | "compound_assignment_expr"
