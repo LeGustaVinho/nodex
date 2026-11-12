@@ -610,6 +610,47 @@ fn closure_reading_explains_the_borrow_in_the_result_expression() {
 
 #[test]
 #[ignore = "needs rust-analyzer"]
+fn rust_matches_macro_uses_resolved_identity() {
+    fn invocation<'a>(graph: &'a FlowGraph, spelling: &str) -> &'a ReadingSite {
+        sites(graph).iter().find(|site| {
+            matches!(&site.content, ReadingContent::Detail { .. })
+                && &FIXTURE_SOURCE[site.span.start_byte as usize..site.span.end_byte as usize] == spelling
+        }).unwrap_or_else(|| panic!("missing {spelling} in {:?}", sites(graph)))
+    }
+
+    let mut project = project();
+    let before = [flow(&mut project, "reading_matches_status"), flow(&mut project, "reading_matches_shadowed")];
+    for (graph, spelling) in [(&before[0], "matches"), (&before[1], "std::matches"), (&before[1], "matches")] {
+        let site = invocation(graph, spelling);
+        assert_eq!(site.basis, ValueBasis::Syntax);
+        assert!(matches!(&site.content, ReadingContent::Detail { label, .. } if label == "Macro invocation"));
+    }
+    let mut provider = RustFrontend.semantic(project.root()).unwrap().unwrap();
+    project.apply_semantic(Language::Rust, provider.analyze().unwrap());
+
+    let after = [flow(&mut project, "reading_matches_status"), flow(&mut project, "reading_matches_shadowed")];
+    for ((previous, graph), spelling) in before.iter().zip(&after).zip(["matches", "std::matches"]) {
+        let site = invocation(graph, spelling);
+        assert_eq!(site.basis, ValueBasis::TypeAnalysis);
+        let ReadingContent::Detail { label, text, borrow, .. } = &site.content else { panic!("{site:?}") };
+        assert_eq!(label, "Test a pattern");
+        assert!(!borrow);
+        for term in ["true", "false", "guard", "| between patterns"] {
+            assert!(text.contains(term), "{text}");
+        }
+        let execution = |flow: &FlowGraph| {
+            flow.edges.iter().filter(|edge| edge.kind == FlowEdgeKind::Exec).cloned().collect::<Vec<_>>()
+        };
+        assert_eq!(execution(graph), execution(previous));
+        assert!(!sites(graph).iter().any(|entry| entry.node == site.node
+            && matches!(entry.content, ReadingContent::Paths { .. })));
+    }
+    let shadow = invocation(&after[1], "matches");
+    assert!(matches!(&shadow.content, ReadingContent::Detail { label, definition: Some(_), .. } if label == "Macro invocation"), "{shadow:?}");
+}
+
+#[test]
+#[ignore = "needs rust-analyzer"]
 fn scip_reading_connects_lookup_paths_patterns_and_origins() {
     let mut project = project();
     let before = flow(&mut project, "protected");

@@ -22,6 +22,7 @@ The release workflow publishes the section of the version it builds as the relea
 - Rust expression nodes label the values chosen by `if` and `match`. The Guide can show a `match` guard in the source before you follow its arm.
 - Rust pattern cards show what `name @ pattern` tests and binds, which alternative supplies each name, and where a slice pattern takes its remaining items.
 - The Rust Guide previews the value produced by each branch of an embedded `if` or `match`, including branches that transfer control before supplying a value.
+- When rust-analyzer identifies the standard `matches!` macro, Rust Blueprints explain its boolean result and optional guard and offer to show the generated Rust.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

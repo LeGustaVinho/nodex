@@ -256,6 +256,36 @@ it("keeps the labeled arm and constant comparison on an embedded match", () => {
   expect((opened.nodes.find((entry) => entry.id === `${node}/e/0`)!.data as ExprData).reading).toEqual(graph.reading);
 });
 
+it("keeps the generated Rust available for a resolved pattern test", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const macro = span(0, 12);
+  const revision = flow.source_revision!;
+  const invocation = "std::matches!(value, Some(n) if n > 0)";
+  const expansion = "match value { Some(n) if n > 0 => true, _ => false }";
+  const site: ReadingSite = { node, span: macro, basis: "TypeAnalysis", content: {
+    kind: "Detail", label: "Test a pattern", text: "The macro produces true or false.", borrow: false,
+  } };
+  client.setQueryData(["source", macro.file], { bytes: new TextEncoder().encode(invocation), revision });
+  client.setQueryData(["rust-macro-expansion", useUi.getState().projectSession, macro.file, macro.start_byte, revision], {
+    name: "matches!", expansion,
+  });
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <ReadingInspector flow={flow} node={flow.nodes[0]} sites={[site]} />
+    </QueryClientProvider>));
+    expect(host.textContent).toContain("Test a pattern");
+    const generated = [...host.querySelectorAll("button")].find((button) => button.textContent === "Show generated Rust")!;
+    await act(async () => generated.click());
+    expect(host.textContent).toContain("Generated Rust · matches!");
+    expect(host.textContent).toContain(expansion);
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+  }
+});
+
 it("shows both the condition and the name in an @ pattern", async () => {
   const host = document.createElement("div");
   const root = createRoot(host);

@@ -12,7 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import type { Span } from "../gen/Span";
 
-const MACRO_LABELS = new Set(["Macro invocation", "Build a list", "Format text", "Check a condition", "Wait for one eligible branch"]);
+const MACRO_LABELS = new Set(["Macro invocation", "Build a list", "Format text", "Check a condition", "Test a pattern", "Wait for one eligible branch"]);
 
 export function RustMacroExpansion({ span, revision }: { span: Span; revision: string }) {
   const [open, setOpen] = useState(false);

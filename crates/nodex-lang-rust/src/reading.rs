@@ -1477,6 +1477,10 @@ impl Reader<'_, '_> {
                 "Check a condition",
                 "If the condition is false, the generated check panics.",
             ),
+            Some("matches") => (
+                "Test a pattern",
+                "Try the written pattern. A | between patterns offers alternatives. The result is true if a pattern matches and any if guard passes. Otherwise the result is false.",
+            ),
             Some("select") => (
                 "Wait for one eligible branch",
                 "Poll the eligible futures in the current task. Run the first completed branch whose pattern matches, and stop polling the other futures in this selection.",

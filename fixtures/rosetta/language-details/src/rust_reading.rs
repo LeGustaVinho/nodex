@@ -503,6 +503,19 @@ pub fn reading_closure_mutable_result(values: &mut [i32]) -> &mut i32 {
     Some(values).map(|values| &mut values[0]).unwrap()
 }
 
+pub fn reading_matches_status(status: Option<&str>) -> bool {
+    matches!(status, Some("space" | "returning"))
+}
+
+pub fn reading_matches_shadowed(value: Option<i32>) -> bool {
+    macro_rules! matches {
+        ($ignored:expr, $pattern:pat) => { false };
+    }
+    let local = matches!(value, Some(_));
+    let standard = std::matches!(value, Some(count) if count > 0);
+    standard || local
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

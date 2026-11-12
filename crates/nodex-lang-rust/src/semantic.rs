@@ -264,6 +264,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             "alloc::macros::vec!" | "alloc::vec!" | "std::vec!" => return Some((Family::Macro, "vec".into())),
             "alloc::macros::format!" | "alloc::format!" | "std::format!" => return Some((Family::Macro, "format".into())),
             "core::macros::builtin::assert!" | "core::assert!" => return Some((Family::Macro, "assert".into())),
+            "core::macros::matches!" => return Some((Family::Macro, "matches".into())),
             "core::option::Option::Some" => return Some((Family::Option, "Some".into())),
             "core::result::Result::Ok" => return Some((Family::Result, "Ok".into())),
             _ => {}
