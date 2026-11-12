@@ -648,13 +648,16 @@ impl IteratorCallback {
         }
     }
 
-    fn propagation(self, operand: Option<Family>) -> Option<(&'static str, &'static str)> {
+    fn propagation(self, operand: Option<Family>, option_output: bool) -> Option<(&'static str, &'static str)> {
         match (self, operand) {
             (Self::FindMap, Some(Family::Option)) => Some((
                 "Return None from this callback. find_map tries the next item.", "None",
             )),
             (Self::FilterMap, Some(Family::Option)) => Some((
                 "Return None from this callback. filter_map skips this item and looks for another value.", "None",
+            )),
+            (Self::TryFold, Some(Family::Option)) if option_output => Some((
+                "Return None from this callback. try_fold stops and returns None.", "None",
             )),
             (Self::TryFold, Some(Family::Option | Family::Result)) => Some((
                 "Finish this callback early. try_fold stops and returns the callback's early result.", "Early callback result",
@@ -1353,7 +1356,10 @@ impl Reader<'_, '_> {
                 if !callback.is_callback(call, closure) || children(closure).iter().any(|token| token.kind() == "async") {
                     return None;
                 }
-                callback.propagation(kind)
+                let option_output = matches!(callback, IteratorCallback::TryFold)
+                    && kind == Some(Family::Option)
+                    && self.closure_returns_option(closure);
+                callback.propagation(kind, option_output)
             });
         let exit = iterator_exit.map_or_else(
             || match scope {
@@ -1406,6 +1412,20 @@ impl Reader<'_, '_> {
             branches,
             None,
         );
+    }
+
+    fn closure_returns_option(&self, closure: Node<'_>) -> bool {
+        if let Some(ty) = closure.child_by_field_name("return_type") {
+            let ty = crate::syntax::unparen_type(ty);
+            return ty.kind() == "generic_type"
+                && ty.child_by_field_name("type").is_some_and(|name| {
+                    self.evidence.type_identities
+                        .and_then(|types| types.get(&name.start_byte()))
+                        .is_some_and(|(end, path)| *end == name.end_byte() && path == "core::option::Option")
+                });
+        }
+        closure_result(closure).and_then(|result| self.op(unparen(result)))
+            .is_some_and(|op| op.family == Family::Option && op.name == "Some")
     }
 
     fn error_output(&self, node: Node, operand: Node) -> String {

@@ -79,7 +79,7 @@ fn scip_explains_which_iterator_operation_receives_the_early_callback_result() {
         ("search", "find_map tries the next item", "None", "While find_map searches", "Find the first value produced by the callback"),
         ("search_ufcs", "find_map tries the next item", "None", "While find_map searches", "Find the first value produced by the callback"),
         ("keep_values", "filter_map skips this item", "None", "When the iterator requests an item", "Yield values produced by the callback"),
-        ("fold_option_ufcs", "try_fold stops and returns the callback's early result", "Early callback result", "While try_fold processes items", "Accumulate until the callback stops"),
+        ("fold_option_ufcs", "try_fold stops and returns None", "None", "While try_fold processes items", "Accumulate until the callback stops"),
         ("fold_result", "try_fold stops and returns the callback's early result", "Early callback result", "While try_fold processes items", "Accumulate until the callback stops"),
     ] {
         let flow = flow(&mut project, function);
@@ -90,6 +90,12 @@ fn scip_explains_which_iterator_operation_receives_the_early_callback_result() {
     }
     let poll = callback_flow(&mut project, "fold_poll");
     assert_context(&poll, "try_fold stops and returns the callback's early result", "Early callback result", "While try_fold processes items");
+    let remember = flow(&mut project, "remember");
+    assert_context(&remember, "try_fold stops and returns None", "None", "While try_fold processes items");
+    let shadowed = flow(&mut project, "fold_shadowed_some");
+    assert_context(&shadowed, "try_fold stops and returns the callback's early result", "Early callback result", "While try_fold processes items");
+    let annotated = callback_flow(&mut project, "fold_annotated_option");
+    assert_context(&annotated, "try_fold stops and returns None", "None", "While try_fold processes items");
 
     for (function, action, timing) in [
         ("local_method", "Return from this callback", None),

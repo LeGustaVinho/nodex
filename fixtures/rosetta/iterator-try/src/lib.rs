@@ -1,4 +1,4 @@
-use std::task::Poll;
+use std::{collections::HashMap, task::Poll};
 
 pub fn search(values: &[Option<i32>]) -> Option<i32> {
     values.iter().find_map(|value| Some((*value)? + 1))
@@ -27,6 +27,26 @@ pub fn fold_poll(values: &[Result<i32, &'static str>]) -> Poll<Result<i32, Strin
         let value = (*value)?;
         Poll::Ready(Ok(sum + value))
     })
+}
+
+pub fn remember<'a>(nodes: &[Option<&'a HashMap<i32, i32>>], key: i32) -> Option<Option<&'a i32>> {
+    nodes.iter().copied().try_fold(None, |_last, node| Some(node?.get(&key)))
+}
+
+pub mod shadowed {
+    fn wrap(value: i32) -> Option<i32> {
+        std::option::Option::Some(value)
+    }
+
+    use wrap as Some;
+
+    pub fn fold_shadowed_some(values: &[Option<i32>]) -> Option<i32> {
+        values.iter().try_fold(0, |sum, value| Some(sum + (*value)?))
+    }
+
+    pub fn fold_annotated_option(values: &[Option<i32>]) -> Option<i32> {
+        values.iter().try_fold(0, |sum, value| -> Option<i32> { Some(sum + (*value)?) })
+    }
 }
 
 struct Local;
