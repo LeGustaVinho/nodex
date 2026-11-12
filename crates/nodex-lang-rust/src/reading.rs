@@ -240,6 +240,7 @@ fn range(node: Node) -> Range {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Family {
+    Bool,
     Option,
     Result,
     Map,
@@ -703,6 +704,10 @@ impl Reader<'_, '_> {
                     let operation = self.op(call)?;
                     if let Some(callback) = IteratorCallback::operation(operation) {
                         callback.is_callback(call, scope).then(|| callback.timing().into())
+                    } else if operation.family == Family::Bool && operation.name == "then" {
+                        let (_, receiver_argument) = receiver(call)?;
+                        (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
+                            .then(|| "When the bool is true".into())
                     } else {
                         matches!(operation.family, Family::Iter | Family::ParIter)
                             .then(|| "When the iterator requests an item".into())
@@ -1132,6 +1137,7 @@ impl Reader<'_, '_> {
         let family = op.family;
         let name = op.name.clone();
         match family {
+            Family::Bool => self.bool_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::Map | Family::Slice if matches!(name.as_str(), "get" | "get_mut") => {
                 self.get(node)
@@ -1173,6 +1179,31 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn bool_call(&mut self, node: Node<'_>, name: &str) {
+        let Some((condition, receiver_argument)) = receiver(node) else { return };
+        let Some(value) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let condition = self.written(condition, 80);
+        let value = self.written(value, 120);
+        let (input, branches) = match name {
+            "then" => (
+                format!("Evaluate {condition} first, then evaluate the callback argument {value}. The bool controls whether the callback runs."),
+                vec![
+                    branch("True", "Call the callback. If it completes, wrap its result in Some.", "Some(callback result)"),
+                    branch("False", "Skip calling the callback", "None"),
+                ],
+            ),
+            "then_some" => (
+                format!("Evaluate {condition} first, then evaluate {value} even when the bool is false. If both evaluations complete, choose the result."),
+                vec![
+                    branch("True", "Wrap the evaluated argument in Some", "Some(value)"),
+                    branch("False", "Discard the evaluated argument", "None"),
+                ],
+            ),
+            _ => return,
+        };
+        self.paths(node, self.src.span(node), true, input, branches, None);
     }
 
     fn collect_type_arguments(&mut self, node: Node<'_>) {

@@ -278,7 +278,9 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             let family = if matches!(method, "iter" | "iter_mut") { Family::Iter } else { Family::Slice };
             return Some((family, method.into()));
         }
-        if descriptor.starts_with("sync/impl#[`Arc<") && name == "clone" && sym.package == "alloc" {
+        if sym.package == "core" && matches!(descriptor, "bool/impl#[bool]then()." | "bool/impl#[bool]then_some().") {
+            Family::Bool
+        } else if descriptor.starts_with("sync/impl#[`Arc<") && name == "clone" && sym.package == "alloc" {
             Family::Arc
         } else if name == "clone" && (descriptor == "clone/Clone#clone()." || descriptor.contains("][Clone]clone().")) {
             Family::Clone
