@@ -13,9 +13,9 @@ use nodex_ir::{Access, BindingForm, CallTarget, Concept, FlowEdgeKind, FlowGraph
 use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, callback_entry_label, truncate};
 use tree_sitter::Node;
 
-use crate::expr::{ExprLowering, callee_path, is_expression, macro_args, macro_name, reads};
+use crate::expr::{ExprLowering, callee_path, macro_args, macro_name, reads};
 use crate::structure::{BodyJob, BodyKind};
-use crate::syntax::{Src, children, first_child_of_kind, has_semicolon, inclusive_range_to, is_comment, is_item, named_children, parameters, pattern_bindings, unparen};
+use crate::syntax::{Src, block_statements, children, first_child_of_kind, inclusive_range_to, is_comment, is_expression, is_item, named_children, parameters, pattern_bindings, statement_tail, unparen};
 
 pub struct Lowered {
     pub graph: FlowGraph,
@@ -415,19 +415,12 @@ impl Lowering<'_, '_> {
 
     /// A block's statements; `tail` says what its final expression (without `;`) does.
     fn block(&mut self, block: Node, cur: Flow, tail: &Tail) -> Flow {
-        let items: Vec<Node> = named_children(block).into_iter().filter(|c| !is_comment(c.kind()) && c.kind() != "label").collect();
+        let mut items = block_statements(block).peekable();
         self.b.push_scope();
         self.drops.push(Vec::new());
         let mut cur = cur;
-        let count = items.len();
-        for (i, s) in items.into_iter().enumerate() {
-            let last = i + 1 == count;
-            let tail_expr = match s.kind() {
-                "expression_statement" if !has_semicolon(self.src, s) => named_children(s).into_iter().next(),
-                k if is_expression(k) => Some(s),
-                _ => None,
-            };
-            if last && tail.on() && let Some(e) = tail_expr {
+        while let Some(s) = items.next() {
+            if items.peek().is_none() && tail.on() && let Some(e) = statement_tail(s) {
                 cur = self.tail(s, e, cur, tail);
             } else {
                 cur = self.stmt(s, cur);

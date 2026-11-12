@@ -8,7 +8,7 @@ use nodex_lang_api::kit::truncate;
 use nodex_lang_api::ops::{self, Equality};
 use tree_sitter::Node;
 
-use crate::syntax::{Src, children, first_child_of_kind, inclusive_range_to, last_segment, named_children, parameters, pattern_bindings, unparen};
+use crate::syntax::{Src, block_statements, children, first_child_of_kind, inclusive_range_to, is_expression, last_segment, named_children, parameters, pattern_bindings, statement_tail, unparen};
 
 pub(crate) fn reference_focus(src: Src, node: Node) -> Option<Focus> {
     let mut node = unparen(node);
@@ -435,7 +435,7 @@ impl<'a> ExprLowering<'a> {
             }
             "block" | "unsafe_block" | "async_block" | "const_block" | "gen_block" | "try_block" => {
                 let block = if node.kind() == "block" { node } else { named_children(node).into_iter().find(|c| c.kind() == "block").unwrap_or(node) };
-                let tail = named_children(block).into_iter().last().filter(|t| is_expression(t.kind()));
+                let tail = block_statements(block).next_back().and_then(statement_tail);
                 let kids = tail.map(|t| vec![self.lower(t)]).unwrap_or_default();
                 let label = match node.kind() {
                     "unsafe_block" => "unsafe block",
@@ -446,12 +446,9 @@ impl<'a> ExprLowering<'a> {
                     _ => "block value",
                 };
                 let mut e = self.mk(node, Concept::Compose, label.into(), kids);
-                e.flavors.push("block".into());
+                e.flavors.push(if node.kind() == "async_block" { "async" } else { "block" }.into());
                 if node.kind() == "unsafe_block" {
                     e.flavors.push("unsafe".into());
-                }
-                if node.kind() == "async_block" {
-                    e.flavors.push("async".into());
                 }
                 e
             }
@@ -548,9 +545,9 @@ impl<'a> ExprLowering<'a> {
             Some(b) if b.kind() != "block" => vec![self.lower(b)],
             Some(b) => {
                 // `|x| { x + 1 }`: a one-expression block reads like an expression body.
-                let inner = named_children(b);
-                match inner.as_slice() {
-                    [only] if is_expression(only.kind()) => vec![self.lower(*only)],
+                let mut inner = block_statements(b);
+                match (inner.next(), inner.next()) {
+                    (Some(only), None) => statement_tail(only).map(|tail| self.lower(tail)).into_iter().collect(),
                     _ => Vec::new(),
                 }
             }
@@ -743,15 +740,6 @@ fn number_type(ty: &str) -> bool {
 
 fn is_integer_type(ty: &str) -> bool {
     number_type(ty) && !ty.starts_with('f')
-}
-
-/// Expression node kinds (what can stand where a value is expected).
-pub fn is_expression(kind: &str) -> bool {
-    !matches!(
-        kind,
-        "expression_statement" | "let_declaration" | "empty_statement" | "attribute_item" | "inner_attribute_item" | "label"
-    ) && !crate::syntax::is_item(kind)
-        && !crate::syntax::is_comment(kind)
 }
 
 /// A read of a local variable and how its value is handed over.

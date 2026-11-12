@@ -49,6 +49,29 @@ pub fn is_item(kind: &str) -> bool {
     )
 }
 
+/// Expression node kinds that can stand where a value is expected.
+pub(crate) fn is_expression(kind: &str) -> bool {
+    !matches!(kind, "expression_statement" | "let_declaration" | "label")
+        && !is_item(kind)
+        && !is_comment(kind)
+}
+
+pub(crate) fn block_statements<'tree>(block: Node<'tree>) -> impl DoubleEndedIterator<Item = Node<'tree>> {
+    named_children(block).into_iter().filter(|node| !node.is_extra() && node.kind() != "label")
+}
+
+/// A final expression may be wrapped as a statement when it ends with a block.
+pub(crate) fn statement_tail(statement: Node<'_>) -> Option<Node<'_>> {
+    if statement.kind() == "expression_statement" {
+        let mut cursor = statement.walk();
+        if statement.children(&mut cursor).any(|token| token.kind() == ";") {
+            return None;
+        }
+        return named_children(statement).into_iter().find(|node| !node.is_extra());
+    }
+    is_expression(statement.kind()).then_some(statement)
+}
+
 /// Removes redundant parentheses.
 pub fn unparen(mut node: Node) -> Node {
     while node.kind() == "parenthesized_expression" {

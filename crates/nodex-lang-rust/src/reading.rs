@@ -14,7 +14,7 @@ use nodex_lang_api::{
 };
 use tree_sitter::Node;
 
-use crate::{expr::method_call, syntax::{inclusive_range_to, unparen}};
+use crate::{expr::method_call, syntax::{block_statements, inclusive_range_to, statement_tail, unparen}};
 
 type Range = (usize, usize);
 
@@ -662,6 +662,7 @@ impl Reader<'_, '_> {
             "binary_expression" => self.short_circuit(node),
             "let_chain" => self.let_chain(node),
             "closure_expression" => self.closure(node),
+            "block" => self.block_result(node),
             "macro_invocation" => self.macro_call(node),
             "await_expression" => self.at(node, false, detail("Await a result", "Continue here when the future is ready. If it is pending, this task can suspend.")),
             "unsafe_block" => self.at(node, false, detail("Operations with extra safety conditions", "Check the contract of each unsafe operation used here. Rust still checks the types.")),
@@ -699,6 +700,50 @@ impl Reader<'_, '_> {
             }
             _ => {}
         }
+    }
+
+    fn block_result(&mut self, block: Node<'_>) {
+        let Some(owner) = block.parent() else { return };
+        let (label, explanation) = match owner.kind() {
+            "function_item" | "for_expression" | "while_expression" | "loop_expression"
+            | "if_expression" | "else_clause" | "gen_block" | "try_block" => return,
+            "let_declaration" if owner.child_by_field_name("alternative") == Some(block) => return,
+            kind @ ("async_block" | "closure_expression")
+                if kind == "async_block" || children(owner).iter().any(|token| token.kind() == "async") => (
+                "Future result",
+                "If this final expression completes, its value becomes the result of the future.",
+            ),
+            "closure_expression" => (
+                "Closure result",
+                "If this final expression completes, its value becomes the result of calling the closure.",
+            ),
+            "match_arm" => (
+                "Value of this match arm",
+                "If this final expression completes, its value becomes the value of the selected match arm.",
+            ),
+            "const_block" => (
+                "Compile-time block value",
+                "If this block is evaluated, Rust computes its value from the final expression during compilation.",
+            ),
+            _ => (
+                "Value from the final expression",
+                "If this final expression completes, its value becomes the block's value.",
+            ),
+        };
+        let Some(expression) = block_statements(block).next_back().and_then(statement_tail) else { return };
+        let operand = unparen(expression);
+        if expression.has_error() || matches!(operand.kind(), "return_expression" | "break_expression" | "continue_expression"
+            | "yield_expression" | "loop_expression" | "while_expression" | "for_expression" | "macro_invocation")
+        {
+            return;
+        }
+        let mut text = explanation.to_owned();
+        if operand.kind() == "compound_assignment_expr"
+            || operand.kind() == "assignment_expression" && inclusive_range_to(operand).is_none()
+        {
+            text.push_str(" This assignment produces () (unit).");
+        }
+        self.at(expression, false, detail(label, text));
     }
 
     fn range_expression(&mut self, node: Node<'_>) {
@@ -2044,20 +2089,16 @@ fn closure_result(closure: Node<'_>) -> Option<Node<'_>> {
     if body.kind() != "block" {
         return Some(body);
     }
-    let statements: Vec<_> = named_children(body)
-        .into_iter()
-        .filter(|node| !node.is_extra())
-        .collect();
-    let last = *statements.last()?;
+    let last = block_statements(body).next_back()?;
     let expr = if last.kind() == "expression_statement" {
-        last.named_child(0)?
+        named_children(last).into_iter().find(|node| !node.is_extra())?
     } else {
         last
     };
     if expr.kind() == "return_expression" {
         return expr.named_child(0);
     }
-    (!matches!(last.kind(), "expression_statement" | "let_declaration")).then_some(last)
+    statement_tail(last)
 }
 
 fn patterns(node: Node<'_>) -> Vec<Node<'_>> {
