@@ -122,6 +122,8 @@ pub struct ReadingFact {
     pub span: Span,
     pub basis: ValueBasis,
     pub content: ReadingContent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression_target: Option<Concept>,
 }
 
 fn contains(outer: &Span, inner: &Span) -> bool {
@@ -139,16 +141,21 @@ fn in_separate_body(expr: &Expr, anchor: &Span) -> bool {
             || expr.children.iter().any(|child| in_separate_body(child, anchor)))
 }
 
-fn expression_anchor(expr: &Expr, anchor: &Span, path: String) -> Option<(u32, String)> {
+fn expression_anchor(expr: &Expr, anchor: &Span, target: Option<Concept>, path: String) -> Option<(u32, String)> {
     if !contains(&expr.span, anchor) {
         return None;
     }
     expr.children
         .iter()
         .enumerate()
-        .filter_map(|(i, child)| expression_anchor(child, anchor, format!("{path}.{i}")))
+        .filter_map(|(i, child)| expression_anchor(child, anchor, target, format!("{path}.{i}")))
         .min_by_key(|(size, _)| *size)
-        .or_else(|| Some((expr.span.end_byte - expr.span.start_byte, path)))
+        .or_else(|| {
+            if target.is_some_and(|concept| expr.concept != concept || expr.span != *anchor) {
+                return None;
+            }
+            Some((expr.span.end_byte - expr.span.start_byte, path))
+        })
 }
 
 impl FlowGraph {
@@ -167,11 +174,14 @@ impl FlowGraph {
                     if let Some((size, path)) = node
                         .expr
                         .as_ref()
-                        .and_then(|expr| expression_anchor(expr, &fact.anchor, "0".into()))
+                        .and_then(|expr| expression_anchor(expr, &fact.anchor, fact.expression_target, "0".into()))
                     {
                         // Prefer the expression to its enclosing statement on an equal span.
                         let exact = size == fact.anchor.end_byte - fact.anchor.start_byte;
                         return Some((if exact { 0 } else { size + 2 }, node, Some(path)));
+                    }
+                    if fact.expression_target.is_some() {
+                        return None;
                     }
                     if node.span == fact.anchor {
                         return Some((1, node, None));

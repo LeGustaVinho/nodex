@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use nodex_ir::{
-    Access, Language, Span, ValueBasis,
+    Access, Concept, Language, Span, ValueBasis,
     borrow::{BorrowFact, BorrowInput, BorrowRule},
     reading::{ContractItem, ReadingBranch, ReadingContent, ReadingFact, ReadingPart, ReadingStep},
     semantic::{ByteRange, TypeFact, ValueFactTarget},
@@ -442,6 +442,7 @@ impl Reader<'_, '_> {
             span,
             basis,
             content,
+            expression_target: None,
         });
     }
 
@@ -609,6 +610,10 @@ impl Reader<'_, '_> {
         truncate(&self.src.norm(node), 80)
     }
 
+    fn written(&self, node: Node, limit: usize) -> String {
+        truncate(self.src.text(node).trim(), limit)
+    }
+
     fn paths(
         &mut self,
         node: Node,
@@ -618,6 +623,17 @@ impl Reader<'_, '_> {
         branches: Vec<ReadingBranch>,
         result: Option<TypeInfo>,
     ) {
+        let content = self.path_content(node, input, branches, result);
+        self.push(self.src.span(node), span, resolved, content);
+    }
+
+    fn path_content(
+        &self,
+        node: Node,
+        input: String,
+        branches: Vec<ReadingBranch>,
+        result: Option<TypeInfo>,
+    ) -> ReadingContent {
         let timing = boundary(node).and_then(|scope| match scope.kind() {
             "async_block" => Some("When the future runs".into()),
             "closure_expression" => {
@@ -634,18 +650,13 @@ impl Reader<'_, '_> {
             }
             _ => None,
         });
-        self.push(
-            self.src.span(node),
-            span,
-            resolved,
-            ReadingContent::Paths {
-                input,
-                deferred: callback_scope(node) || timing.is_some(),
-                branches,
-                result,
-                timing,
-            },
-        );
+        ReadingContent::Paths {
+            input,
+            deferred: callback_scope(node) || timing.is_some(),
+            branches,
+            result,
+            timing,
+        }
     }
 
     fn visit(&mut self, node: Node<'_>) {
@@ -690,7 +701,11 @@ impl Reader<'_, '_> {
             "let_declaration" | "let_condition" | "for_expression" => self.binding(node),
             "parameter" if node.parent().is_some_and(|parent| parent.kind() == "parameters") =>
                 self.binding(node),
-            "match_expression" => self.match_patterns(node),
+            "match_expression" => {
+                self.match_value(node);
+                self.match_patterns(node);
+            }
+            "if_expression" => self.if_value(node),
             "field_expression" => {
                 if let Some(by_reference) = self.evidence.direct_fields.get(&range(node)).copied()
                     .or_else(|| self.tuple_member(node).map(|(_, by_reference)| by_reference))
@@ -744,6 +759,87 @@ impl Reader<'_, '_> {
             text.push_str(" This assignment produces () (unit).");
         }
         self.at(expression, false, detail(label, text));
+    }
+
+    fn match_value(&mut self, node: Node<'_>) {
+        if node.has_error() {
+            return;
+        }
+        let (Some(value), Some(body)) = (node.child_by_field_name("value"), node.child_by_field_name("body")) else {
+            return;
+        };
+        let Some(keyword) = children(node).into_iter().find(|token| token.kind() == "match") else { return };
+        let branches = named_children(body).into_iter().filter(|arm| arm.kind() == "match_arm")
+            .enumerate().filter_map(|(i, arm)| {
+                let pattern = arm.child_by_field_name("pattern")?;
+                let expression = arm.child_by_field_name("value")?;
+                let label = format!("Arm {} · {}", i + 1, self.written(pattern, 80));
+                Some(self.value_branch(&label, expression, "match"))
+            }).collect::<Vec<_>>();
+        if !branches.is_empty() {
+            self.expression_paths(node, keyword, Concept::Match,
+                format!("Compare {} with the arm patterns in order", self.written(value, 80)), branches);
+        }
+    }
+
+    fn if_value(&mut self, node: Node<'_>) {
+        if node.has_error() {
+            return;
+        }
+        let (Some(condition), Some(consequence)) = (node.child_by_field_name("condition"), node.child_by_field_name("consequence")) else {
+            return;
+        };
+        let Some(keyword) = children(node).into_iter().find(|token| token.kind() == "if") else { return };
+        let when_true = self.value_branch("If the condition passes", consequence, "if expression");
+        let when_false = node.child_by_field_name("alternative")
+            .and_then(|clause| named_children(clause).into_iter().find(|child| !child.is_extra()))
+            .map_or_else(
+                || branch("If the condition fails", "With no else branch, this route produces () (unit) if it completes.", "()"),
+                |alternative| self.value_branch("If the condition fails", alternative, "if expression"),
+            );
+        self.expression_paths(node, keyword, Concept::Choose,
+            format!("Evaluate the condition {} to choose a result", self.written(condition, 80)), vec![when_true, when_false]);
+    }
+
+    fn value_branch(&self, label: &str, expression: Node, choice: &str) -> ReadingBranch {
+        let block = unparen(expression);
+        if block.kind() == "block" && named_children(block).iter().any(|child| child.kind() == "label") {
+            return branch(label, format!("If this labeled block completes, its value becomes the {choice} result."), self.written(expression, 240));
+        }
+        let (last, tail) = if block.kind() == "block" {
+            let last = block_statements(block).next_back();
+            (last, last.and_then(statement_tail))
+        } else {
+            (Some(expression), Some(expression))
+        };
+        let last_expression = last.and_then(|last| {
+            if last.kind() == "expression_statement" {
+                named_children(last).into_iter().find(|child| !child.is_extra())
+            } else {
+                Some(last)
+            }
+        });
+        match (last_expression, tail) {
+            (Some(exit), _) if matches!(unparen(exit).kind(), "return_expression" | "break_expression" | "continue_expression") => {
+                branch(label, format!("If execution reaches this expression, it leaves the path before the {choice} produces a value."), self.written(exit, 240))
+            }
+            (_, Some(value)) => branch(label,
+                format!("If this expression completes normally, its value becomes the {choice} result."),
+                self.written(value, 240)),
+            (_, None) => branch(label,
+                "If this branch is selected and its block reaches the end, it supplies () (unit).", "()"),
+        }
+    }
+
+    fn expression_paths(&mut self, node: Node, keyword: Node, target: Concept, input: String, branches: Vec<ReadingBranch>) {
+        let content = self.path_content(node, input, branches, None);
+        self.readings.push(ReadingFact {
+            anchor: self.src.span(node),
+            span: self.src.span(keyword),
+            basis: ValueBasis::Syntax,
+            content,
+            expression_target: Some(target),
+        });
     }
 
     fn range_expression(&mut self, node: Node<'_>) {

@@ -997,6 +997,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                     anchor: line_index.span(&rel, expression.start_byte(), expression.end_byte()),
                     span: line_index.span(&rel, name.start_byte(), name.end_byte()),
                     basis: ValueBasis::TypeAnalysis,
+                    expression_target: None,
                     content: ReadingContent::Detail {
                         label: "Resolve the operator".into(),
                         text: format!("This operator calls {}.", target.display),

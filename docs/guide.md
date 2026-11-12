@@ -55,6 +55,8 @@ Open a Blueprint by double-clicking a member, from the Inspector, or from the se
 
 For Rust, leave **explanations** checked and select a statement. The Inspector's **Read this Rust** section explains the selected code, including when a pattern binds a variable and what happens when `?` returns early. Open **Guide** in the Blueprint toolbar to read the explanation while following the function one step at a time. Select a heading in the guide to find the corresponding expression in the source.
 
+When `if` or `match` computes a value, choose a branch in the Guide to preview its result. Use **Next** to advance to the next statement. In a `match` that branches into statements, **Show guard** opens the selected arm's `if` condition in the source.
+
 ## UML diagrams
 
 ![Sequence diagram](images/uml.png)
