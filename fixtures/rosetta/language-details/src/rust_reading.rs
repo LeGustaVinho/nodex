@@ -464,6 +464,37 @@ pub fn reading_collect_array_length() -> [u8; 2] {
     ReadingCustomTypeCollector.collect::<[u8; _]>()
 }
 
+pub fn reading_collect_standard_option(values: &[Option<i32>]) -> Option<Vec<i32>> {
+    values.iter().map(|value| value.as_ref().copied()).collect::<Option<Vec<_>>>()
+}
+
+struct ReadFirst(Option<i32>);
+
+impl FromIterator<i32> for ReadFirst {
+    fn from_iter<I: IntoIterator<Item = i32>>(values: I) -> Self {
+        Self(values.into_iter().next())
+    }
+}
+
+pub fn reading_collect_custom_from_iter(values: &[Option<i32>]) -> Option<i32> {
+    let first = values.iter().map(|value| value.as_ref().copied()).collect::<Option<ReadFirst>>()?;
+    first.0
+}
+
+pub mod local_option {
+    pub struct Option<T>(pub T);
+
+    impl<T> FromIterator<std::option::Option<T>> for Option<Vec<T>> {
+        fn from_iter<I: IntoIterator<Item = std::option::Option<T>>>(values: I) -> Self {
+            Self(values.into_iter().flatten().collect())
+        }
+    }
+
+    pub fn reading_collect_local_option(values: &[std::option::Option<i32>]) -> Option<Vec<i32>> {
+        values.iter().map(|value| value.as_ref().copied()).collect::<Option<Vec<_>>>()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

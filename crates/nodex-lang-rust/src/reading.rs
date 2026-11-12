@@ -263,6 +263,7 @@ pub(crate) struct Resolved {
 }
 
 pub(crate) type Operations = HashMap<Range, Option<Resolved>>;
+pub(crate) type TypeIdentities = BTreeMap<usize, (usize, String)>;
 
 #[derive(Default)]
 pub(crate) struct Evidence<'a> {
@@ -271,6 +272,7 @@ pub(crate) struct Evidence<'a> {
     pub direct_fields: HashMap<Range, bool>,
     pub non_bindings: HashSet<Range>,
     pub types: &'a [TypeFact],
+    pub standard_types: Option<&'a TypeIdentities>,
     pub definitions: Option<&'a HashMap<&'a str, Range>>,
     pub uses: &'a [(usize, usize, &'a str)],
     pub precise_captures: Option<bool>,
@@ -396,6 +398,13 @@ fn argument(call: Node<'_>, index: usize) -> Option<Node<'_>> {
         .filter(|node| !node.is_extra() && node.kind() != "attribute_item")
         .nth(index)
         .map(unparen)
+}
+
+fn single_type_argument(node: Node<'_>) -> Option<Node<'_>> {
+    let args = node.child_by_field_name("type_arguments")?;
+    let mut written = named_children(args).into_iter().filter(|argument| !argument.is_extra());
+    let first = written.next()?;
+    written.next().is_none().then_some(first)
 }
 
 fn boundary(node: Node<'_>) -> Option<Node<'_>> {
@@ -987,6 +996,7 @@ impl Reader<'_, '_> {
 
     fn sequence(&mut self, node: Node, consumer: &str) {
         let Some((mut source, _)) = receiver(node) else { return };
+        let option_list = consumer == "collect" && self.collects_option_list(node, unparen(source));
         let mut steps = Vec::new();
         while let Some(operation) = self.op(unparen(source)).filter(|op| matches!(op.family, Family::Iter | Family::ParIter)) {
             let action = match operation.name.as_str() {
@@ -1013,8 +1023,43 @@ impl Reader<'_, '_> {
             return;
         }
         steps.reverse();
-        steps.push(self.step(node, "Now", format!("Drive the sequence with {consumer}.")));
+        let final_step = if option_list {
+            self.step(node, "When collecting", "If an item is None, stop asking for items and return None. If the iterator reaches the end, return Some(list) containing the unwrapped values. The list can be empty.")
+        } else {
+            self.step(node, "Now", format!("Drive the sequence with {consumer}."))
+        };
+        steps.push(final_step);
         self.steps(node, "Follow an item through the iterator", steps);
+    }
+
+    fn collects_option_list(&self, collect: Node, mapped: Node) -> bool {
+        let standard_call = |node, family, name| {
+            self.op(node).is_some_and(|op| op.family == family && op.name == name)
+        };
+        if !standard_call(collect, Family::Iter, "collect") || !standard_call(mapped, Family::Iter, "map") {
+            return false;
+        }
+        let Some((_, receiver_argument)) = receiver(mapped) else { return false };
+        let Some(closure) = argument(mapped, usize::from(receiver_argument.is_some())) else { return false };
+        if closure.kind() != "closure_expression" || children(closure).iter().any(|token| token.kind() == "async") {
+            return false;
+        }
+        if !closure.child_by_field_name("body").map(unparen)
+            .is_some_and(|body| standard_call(body, Family::Option, "copied"))
+        {
+            return false;
+        }
+
+        let Some(option) = collect.child_by_field_name("function").and_then(single_type_argument) else { return false };
+        let Some(list) = single_type_argument(option) else { return false };
+        let exact_name = |application: Node| {
+            let name = application.child_by_field_name("type")?;
+            let (end, path) = self.evidence.standard_types?.get(&name.start_byte())?;
+            (*end == name.end_byte()).then_some(path.as_str())
+        };
+        exact_name(option) == Some("core::option::Option")
+            && matches!(exact_name(list), Some("alloc::vec::Vec" | "std::vec::Vec"))
+            && single_type_argument(list).is_some()
     }
 
     fn receiver_is_reference(&self, receiver: Node) -> bool {

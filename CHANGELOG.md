@@ -14,6 +14,7 @@ The release workflow publishes the section of the version it builds as the relea
 - Rust declarations explain which types a trait implementation chooses and when a returned reference shares a lifetime with an input. Open an associated type on a trait to find the definitions in its implementations.
 - The Inspector highlights Rust `match` guards in assignments and other expressions. A guard runs after its pattern matches and can send execution on to the next alternative.
 - The Rust Guide shows the generic arguments written in `collect::<...>()` and explains placeholders such as `Vec<_>` and `[u8; _]`.
+- When Rust Analyzer confirms the standard iterator and types, the Guide explains how collecting optional items into `Option<Vec<_>>` stops at the first `None`.
 - Rust Blueprints distinguish the type of a captured reference from how a closure or async block uses it. The Guide, Inspector and wires show when the access mode is uncertain.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.

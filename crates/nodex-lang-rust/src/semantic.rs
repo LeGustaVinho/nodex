@@ -10,7 +10,7 @@
 //! library first). Install it with `rustup component add rust-analyzer`, or point
 //! `NODEX_RUST_ANALYZER` at a binary.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use nodex_ir::semantic::{ByteRange, ExpressionFact, ExpressionFactKind, LocalTypeFact, RefKind, RustNominalType, SemanticFacts, SemanticRef, SemanticTarget, TypeFact, ValueFact, ValueFactTarget};
@@ -24,7 +24,7 @@ use nodex_lang_api::SemanticProvider;
 use protobuf::Message;
 use tree_sitter::Node;
 
-use crate::reading::{Evidence, Family, Operations, Resolved};
+use crate::reading::{Evidence, Family, Operations, Resolved, TypeIdentities};
 
 /// Semantic facts from `rust-analyzer scip`.
 pub struct RustAnalyzer {
@@ -486,7 +486,6 @@ fn local_nominal_type(name: Node<'_>) -> bool {
         decl.child_by_field_name("name").is_some_and(|id| id.id() == name.id())
 }
 
-type TypeIdentities = BTreeMap<usize, (usize, String)>;
 type Range = (usize, usize);
 
 struct ReturnType {
@@ -523,7 +522,9 @@ fn standard_type_identities(doc: &scip::types::Document, starts: &[usize], root:
         let symbol = parse_symbol(&occurrence.symbol)?;
         if !symbol.standard() || kind_of(symbol.descriptors) != "type" { return None; }
         let path = display(&symbol);
-        if !matches!(native_shape(Language::Rust, &path), TypeShape::Collection { .. } | TypeShape::Scalar { .. }) {
+        if path != "core::option::Option"
+            && !matches!(native_shape(Language::Rust, &path), TypeShape::Collection { .. } | TypeShape::Scalar { .. })
+        {
             return None;
         }
         let (start, end) = range_bytes(starts, &occurrence.range)?;
@@ -1172,6 +1173,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             operations,
             non_bindings,
             types: &facts.types[first_type..],
+            standard_types: Some(identities),
             definitions: Some(&local_definitions),
             uses: &local_uses,
             precise_captures: match edition {

@@ -463,6 +463,28 @@ fn scip_reading_connects_lookup_paths_patterns_and_origins() {
     assert_eq!(thread.concept, Concept::Var);
     let mut provider = RustFrontend.semantic(project.root()).unwrap().unwrap();
     project.apply_semantic(Language::Rust, provider.analyze().unwrap());
+    for (function, specialized) in [
+        ("reading_collect_standard_option", true),
+        ("reading_collect_custom_from_iter", false),
+        ("reading_collect_local_option", false),
+    ] {
+        let graph = flow(&mut project, function);
+        let last = sites(&graph).iter().find_map(|site| match &site.content {
+            ReadingContent::Steps { label, steps } if label == "Follow an item through the iterator" => {
+                assert_eq!(site.basis, ValueBasis::TypeAnalysis);
+                steps.last()
+            }
+            _ => None,
+        }).unwrap_or_else(|| panic!("{function}: {:?}", sites(&graph)));
+        if specialized {
+            assert!(last.action.contains("stop asking for items and return None"));
+            assert!(last.action.contains("return Some(list)"));
+        } else {
+            assert_eq!(last.action, "Drive the sequence with collect.");
+        }
+        assert!(sites(&graph).iter().any(|site| matches!(&site.content,
+            ReadingContent::Detail { label, .. } if label == "Supply generic arguments to collect")));
+    }
     let wrapped = flow(&mut project, "split_through_wrapper");
     for pin in ["var:first", "var:second"] {
         let sources = &wrapped.borrows.iter().flatten().find(|site| site.pin == pin).unwrap().sources;
