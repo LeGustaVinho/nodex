@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { FlowNode } from "../gen/FlowNode";
-import { executionPinLabel, statementExplanations } from "../graph/blueprintExplanation";
+import { executionPinLabel, pinSyntaxDetails, statementExplanations } from "../graph/blueprintExplanation";
+import { syntaxId } from "../graph/syntaxSites";
 import { useUi } from "../store";
 import { BlueprintReading } from "./BlueprintReading";
 import { executionReading, routeName } from "../graph/blueprintReading";
@@ -98,6 +99,10 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
   const current = history.at(-1);
   const visits = current?.flow === flow?.symbol && current?.node === node?.id ? history : [];
   const choices = flow?.edges.filter((edge) => edge.kind === "Exec" && edge.from === node?.id) ?? [];
+  const guards = showReading && flow?.language === "rust" && node?.concept === "Match"
+    ? node.outputs.flatMap((pin) => pinSyntaxDetails(node, pin.id)
+      .filter((detail) => detail.label === "Match guard").map((detail) => ({ pin: pin.id, detail })))
+    : [];
   const unmapped = node?.outputs.filter((pin) =>
     pin.kind === "Exec" && pin.id !== "out" && pin.id !== "error" && pin.label && !choices.some((edge) => edge.from_pin === pin.id),
   ) ?? [];
@@ -142,6 +147,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
         <>
           <div aria-live="polite">{node.label || node.concept}</div>
           {statementExplanations(node, flow.language, reading.length > 0).map((label) => <div key={label}>{label}</div>)}
+          {guards[0] && <div>{guards[0].detail.explain}</div>}
           {ownership?.map((row) => <div key={row.pin}><code>{row.name}</code> · {row.role}{row.origin && ` · ${row.origin}`}</div>)}
           <BlueprintReading full sites={reading} route={(pin) => routeName(node, pin)} choose={(site, label, output, pin) => {
             const edge = routed?.site === site && pin ? choices.find((edge) => edge.from_pin === pin) : undefined;
@@ -166,10 +172,19 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             {choices.map((edge) => {
               const target = flow.nodes.find((n) => n.id === edge.to);
               const label = routed?.labels[edge.from_pin] ?? executionPinLabel(node, edge.from_pin, node.outputs.find((p) => p.id === edge.from_pin)?.label ?? "");
+              const guard = guards.find(({ pin }) => pin === edge.from_pin);
+              const site = guard && node.syntax_sites?.find(({ key, pin }) => key === "match-guard" && pin === guard.pin);
               return target && (
-                <button key={`${edge.from_pin}:${edge.to}`} onClick={() => visit(flow, target, { via: edge.from_pin })}>
-                  {guideChoice(label)}
-                </button>
+                <Fragment key={`${edge.from_pin}:${edge.to}`}>
+                  <button onClick={() => visit(flow, target, { via: edge.from_pin })}>
+                    {guard ? `${label} · pattern matches and guard passes` : guideChoice(label)}
+                  </button>
+                  {site && revision && site.span.file === flow.span.file && (
+                    <button type="button" aria-label={`Show guard for ${label}`} onClick={() => select({
+                      kind: "flow-node", flow: flow.symbol, id: node.id, pin: edge.from_pin, syntax: syntaxId(site),
+                    }, site.span, revision)}>Show guard</button>
+                  )}
+                </Fragment>
               );
             })}
             {enclosing && (

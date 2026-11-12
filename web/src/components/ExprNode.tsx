@@ -3,7 +3,7 @@ import { memo } from "react";
 import { conceptColor, conceptInfo, flavorInfo, flavorLabel, operationColor, operationInfo, useCatalog } from "../catalog";
 import { codeLanguage } from "../graph/codeTokens";
 import type { ExprData } from "../graph/flowGraph";
-import { expressionDetailFlavors, isExplanationFlavor, resolvePinDetails, spreadOutput } from "../graph/blueprintExplanation";
+import { expressionDetailFlavors, isExplanationFlavor, resolvePinDetails, rustChoicePresentation, spreadOutput } from "../graph/blueprintExplanation";
 import { BlueprintCode } from "./HighlightedCode";
 import { syntaxBadges } from "../graph/syntaxSites";
 import { ValueBadge } from "./ValueBadge";
@@ -27,8 +27,9 @@ function ExprNodeImpl({ data, selected }: NodeProps) {
   const op = operationInfo(catalog, expr.op);
   const info = conceptInfo(catalog, expr.concept);
   const color = op ? operationColor(catalog, op) : conceptColor(catalog, expr.concept);
+  const rustChoice = language === "rust" ? rustChoicePresentation(expr) : undefined;
   // In expressions a Var is a read of an existing value, not a declaration.
-  const title = op ? op.title : expr.concept === "Var" ? "Read" : expr.concept === "GetMember" ? "Get" : info.title;
+  const title = op?.title ?? rustChoice?.title ?? (expr.concept === "Var" ? "Read" : expr.concept === "GetMember" ? "Get" : info.title);
   const symbol = !code && op ? op.symbol : "ƒ";
   const rows = Math.max(pins.length, 1);
   const outColor = blueprintTypeColor(expr.type_info?.shape, expr.ty);
@@ -36,11 +37,11 @@ function ExprNodeImpl({ data, selected }: NodeProps) {
   const details = explain ? syntaxBadges(expr.syntax_sites ?? [], (key) => flavorInfo(catalog, key, language),
     detailFlavors.flatMap((flavor) => flavorInfo(catalog, flavor, language) ?? [])) : [];
   const flavors = expr.flavors.filter((f) => !QUIET.has(f) && !isExplanationFlavor(f) && !detailFlavors.includes(f));
-  const output = op?.output?.split(":")[0] ?? (explain ? spreadOutput(expr) : undefined);
+  const output = op?.output?.split(":")[0] ?? (explain ? rustChoice?.output ?? spreadOutput(expr) : undefined);
   const inspectType = (at: string) => select({ kind: "expr", flow, nodeId: ownerId, path: at });
   return (
     <div className={`expr ${op ? "expr-op" : ""} ${selected ? "selected" : ""}`} style={{ "--accent": color, width } as React.CSSProperties}>
-      <div className="expr-head" title={op?.explain ?? info.explain}>
+      <div className="expr-head" title={op?.explain ?? rustChoice?.explain ?? info.explain}>
         <span className="expr-symbol">{symbol}</span>
         <span className="expr-title" title={!code ? expr.target ?? undefined : undefined}>{title}</span>
         <TypeLabel info={expr.type_info} fallback={expr.ty} onInspect={() => inspectType(path)} />

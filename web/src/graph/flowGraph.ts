@@ -14,7 +14,7 @@ import type { OperationInfo } from "../gen/OperationInfo";
 import type { StructureIndex } from "./structureGraph";
 import { type BlueprintSource, type CodePreview, type CodeRange, codePreview, codePreviewHeight, sourceCode, uniqueCodeRange } from "./blueprintSource";
 import type { GEdge, GGraph, GNode, GPort } from "./model";
-import { argumentDetails, expressionDetailFlavors, expressionExplanations, isExplanationFlavor, sequenceArgumentRoles, sequenceCallbackRoles, sequencePreview, spreadOutput, statementExplanations, statementDetailFlavors, withoutExpressionFacts, type CallbackRoles, type ExpressionPinDetails, type SequencePreview } from "./blueprintExplanation";
+import { argumentDetails, expressionDetailFlavors, expressionExplanations, isExplanationFlavor, rustChoicePresentation, sequenceArgumentRoles, sequenceCallbackRoles, sequencePreview, spreadOutput, statementExplanations, statementDetailFlavors, withoutExpressionFacts, type CallbackRoles, type ExpressionPinDetails, type SequencePreview } from "./blueprintExplanation";
 import { compactReading, executionReading, readingHeight, readingsByNode } from "./blueprintReading";
 import type { ContractItem } from "../gen/ContractItem";
 import { displayedInputAccess, hasCaptureExpression, rustOwnershipHeight, rustOwnershipRows, type RustOwnershipRow } from "./rustOwnership";
@@ -471,12 +471,13 @@ function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"):
   const names = op && expr.concept !== "Assign" ? op.inputs : (CONCEPT_PINS[expr.concept] ?? []).map((n) => `${n}:`);
   const layout: PinLayout = { pins: [], subtrees: [], covered: [] };
   const roles = ctx.explanations ? sequenceArgumentRoles(expr) : [];
+  const choice = ctx.explanations && ctx.flow.language === "rust" ? rustChoicePresentation(expr) : undefined;
   kids.forEach((child, i) => {
     const pinId = `${prefix}${i}`;
     const childIndex = expr.children.indexOf(child);
     const childPath = `${path}.${childIndex}`;
     const named = splitPin(names[Math.min(i, names.length - 1)]);
-    let name = named.name || null;
+    let name = choice?.inputs[childIndex] ?? (named.name || null);
     if (roles[childIndex]) name = roles[childIndex];
     if (!name && ctx.explanations && spreadOutput(expr)) name = "Source";
     if (!name && child.flavors.includes("target")) name = "Target";

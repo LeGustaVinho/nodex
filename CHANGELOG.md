@@ -19,6 +19,7 @@ The release workflow publishes the section of the version it builds as the relea
 - When a Rust closure's result expression uses `&` or `&mut`, its Blueprint explains that borrow and highlights the operator in the source.
 - The Rust Inspector explains the exact `@`, `|`, `..` and `_` tokens in patterns. In a `match`, each explanation follows the arm that contains it.
 - Rust Blueprints keep the final `if` or `match` inside a block's expression tree. The reading cards show which final expression gives a block, closure or future its result.
+- Rust expression nodes label the values chosen by `if` and `match`. The Guide can show a `match` guard in the source before you follow its arm.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

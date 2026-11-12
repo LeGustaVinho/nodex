@@ -2,12 +2,14 @@
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
+import type { Expr } from "../gen/Expr";
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { FlowNode } from "../gen/FlowNode";
 import { useUi } from "../store";
 import { useTrace } from "../trace";
 import { ReplayBar } from "../panels/RunPanel";
-import { recordedEdgeId } from "../graph/flowGraph";
+import { expansionKey, flowToGraph, recordedEdgeId, type ExprData } from "../graph/flowGraph";
+import { rustChoicePresentation } from "../graph/blueprintExplanation";
 import { BlueprintGuide } from "./BlueprintGuide";
 
 const span = { file: "sample.rs", start_byte: 0, end_byte: 1, start_line: 1, end_line: 1, start_col: 1, end_col: 2 };
@@ -180,6 +182,111 @@ it("explores a branch inside an expression without advancing to another executio
 const exec = (from: string, from_pin: string, to: string): FlowGraph["edges"][number] => ({
   from, from_pin, to, to_pin: "in", kind: "Exec", access: null,
 });
+
+it("labels the compared value, selected branch, and match arm on Rust expression pins", () => {
+  const expression = (concept: Expr["concept"], label: string, children: Expr[] = [], flavors: string[] = []): Expr => ({
+    concept, label, children, flavors, span, symbol: null, target: null, ty: null, op: null, params: [],
+  });
+  const yes = expression("Literal", "1");
+  const no = expression("Literal", "0");
+  const conditional = expression("Choose", "choose", [expression("Var", "ready"), yes, no]);
+  const some = expression("Match", "Some(Foo { value: n }) ⇒", [conditional], ["arm"]);
+  const none = expression("Match", "None ⇒", [no], ["arm"]);
+  const match = expression("Match", "match", [expression("Var", "value"), some, none]);
+  const binding = { ...step("set", "Var"), expr: match };
+  const example = { ...flow, nodes: [binding], edges: [] };
+  const open = { [expansionKey(example.symbol, binding.id)]: true };
+  const graph = flowToGraph(example, open, true);
+  const pins = (path: string) => (graph.nodes.find((node) => node.id === `set/e/${path}`)?.data as ExprData).pins.map((pin) => pin.name);
+  expect(pins("0")).toEqual(["Compared value", "Arm · Some(Foo { value: n })", "Arm · None"]);
+  expect(pins("0.1")).toEqual(["Arm expression"]);
+  expect(pins("0.1.0")).toEqual(["Condition", "If true", "If false"]);
+  expect(rustChoicePresentation(some)).toMatchObject({ title: "Match arm", output: "Arm value" });
+  expect(rustChoicePresentation(conditional)?.explain).toContain("completes normally");
+  expect(graph.edges.every((edge) => edge.kind !== "exec")).toBe(true);
+
+  const hidden = flowToGraph(example, open, true, { explanations: false });
+  const oldPins = (hidden.nodes.find((node) => node.id === "set/e/0.1.0")?.data as ExprData).pins;
+  expect(oldPins.map((pin) => pin.name)).toEqual(["If", "Then", "Else"]);
+});
+
+it("shows the guard for a Rust match arm without choosing an execution edge", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const settings = useUi.getState();
+  const onStep = vi.fn();
+  const match: FlowNode = {
+    ...step("Compare input", "Match", [output("case:0", "Some(value) if allowed(value)"), output("case:1", "_")]),
+    flavors: ["match-guard:0"],
+    syntax_sites: [{ key: "match-guard", pin: "case:0", span }],
+  };
+  const example = {
+    ...flow, source_revision: "current", nodes: [match, step("Take Some", "Return"), step("Take fallback", "Return")],
+    edges: [exec(match.id, "case:0", "Take Some"), exec(match.id, "case:1", "Take fallback")],
+  };
+  const button = (label: string) => [...host.querySelectorAll("button")].find((entry) => entry.textContent === label);
+  try {
+    await act(async () => {
+      useUi.setState({ blueprintExplanations: true });
+      root.render(<BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode={match.id} onStep={onStep} />);
+    });
+    expect(host.textContent).toContain("including any remaining alternatives in the same arm");
+    expect(button("_")).toBeDefined();
+    await act(async () => button("Show guard")!.click());
+    expect(useUi.getState().selection).toMatchObject({ kind: "flow-node", id: match.id, pin: "case:0" });
+    expect(useUi.getState().codeFocus).toEqual(span);
+    expect(useUi.getState().codeFocusRevision).toBe("current");
+    expect(onStep).not.toHaveBeenCalled();
+    await act(async () => button("Some(value) if allowed(value) · pattern matches and guard passes")!.click());
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, expect.objectContaining({ id: "Take Some" }));
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(settings);
+  }
+});
+
+it("previews the selected value of an embedded Rust match before taking the next statement", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const settings = useUi.getState();
+  const onStep = vi.fn();
+  const example: FlowGraph = {
+    ...flow, source_revision: "current",
+    nodes: [step("Set fraction", "Var", [output("out", "")]), step("Use fraction", "Return")],
+    edges: [exec("Set fraction", "out", "Use fraction")],
+    reading: [{ node: "Set fraction", path: "0", span, basis: "Syntax", content: {
+      kind: "Paths", input: "Compare profile with the arm patterns in order", deferred: false,
+      branches: [
+        { label: "Arm 1 · Some(profile)", action: "If this arm is selected and completes normally, use the value of this expression as the match result.", output: "distance / profile.distance_m" },
+        { label: "Arm 2 · None", action: "If this arm is selected and completes normally, use the value of this expression as the match result.", output: "js_max(0.0, time)" },
+      ],
+    } }],
+  };
+  const click = async (label: string) => {
+    const button = [...host.querySelectorAll("button")].find((entry) => entry.textContent === label);
+    expect(button, label).toBeDefined();
+    await act(async () => button!.click());
+  };
+  try {
+    await act(async () => {
+      useUi.setState({ blueprintExplanations: true });
+      root.render(<BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode="Set fraction" onStep={onStep} />);
+    });
+    expect(host.textContent).toContain("distance / profile.distance_m");
+    expect(host.textContent).toContain("js_max(0.0, time)");
+    await click("Arm 2 · None");
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Arm 2 · None → js_max(0.0, time)");
+    expect(onStep).not.toHaveBeenCalled();
+    await click("Back");
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    await click("Next");
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, expect.objectContaining({ id: "Use fraction" }));
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(settings);
+  }
+});
+
 const loops: FlowGraph = {
   ...flow,
   nodes: [

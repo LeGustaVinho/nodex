@@ -370,6 +370,34 @@ export function spreadOutput(expr: Expr): string | undefined {
   if (expr.flavors.includes("spread-properties")) return "Properties for the new object";
 }
 
+export function rustChoicePresentation(expr: Expr) {
+  if (expr.concept === "Match" && expr.flavors.includes("arm")) {
+    return {
+      title: "Match arm",
+      explain: "When Rust selects this arm, its expression supplies the value if it completes normally.",
+      output: "Arm value",
+      inputs: ["Arm expression"],
+    };
+  }
+  if (expr.concept === "Match") {
+    return {
+      title: "Match expression",
+      explain: "Compare the value with the patterns in order. The selected arm supplies the result if it completes normally.",
+      output: "Selected arm value",
+      inputs: expr.children.map((child) => child.flavors.includes("arm")
+        ? `Arm · ${child.label.replace(/ ⇒$/u, "")}` : "Compared value"),
+    };
+  }
+  if (expr.concept === "Choose") {
+    return {
+      title: "If expression",
+      explain: "Evaluate the branch selected by the condition. If the branch completes normally, its value becomes the result.",
+      output: "Selected branch value",
+      inputs: ["Condition", "If true", "If false"],
+    };
+  }
+}
+
 export function expressionExplanations(expr: Expr, language: Language, reading = false): string[] {
   const labels = sequenceExplanation(expr);
   if (language === "csharp") {
