@@ -52,7 +52,7 @@ export function ClassBlueprintView({ index, symbol }: { index: StructureIndex; s
       {blueprintGuide && (flows.data || !ids.length) && (
         <BlueprintGuide key={symbol.id} flows={flows.data ?? []} activeFlow={activeMember}
           activeNode={selection?.kind === "flow-node" ? selection.id : selection?.kind === "expr" ? selection.nodeId : undefined}
-          replaying={!!replayFlow} onStep={(flow, node) => {
+          replaying={!!replayFlow} sources={sources} onStep={(flow, node) => {
             setClassOpen([flow], true);
             select({ kind: "flow-node", flow, id: node.id }, node.span);
           }} />

@@ -7,6 +7,7 @@
 
 pub mod adapters;
 pub mod api;
+mod rust_expansion;
 pub mod assets;
 pub mod builds;
 pub mod debugger;
@@ -167,6 +168,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/uml", get(uml::diagram))
         .route("/api/uml/availability", get(uml::availability))
         .route("/api/borrow-origin", get(api::borrow_origin))
+        .route("/api/rust/macro-expansion", get(api::rust_macro_expansion))
         .route("/api/flow", get(api::flow))
         .route("/api/flows", get(api::flows))
         .route("/api/source", get(api::source))

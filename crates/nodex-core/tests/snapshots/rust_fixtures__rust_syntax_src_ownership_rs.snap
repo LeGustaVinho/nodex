@@ -29,7 +29,7 @@ Var — value = 1
 Var — value₂ = value + 1
 Var — value₃ = value * 10
 Var — guard = Guard { name: cloned }
-Call — drop guard (free it now)
+Call — drop(guard)
 Return — return again + value + shared.borrow().len()
 == crate::ownership::scoped
 Entry — when scoped() is called

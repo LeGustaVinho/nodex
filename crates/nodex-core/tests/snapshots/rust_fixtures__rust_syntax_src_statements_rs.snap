@@ -118,16 +118,16 @@ Branch — if n < 0
         Return — return 1
 == crate::statements::spawns
 Entry — when spawns() is called
-Spawn — handle = run || 40 + 2 on another thread
-Wait — wait 1 milliseconds
+Var — handle = std::thread::spawn(|| 40 + 2)
+Call — std::thread::sleep(std::time::Duration::from_millis(1))
 Var — value = handle.join().unwrap()
 Destructure — unpack (tx, rx) from std::sync::mpsc::channel()
-Emit — send value through tx
-Call — drop tx (free it now)
+Call — tx.send(value).unwrap()
+Call — drop(tx)
 Return — return rx.recv().unwrap_or(0)
 == crate::statements::exits
 Entry — when exits(code) is called
 Branch — if code != 0
   true:
-    Return — end the program with exit code code
+    Call — std::process::exit(code)
   false:

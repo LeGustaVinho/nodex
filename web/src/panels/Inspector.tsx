@@ -11,11 +11,13 @@ import type { StructureIndex } from "../graph/structureGraph";
 import { borrowExpressionPath, expressionSites, statementSites } from "../graph/syntaxSites";
 import { ValueExplanation } from "../components/ValueBadge";
 import { BorrowInspector } from "./BorrowInspector";
+import { ReadingInspector, readingOrigin } from "./ReadingInspector";
 import { SyntaxInspector } from "./SyntaxInspector";
 import { ContainerInspector, SymbolInspector } from "./SymbolInspector";
 import { bindingDetails } from "../graph/bindingDetails";
 import { expressionDetailFlavors, expressionExplanations, isExplanationFlavor, pinSyntaxDetails, statementDetailFlavors, withoutExpressionFacts } from "../graph/blueprintExplanation";
 import { pointerBadge } from "../graph/pointers";
+import { rustOwnershipRows } from "../graph/rustOwnership";
 import { ACCESS_LABEL, ACCESS_TEXT } from "../components/OwnershipEdge";
 import { ExecutionTypes, TypeDetails } from "./TypeInspector";
 
@@ -138,6 +140,7 @@ export function Inspector() {
 
 function InspectorContent({ index }: { index?: StructureIndex }) {
   const { selection } = useUi();
+  const explanations = useUi((state) => state.blueprintExplanations);
   const flowSymbol = selection && (selection.kind === "flow-node" || selection.kind === "expr") ? selection.flow : null;
   const flow = useQuery({ queryKey: ["flow", flowSymbol], queryFn: () => api.flow(flowSymbol!), enabled: !!flowSymbol });
   const file = flow.data?.span.file;
@@ -162,11 +165,16 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
     const stale = !!source.data && !!flow.data?.source_revision && source.data.revision !== flow.data.source_revision;
     const node = stale && original?.expr ? { ...original, expr: withoutExpressionFacts(original.expr) } : original;
     if (!node || !flow.data) return <div>…</div>;
+    const reading = explanations && !stale ? flow.data.reading?.filter((site) => site.node === node.id) ?? [] : [];
+    const revision = (file: string) => index?.graph.source_revisions?.[file];
     if (selection.kind === "expr") {
       const expr = exprAt(node.expr, selection.path);
       if (!expr) return <div>…</div>;
+      const shown = reading.filter((site) => site.path === selection.path);
+      const origin = readingOrigin(reading, shown);
       return (
         <>
+          <ReadingInspector flow={flow.data} node={node} sites={shown} origin={origin} revision={revision} />
           <SyntaxInspector key={selection.syntax ?? selection.path} sites={expressionSites(expr)} language={flow.data.language}
             revision={() => flow.data?.source_revision} active={selection.syntax} />
           <div className="insp-section">
@@ -179,7 +187,7 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
               <ValueExplanation info={index.byId.get(selection.flow)?.value_info} language={flow.data.language} />
             </div>
           )}
-          {flow.data.language === "rust" && !stale && (expr.value_info?.kind === "Reference" ||
+          {flow.data.language === "rust" && !stale && !origin && (expr.value_info?.kind === "Reference" ||
             expr.syntax_sites?.some((site) => site.key === "borrow" || site.key === "borrow-mut")) &&
             <BorrowInspector key={node.id + ":" + selection.path} flow={selection.flow} node={node.id} path={selection.path} />}
           <ConceptHeader concept={expr.concept} label={expr.label} />
@@ -195,11 +203,11 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
               )) ?? <div className="value-row">{expr.params.map((name) => <code key={name}>{name}</code>)}</div>}
             </div>
           )}
-          {expr.target && (
+          {(expr.target || (expr.symbol && index?.byId.get(expr.symbol)?.has_flow)) && (
             <div className="insp-section">
-              <div className="section-title">Resolves to</div>
+              <div className="section-title">{expr.target ? "Resolves to" : "Function body"}</div>
               <div className="value-row">
-                <code>{expr.target}</code>
+                {expr.target && <code>{expr.target}</code>}
                 {expr.symbol && index?.byId.get(expr.symbol)?.has_flow && (
                   <button onClick={() => openFlow(expr.symbol!)}>Open Blueprint</button>
                 )}
@@ -207,16 +215,22 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
             </div>
           )}
           <Flavors flavors={[...new Set([...expr.flavors.filter((f) => !isExplanationFlavor(f)), ...expressionDetailFlavors(expr, flow.data.language)])]} language={flow.data.language} />
-          {expressionExplanations(expr, flow.data.language).map((explanation) => (
+          {expressionExplanations(expr, flow.data.language, shown.length > 0).map((explanation) => (
             <p className="explain" key={explanation}>{explanation}</p>
           ))}
         </>
       );
     }
     const owner = node.concept === "Entry" || node.concept === "EventEntry" ? index?.byId.get(flow.data.symbol) : undefined;
+    const closure = node.expr?.concept === "Lambda" && node.expr.symbol ? index?.byId.get(node.expr.symbol) : undefined;
+    const closureBody = selection.pin === undefined && closure?.has_flow ? closure : undefined;
+    const calls = closureBody ? node.calls.filter((call) => call.symbol !== closureBody.id) : node.calls;
     const pins = [...node.inputs, ...node.outputs];
+    const ownership = selection.pin === undefined ? undefined
+      : rustOwnershipRows(flow.data, explanations && !stale).get(node.id)?.find((row) => row.pin === selection.pin);
     const borrowPath = flow.data.language === "rust" && !stale && selection.syntax
       ? borrowExpressionPath(node.expr, selection.syntax) : undefined;
+    const origin = borrowPath || selection.pin ? undefined : readingOrigin(reading, reading);
     const pinDetails = pins.flatMap((pin) => {
       if (selection.pin !== undefined && selection.pin !== pin.id) return [];
       const details = [...pinSyntaxDetails(node, pin.id), ...(pin.binding ? bindingDetails(pin.binding, flow.data!.language) : [])];
@@ -228,6 +242,7 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
     });
     return (
       <>
+        {selection.pin === undefined && <ReadingInspector flow={flow.data} node={node} sites={reading} origin={origin} revision={revision} />}
         <SyntaxInspector key={selection.syntax ?? selection.pin ?? node.id}
           sites={selection.pin !== undefined ? statementSites(node, false, false, selection.pin) : [...statementSites(node), ...pins.flatMap((p) => statementSites(node, false, false, p.id))]}
           language={flow.data.language} revision={() => flow.data?.source_revision} active={selection.syntax} />
@@ -243,9 +258,11 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
                   : usesVerb(flow.data!.edges.find((e) => e.to === node.id && e.to_pin === pin.id)?.access)) || "Pin"} · {pin.label}
               </div>
               {pin.kind === "Data" && <TypeDetails info={stale ? undefined : pin.type_info} native={pin.ty} revision={flow.data?.source_revision ?? undefined} />}
+              {ownership && <div className="value-row"><strong>Rust ownership</strong><span className="badge">{ownership.role}</span></div>}
               {pin.kind === "Data" && <ValueExplanation info={stale && pin.value_info?.basis === "TypeAnalysis" ? undefined : pin.value_info} language={flow.data!.language} />}
-              {flow.data!.language === "rust" && !stale && selection.pin === pin.id && pin.value_info?.kind === "Reference" &&
-                <BorrowInspector key={node.id + ":" + pin.id} flow={selection.flow} node={node.id} pin={pin.id} />}
+              {flow.data!.language === "rust" && !stale && selection.pin === pin.id &&
+                (pin.value_info?.kind === "Reference" || pin.type_info?.shape.kind === "Indirect" && !pin.type_info.shape.pointer) &&
+                <BorrowInspector key={node.id + ":" + pin.id} flow={selection.flow} node={node.id} pin={pin.id} reference={pin.label} />}
               {details.map((detail) => <div className="flavor" key={detail.label}>
                 <span className="badge">{detail.label}</span><span className="flavor-explain">{detail.explain}</span>
               </div>)}
@@ -256,6 +273,15 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
           );
         })}
         <ConceptHeader concept={node.concept} label={node.label} />
+        {closureBody && (
+          <div className="insp-section">
+            <div className="section-title">Function body</div>
+            <div className="value-row">
+              <code>{closureBody.name}</code>
+              <button onClick={() => openFlow(closureBody.id)}>Open Blueprint</button>
+            </div>
+          </div>
+        )}
         {node.concept === "Call" && <OperationSection op={node.expr?.op ?? null} language={flow.data.language} />}
         {owner?.doc && (
           <div className="insp-section">
@@ -263,10 +289,10 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
             <p className="doc">{owner.doc}</p>
           </div>
         )}
-        {node.calls.length > 0 && (
+        {calls.length > 0 && (
           <div className="insp-section">
             <div className="section-title">Calls</div>
-            {node.calls.map((c) => (
+            {calls.map((c) => (
               <div key={c.display} className="value-row">
                 <code title={c.external ? "outside this project" : "declared in this project"}>{c.display}</code>
                 {c.external && <span className="muted">external</span>}

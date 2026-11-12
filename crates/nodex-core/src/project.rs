@@ -107,6 +107,7 @@ struct SemanticFileFacts {
     values: Vec<usize>,
     types: Vec<usize>,
     binding_uses: Vec<usize>,
+    reading: Vec<usize>,
 }
 
 /// How far opening a project got, for a progress bar: `phase` is `scanning` (files found so
@@ -237,7 +238,9 @@ impl BuildInput {
         let navigation = crate::navigation::NavigationIndex::new(structure.clone(), &locator, &self.semantic);
         let nominal_types = self.semantic.iter().filter(|(language, _)| *language == Language::Rust)
             .flat_map(|(_, facts)| &facts.rust_nominal_types);
-        let borrow_calls = crate::borrow_origin::CallIndex::new(&calls, &structure, &locator, nominal_types);
+        let borrow_facts = self.semantic.iter().filter(|(language, _)| *language == Language::Rust)
+            .flat_map(|(_, facts)| &facts.rust_borrows);
+        let borrow_calls = crate::borrow_origin::CallIndex::new(&calls, &structure, &locator, nominal_types, borrow_facts);
         Built { version: self.version, structure, knowledge: Arc::new(derived.project), locator, navigation, borrow_calls }
     }
 
@@ -713,6 +716,10 @@ impl Project {
         let Some((facts, by_file)) = self.semantic.get(&language)
             .filter(|entry| entry.status.state == SemanticState::Ready)
             .and_then(|entry| Some((entry.facts.clone()?, entry.by_file.clone()))) else {
+    pub(crate) fn rust_semantics_ready(&self) -> bool {
+        self.semantic.get(&Language::Rust).is_some_and(|entry| entry.status.state == SemanticState::Ready)
+    }
+
             let mut raw = raw;
             crate::operations::recognize_flow(&mut raw);
             return Some(raw);
@@ -724,6 +731,10 @@ impl Project {
         let file = by_file.get(&raw.span.file);
         let refs: Vec<_> = file.into_iter().flat_map(|f| &f.refs).map(|&i| &facts.refs[i]).collect();
         let locals: Vec<_> = file.into_iter().flat_map(|f| &f.locals).map(|&i| &facts.locals[i]).collect();
+            if language == Language::Rust {
+                let empty = crate::borrow_origin::CallIndex::default();
+                crate::borrow_origin::attach_previews(self, &empty, &mut raw);
+            }
         let mut flow = semantic::enrich_flow_with(&raw, &refs, &locals, &locator);
         if let Some(file) = file {
             semantic::annotate_expression_facts(&mut flow, file.expressions.iter().map(|&i| &facts.expressions[i]));
@@ -738,6 +749,7 @@ impl Project {
         semantic::annotate_collection_roles(&mut flow, &refs, binding_uses);
         Some(flow)
     }
+            flow.attach_reading(file.reading.iter().map(|&i| &facts.reading[i]));
 
     /// Build units (`.csproj` projects, `package.json` packages, Cargo crates) and the
     /// references between them.
@@ -745,6 +757,11 @@ impl Project {
         let manifests: Vec<(Language, PathBuf, Vec<PackageRef>)> = self
             .descriptors
             .iter()
+        if let Some(calls) = &self.borrow_calls
+            && language == Language::Rust
+        {
+            crate::borrow_origin::attach_previews(self, calls, &mut flow);
+        }
             .flat_map(|d| {
                 // Packages are known per language; give them to the unit only when it is the only one.
                 let units = d.manifests.iter().filter(|m| is_unit_manifest(m)).count();
@@ -813,6 +830,9 @@ impl Project {
         self.semantic.insert(language, SemanticEntry { status, facts: Some(Arc::new(facts)), by_file: Arc::new(by_file) });
         self.invalidate();
     }
+        for (i, fact) in facts.reading.iter().enumerate() {
+            by_file.entry(fact.anchor.file.clone()).or_default().reading.push(i);
+        }
 
     fn invalidate(&mut self) {
         self.structure = None;

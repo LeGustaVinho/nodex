@@ -133,6 +133,10 @@ pub enum ExpressionFactKind {
     ReferenceCopy,
     Dynamic,
     Freeze,
+    Spawn,
+    Sleep,
+    ChannelSend,
+    ProcessExit,
 }
 
 /// An exact source site classified by a language's type checker.
@@ -175,6 +179,10 @@ pub struct SemanticFacts {
     pub binding_uses: Vec<BindingUseFact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rust_nominal_types: Vec<RustNominalType>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reading: Vec<crate::reading::ReadingFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rust_borrows: Vec<crate::borrow::BorrowFact>,
     /// Present when the provider collects project-wide symbol navigation facts.
     #[serde(default)]
     pub navigation: Option<Vec<NavigationFact>>,

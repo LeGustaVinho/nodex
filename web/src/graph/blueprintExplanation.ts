@@ -4,6 +4,7 @@ import type { Language } from "../gen/Language";
 import type { SyntaxSite } from "../gen/SyntaxSite";
 import type { Symbol } from "../gen/Symbol";
 import type { LanguageDetail } from "./bindingDetails";
+import { hasLetChain } from "./blueprintReading";
 
 const spread: Readonly<Record<string, string>> = {
   "spread-arguments": "Spread into separate arguments",
@@ -339,6 +340,10 @@ export function executionPinLabel(node: FlowNode, id: string, original: string):
     if (id === "out") return "Pattern matched · continue with the bindings";
     if (id === "else") return "Pattern did not match · run the else block";
   }
+  if (hasLetChain(node)) {
+    if (id === "true" || id === "body") return "All conditions passed · bindings available";
+    if (id === "false") return "A condition did not pass";
+  }
   if (id === "true" && node.flavors.includes("if-let")) return "Matched · bindings available";
   if (id === "false" && node.flavors.includes("if-let")) return "Pattern did not match";
   if (id === "body" && node.flavors.includes("while-let")) return "Matched · bindings available";
@@ -365,16 +370,16 @@ export function spreadOutput(expr: Expr): string | undefined {
   if (expr.flavors.includes("spread-properties")) return "Properties for the new object";
 }
 
-export function expressionExplanations(expr: Expr, language: Language): string[] {
+export function expressionExplanations(expr: Expr, language: Language, reading = false): string[] {
   const labels = sequenceExplanation(expr);
   if (language === "csharp") {
     for (const f of expr.flavors) if (Object.hasOwn(argumentMode, f)) labels.push(argumentMode[f]);
   }
-  if (language === "rust" && (expr.flavors.includes("option:map") || expr.flavors.includes("option:and_then"))) {
+  if (language === "rust" && !reading && (expr.flavors.includes("option:map") || expr.flavors.includes("option:and_then"))) {
     labels.push(expr.flavors.includes("option:map") ? "Has value: transform it and wrap in Some" : "Has value: use the Option returned by the function");
     labels.push("Absent: keep None");
   }
-  if (language === "rust" && expr.concept === "Lambda" && expr.flavors.includes("move")) {
+  if (language === "rust" && !reading && expr.concept === "Lambda" && expr.flavors.includes("move")) {
     labels.push("Capture values from the enclosing scope by value");
   }
   if (language !== "typescript") return labels;
@@ -382,14 +387,14 @@ export function expressionExplanations(expr: Expr, language: Language): string[]
   return labels;
 }
 
-export function statementExplanations(node: FlowNode, language: Language): string[] {
+export function statementExplanations(node: FlowNode, language: Language, reading = false): string[] {
   const labels = new Set<string>();
   if (node.concept === "EventEntry" && node.label && node.label !== node.code) labels.add(node.label);
   if (node.flavors.some((f) => f === "dispose" || f === "dispose-at-end")) {
     labels.add(node.flavors.includes("async") ? "Await cleanup when leaving scope" : "Release the resource when leaving scope");
     labels.add("Cleanup also runs on early return");
   }
-  if (node.concept === "Await") labels.add("Continue here after the wait completes");
+  if (node.concept === "Await" && !reading) labels.add("Continue here after the wait completes");
   if (language === "csharp" && node.concept === "CriticalSection") {
     labels.add("Acquire the lock before entering");
     labels.add("Release the lock when leaving");
@@ -399,7 +404,7 @@ export function statementExplanations(node: FlowNode, language: Language): strin
   if (node.concept === "Emit") labels.add("Notify the handlers registered for this event");
   if (language === "rust" && node.flavors.includes("implicit-return")) labels.add("The last expression is the returned value");
   if (language === "rust" && node.flavors.includes("let-else")) labels.add("Continue with the bindings or take the else path");
-  if (language === "rust" && node.outputs.some((p) => p.id === "error") && node.flavors.includes("try")) {
+  if (language === "rust" && !reading && node.outputs.some((p) => p.id === "error") && node.flavors.includes("try")) {
     labels.add("Continue with the value or return early");
   }
   if (language === "rust" && node.flavors.includes("implicit-drop")) labels.add("Automatic cleanup at scope exit");
@@ -409,7 +414,7 @@ export function statementExplanations(node: FlowNode, language: Language): strin
   while (pending.length && labels.size < 2) {
     const expr = pending.pop()!;
     if (expr.concept !== "Pipeline") {
-      for (const label of expressionExplanations(expr, language)) labels.add(label);
+      for (const label of expressionExplanations(expr, language, reading)) labels.add(label);
     } else {
       // The ordered sequence preview owns the stage descriptions on the statement.
       continue;

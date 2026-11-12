@@ -3,6 +3,7 @@
 use tree_sitter::Node;
 
 pub use nodex_lang_api::syntax::{Src, children, first_error};
+pub(crate) use nodex_lang_api::syntax_sites::rust_inclusive_range_to as inclusive_range_to;
 
 /// Rust comments (`//`, `/* */`, doc comments) are extras that may appear anywhere.
 pub fn is_comment(kind: &str) -> bool {
@@ -195,6 +196,14 @@ pub fn bare_type_name(text: &str) -> String {
     let t = text.trim().trim_start_matches('&').trim_start_matches("mut ").trim_start_matches("dyn ").trim_start_matches("impl ");
     let t = t.split('<').next().unwrap_or(t);
     t.rsplit("::").next().unwrap_or(t).trim().to_owned()
+}
+
+pub(crate) fn field_projection(base: Node) -> Option<Node> {
+    base.parent().filter(|field| {
+        field.kind() == "field_expression" && field.child_by_field_name("value") == Some(base)
+            && !field.parent().is_some_and(|call| call.kind() == "call_expression"
+                && call.child_by_field_name("function") == Some(*field))
+    })
 }
 
 /// Type names used by a type expression (`Option<Vec<Order>>` → `Option`, `Vec`, `Order`),

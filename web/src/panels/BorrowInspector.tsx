@@ -14,7 +14,7 @@ const DESCRIPTION: Record<BorrowOriginKind, string> = {
   Unknown: "Origin unknown",
 };
 
-export function BorrowInspector({ flow, node, pin, path }: { flow: string; node: string; pin?: string; path?: string }) {
+export function BorrowInspector({ flow, node, pin, path, reference }: { flow: string; node: string; pin?: string; path?: string; reference?: string }) {
   const [pages, setPages] = useState([0]);
   const offset = pages.at(-1)!;
   const [sourceChanged, setSourceChanged] = useState(false);
@@ -57,13 +57,14 @@ export function BorrowInspector({ flow, node, pin, path }: { flow: string; node:
   return (
     <section className="insp-section borrow-inspector" aria-label="Borrow origin">
       <div className="section-title">Borrow origin</div>
+      {reference && <div className="value-row"><strong>Reference</strong> <code>{reference}</code></div>}
       {query.isPending ? <p className="muted">Finding the origin…</p> :
         query.isError ? <p className="muted">Origin unavailable</p> : <>
           {query.data.origins.map(({ kind, owner, borrowed, through, call }, i) => (
             <div className="borrow-origin" key={i}>
               {call && <div className="value-row"><strong>Call</strong> {link(call, call.label + " · " + call.span.file + ":" + call.span.start_line)}</div>}
               <div className="value-row"><strong>{DESCRIPTION[kind]}</strong> {owner && <code>{owner.label}</code>}</div>
-              {borrowed && kind !== "Temporary" && kind !== "Static" && <div className="value-row"><strong>Borrowed</strong> <code>{borrowed}</code></div>}
+              {borrowed && kind !== "Temporary" && kind !== "Static" && <div className="value-row"><strong>Borrowed place</strong> <code>{borrowed}</code></div>}
               {through.length > 0 && <ol className="borrow-chain" aria-label="Reference chain">
                 {through.map((location) => <li key={location.span.file + ":" + location.span.start_byte}>{link(location, location.label)}</li>)}
               </ol>}

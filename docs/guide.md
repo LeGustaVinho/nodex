@@ -53,6 +53,8 @@ A Blueprint draws one function the same way whatever its language. A C# `foreach
 
 Open a Blueprint by double-clicking a member, from the Inspector, or from the search (Ctrl+K).
 
+For Rust, leave **explanations** checked and select a statement. The Inspector's **Read this Rust** section explains the selected code, including when a pattern binds a variable and what happens when `?` returns early. Open **Guide** in the Blueprint toolbar to read the explanation while following the function one step at a time. Select a heading in the guide to find the corresponding expression in the source.
+
 ## UML diagrams
 
 ![Sequence diagram](images/uml.png)

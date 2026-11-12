@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useState } from "react";
 import { api } from "../api";
 import { ValueExplanation } from "../components/ValueBadge";
+import { RustContract } from "../components/RustContract";
 import { TypeDetails } from "./TypeInspector";
 import { SyntaxInspector } from "./SyntaxInspector";
 import { flavorInfo, useCatalog } from "../catalog";
@@ -245,6 +246,10 @@ function OverviewTab({ symbol, index, edges }: { symbol: Symbol; index: Structur
   return (
     <div className="insp-pane">
       {symbol.signature && <pre className="code-snippet">{symbol.signature}</pre>}
+      {symbol.rust_contract && <RustContract items={symbol.rust_contract} inspect={(span) => {
+        const revision = index.graph.source_revisions?.[span.file];
+        if (revision) focusCode(span, revision);
+      }} />}
       {symbol.doc && <p className="doc">{symbol.doc}</p>}
       <div className="props">
         {lines && (

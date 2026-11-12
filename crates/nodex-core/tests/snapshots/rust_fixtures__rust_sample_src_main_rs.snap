@@ -26,7 +26,7 @@ Branch — if ship_all(&mut service) matches Err(err)
   true:
     Call — print "Could not ship: {err}"
   false:
-Spawn — worker = run move || { let pending = util::count_slowly(3); pending * 2 } on another thread
+Var — worker = std::thread::spawn(move || { let pending = util::count_slowly(3); pending * 2 })
 Var — doubled = worker.join().unwrap_or(0)
 Call — print "Worker said {doubled}"
 == crate::ship_all

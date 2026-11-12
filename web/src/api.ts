@@ -133,6 +133,10 @@ export const api = {
     if (path !== undefined) query.set("expr_path", path);
     return (await request("/api/borrow-origin?" + query, { signal })).json() as Promise<BorrowOrigins>;
   },
+  rustMacroExpansion: async (file: string, offset: number, revision: string, signal: AbortSignal) => {
+    const query = new URLSearchParams({ file, offset: String(offset), revision });
+    return (await request("/api/rust/macro-expansion?" + query, { signal })).json() as Promise<{ name: string; expansion: string } | null>;
+  },
   flow: (symbol: string) => json<FlowGraph>(`/api/flow?symbol=${encodeURIComponent(symbol)}`),
   flows: (symbols: readonly string[]) => json<FlowGraph[]>(`/api/flows?symbols=${symbols.map(encodeURIComponent).join(",")}`),
   source: async (file: string) => (await request(`/api/source?file=${encodeURIComponent(file)}`)).text(),

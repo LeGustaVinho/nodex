@@ -7,9 +7,8 @@ flowchart TD
   n5("print #quot;{label}#quot;")
   n6{"ship_all(&mut service) matches Err(err)?"}
   n7("print #quot;Could not ship: {err}#quot;")
-  n8[/"worker = run move || { let pending = util::count_slowly(3); pen…"/]
-  n9("doubled = worker.join().unwrap_or(0)<br/>print #quot;Worker said {doubled}#quot;")
-  n10(((" ")))
+  n8("worker = std::thread::spawn(move || { let pending = util::count…<br/>doubled = worker.join().unwrap_or(0)<br/>print #quot;Worker said {doubled}#quot;")
+  n9(((" ")))
   n0 -->|"program entry (main)"| n1
   n1 --> n2
   n2 --> n3
@@ -21,8 +20,7 @@ flowchart TD
   n7 --> n8
   n6 -->|"no"| n8
   n8 --> n9
-  n9 --> n10
   classDef start fill:#eef1f4,stroke:#eef1f4,color:#0d1117
   classDef final fill:#0d1117,stroke:#eef1f4,stroke-width:3px,color:#eef1f4
-  class n10 final
+  class n9 final
   class n0 start

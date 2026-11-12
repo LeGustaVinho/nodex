@@ -13,9 +13,9 @@ use nodex_ir::{Access, BindingForm, CallTarget, Concept, FlowEdgeKind, FlowGraph
 use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, callback_entry_label, truncate};
 use tree_sitter::Node;
 
-use crate::expr::{ExprLowering, callee_path, is_expression, macro_args, macro_name, method_call, reads, reference_focus};
+use crate::expr::{ExprLowering, callee_path, is_expression, macro_args, macro_name, reads};
 use crate::structure::{BodyJob, BodyKind};
-use crate::syntax::{Src, children, first_child_of_kind, has_semicolon, is_comment, is_item, named_children, parameters, pattern_bindings, unparen};
+use crate::syntax::{Src, children, first_child_of_kind, has_semicolon, inclusive_range_to, is_comment, is_item, named_children, parameters, pattern_bindings, unparen};
 
 pub struct Lowered {
     pub graph: FlowGraph,
@@ -42,12 +42,14 @@ struct Lowering<'a, 'f> {
 }
 
 /// A local that runs code when its scope ends.
+#[derive(Clone)]
 struct DropLocal {
     name: String,
+    shown: String,
     ty: String,
     /// The node and pin that define it.
-    node: String,
-    pin: String,
+    binding: ExecCursor,
+    initialized: bool,
 }
 
 /// What a block's final expression (without `;`) does.
@@ -116,21 +118,6 @@ const ENTRY_FLAVORS: &[&str] = &[
     "callback", "move", "pub", "async-main",
 ];
 
-/// Calls that run their argument on another thread or task.
-const SPAWNS: &[(&str, &str)] = &[
-    ("thread::spawn", "on another thread"),
-    ("std::thread::spawn", "on another thread"),
-    ("spawn", "on another thread"),
-    ("tokio::spawn", "as a background task"),
-    ("tokio::task::spawn", "as a background task"),
-    ("task::spawn", "as a background task"),
-    ("tokio::task::spawn_blocking", "on a blocking thread"),
-    ("spawn_blocking", "on a blocking thread"),
-    ("rayon::spawn", "on the thread pool"),
-    ("async_std::task::spawn", "as a background task"),
-];
-
-const SLEEPS: &[&str] = &["thread::sleep", "std::thread::sleep", "sleep", "tokio::time::sleep", "time::sleep", "async_std::task::sleep"];
 
 /// Macros that stop the program (panic).
 const PANICS: &[&str] = &["panic", "unreachable", "todo", "unimplemented"];
@@ -141,23 +128,7 @@ const UNIT_MACROS: &[&str] = &[
     "debug_assert_ne", "info", "warn", "error", "debug", "trace",
 ];
 
-/// `Duration::from_millis(10)` → `10 milliseconds`.
-fn duration_text(src: Src, e: Node) -> Option<String> {
-    let e = unparen(e);
-    if e.kind() != "call_expression" {
-        return None;
-    }
-    let path = callee_path(src, e)?;
-    let unit = match crate::syntax::last_segment(&path) {
-        "from_millis" => "milliseconds",
-        "from_secs" | "from_secs_f64" | "from_secs_f32" => "seconds",
-        "from_micros" => "microseconds",
-        "from_nanos" => "nanoseconds",
-        _ => return None,
-    };
-    let arg = e.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next())?;
-    Some(format!("{} {unit}", src.norm(arg)))
-}
+
 
 /// Macros of the standard library (and `log`): shown as calls; others are `Macro` nodes.
 const KNOWN_MACROS: &[&str] = &[
@@ -342,11 +313,6 @@ fn literal_type(src: Src, value: Node) -> Option<String> {
     )
 }
 
-/// True if `expr` (outside nested closures) carries `flavor`.
-fn has_flavor(expr: &nodex_ir::Expr, flavor: &str) -> bool {
-    expr.flavors.iter().any(|f| f == flavor) || (expr.concept != Concept::Lambda && expr.children.iter().any(|c| has_flavor(c, flavor)))
-}
-
 /// True if `node` uses `?` outside nested closures and blocks of its own.
 fn has_try(node: Node) -> bool {
     if node.kind() == "try_expression" {
@@ -402,12 +368,6 @@ impl Lowering<'_, '_> {
         if cur.is_none() {
             spec = spec.flavor("unreachable");
         }
-        // What the statement's expression does that matters to the reader.
-        for f in ["clone", "may-panic", "lock", "runtime-borrow"] {
-            if spec.expr.as_ref().is_some_and(|e| has_flavor(e, f)) {
-                spec = spec.flavor(f);
-            }
-        }
         let id = self.b.add(spec);
         if let Some(c) = cur {
             self.b.link(c, &id);
@@ -460,7 +420,6 @@ impl Lowering<'_, '_> {
         self.drops.push(Vec::new());
         let mut cur = cur;
         let count = items.len();
-        let mut ended_by_tail = false;
         for (i, s) in items.into_iter().enumerate() {
             let last = i + 1 == count;
             let tail_expr = match s.kind() {
@@ -469,55 +428,52 @@ impl Lowering<'_, '_> {
                 _ => None,
             };
             if last && tail.on() && let Some(e) = tail_expr {
-                // Locals of the block are dropped once its value is computed; the function's
-                // result leaves them all behind.
-                if *tail == Tail::Return {
-                    cur = self.drop_locals(block, cur, true);
-                }
                 cur = self.tail(s, e, cur, tail);
-                ended_by_tail = true;
             } else {
                 cur = self.stmt(s, cur);
             }
         }
-        if !ended_by_tail || *tail != Tail::Return {
-            cur = self.drop_locals(block, cur, false);
+        if let Some(at) = cur {
+            let end = block.end_byte().saturating_sub(1).max(block.start_byte());
+            let span = self.src.index.span(self.src.file, end, block.end_byte());
+            let locals = self.drops.last().into_iter().flatten().rev();
+            let cleanup = self.cleanup_plan(&at, locals);
+            cur = Some(self.drop_locals(at, cleanup, &span, false));
         }
         self.drops.pop();
         self.b.pop_scope();
         cur
     }
 
-    /// Implicit `drop` of the block's locals whose types run code at the end of their scope
-    /// (`impl Drop`, lock guards), in reverse order of declaration. Moved values are skipped.
-    fn drop_locals(&mut self, block: Node, cur: Flow, returning: bool) -> Flow {
-        let Some(locals) = self.drops.last_mut().map(std::mem::take) else { return cur };
-        if cur.is_none() {
-            return cur;
-        }
-        let mut cur = cur;
-        let end = block.end_byte().saturating_sub(1).max(block.start_byte());
-        let span = self.src.index.span(self.src.file, end, block.end_byte());
-        for local in locals.into_iter().rev() {
-            if self.b.moved_from(&local.node, &local.pin) {
-                continue;
-            }
+    fn cleanup_plan<'l>(&self, at: &ExecCursor, locals: impl Iterator<Item = &'l DropLocal>) -> Vec<(DropLocal, bool)> {
+        locals.filter_map(|local| match self.b.initialized_before(&local.binding, at, local.initialized) {
+            Some(false) => None,
+            state => Some((local.clone(), state.is_none())),
+        }).collect()
+    }
+
+    /// Locals that run cleanup, in reverse order of declaration in each exiting scope.
+    fn drop_locals(&mut self, mut at: ExecCursor, cleanup: Vec<(DropLocal, bool)>, span: &nodex_ir::Span, returning: bool) -> ExecCursor {
+        for (local, conditional) in cleanup {
             let when = if returning { "when the function returns" } else { "at the end of its block" };
-            let (label, method) = if is_guard(&local.ty) {
-                (format!("unlock: {} goes out of scope {when}", local.name), None)
+            let (mut label, method) = if is_guard(&local.ty) {
+                (format!("unlock: {} goes out of scope {when}", local.shown), None)
             } else {
                 let bare = crate::syntax::bare_type_name(&local.ty);
-                (format!("drop {} {when} (runs {bare}'s drop)", local.name), self.drop_types.get(&bare).cloned())
+                (format!("drop {} {when} (runs {bare}'s drop)", local.shown), self.drop_types.get(&bare).cloned())
             };
+            if conditional {
+                label.push_str(" if still initialized");
+            }
             let mut spec = NodeSpec::new(Concept::Call, label, format!("}} // drop({})", local.name), span.clone()).flavor("implicit-drop");
             if let Some(m) = method {
                 spec = spec.call(CallTarget { symbol: Some(m), display: format!("{}::drop", crate::syntax::bare_type_name(&local.ty)), external: false });
             }
-            let id = self.place(spec, &cur);
-            self.b.read_with(&id, &local.name, Some(Access::Move));
-            cur = Some(self.b.exec_out(&id, "out", ""));
+            let id = self.place(spec, &Some(at));
+            self.b.read_binding(&id, &local.name, (&local.binding.0, &local.binding.1), Some(Access::Move));
+            at = self.b.exec_out(&id, "out", "");
         }
-        cur
+        at
     }
 
     /// The value a block ends with: the function's result, or the value of a `let`.
@@ -528,8 +484,9 @@ impl Lowering<'_, '_> {
             "match_expression" => self.match_expr(s, e, cur, tail),
             "block" => self.block(e, cur, tail),
             "unsafe_block" => self.unsafe_block(s, e, cur, tail),
+            "assignment_expression" if inclusive_range_to(e).is_none() => self.expr_stmt(s, e, cur),
             "return_expression" | "break_expression" | "continue_expression" | "loop_expression"
-            | "while_expression" | "for_expression" | "assignment_expression" | "compound_assignment_expr" | "unit_expression" => {
+            | "while_expression" | "for_expression" | "compound_assignment_expr" | "unit_expression" => {
                 self.expr_stmt(s, e, cur)
             }
             "macro_invocation" if PANICS.contains(&macro_name(self.src, e).as_str()) || UNIT_MACROS.contains(&macro_name(self.src, e).as_str()) => {
@@ -613,19 +570,11 @@ impl Lowering<'_, '_> {
         if value.is_some_and(|v| unparen(v).kind() == "await_expression") {
             flavors.push("async".into());
         }
-        // `let handle = thread::spawn(…)`: starting other work, keeping a handle to it.
-        let spawn = value.map(unparen).filter(|v| v.kind() == "call_expression").and_then(|v| {
-            let path = callee_path(src, v)?;
-            let (_, how) = SPAWNS.iter().find(|(p, _)| *p == path)?;
-            let arg = v.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next());
-            Some((format!("run {} {how}", arg.map(|a| self.ex.natural(a)).unwrap_or_default()), arg))
-        });
         let shown = single.as_ref().map(|n| self.next_version(n));
-        let (concept, label) = match (&shown, &value_text, &spawn) {
-            (Some(n), Some(_), Some((label, _))) => (Concept::Spawn, format!("{n} = {label}")),
-            (Some(n), Some(v), _) => (Concept::Var, format!("{n} = {v}")),
-            (Some(n), None, _) => (Concept::Var, format!("declare {n}")),
-            (None, v, _) => (
+        let (concept, label) = match (&shown, &value_text) {
+            (Some(n), Some(v)) => (Concept::Var, format!("{n} = {v}")),
+            (Some(n), None) => (Concept::Var, format!("declare {n}")),
+            (None, v) => (
                 Concept::Destructure,
                 match (v, alternative.is_some()) {
                     (Some(v), true) => format!("if {v} matches {}, unpack it", pattern.map(|p| src.norm(p)).unwrap_or_default()),
@@ -639,11 +588,7 @@ impl Lowering<'_, '_> {
             None => src.norm(s),
         };
         let lowered = value.map(|v| self.ex.lower(v));
-        let focus = match concept {
-            Concept::Var => binding.and_then(|b| src.focus(b)),
-            Concept::Spawn => spawn.and_then(|(_, operand)| operand).and_then(|a| src.focus(a)),
-            _ => None,
-        };
+        let focus = binding.and_then(|b| src.focus(b));
         let spec = NodeSpec::new(concept, self.label(label), code, src.span(s)).flavors(flavors).focus(focus).expr(lowered);
         let id = self.place(spec, &cur);
         self.read_all(&id, value);
@@ -686,10 +631,11 @@ impl Lowering<'_, '_> {
             self.b.set_pin_label(id, &pin, &shown);
         }
         if let Some(ty) = ty
+            && !ty.trim_start().starts_with(['&', '*'])
             && (is_guard(&ty) || self.drop_types.contains_key(&crate::syntax::bare_type_name(&ty)))
             && let Some(scope) = self.drops.last_mut()
         {
-            scope.push(DropLocal { name: name.to_owned(), ty, node: id.clone(), pin });
+            scope.push(DropLocal { name: name.to_owned(), shown, ty, binding: (id.clone(), pin), initialized });
         }
     }
 
@@ -853,20 +799,12 @@ impl Lowering<'_, '_> {
                 let concept = if is_break { Concept::Break } else { Concept::Continue };
                 self.simple(s, concept, label, value, flavors, cur)
             }
-            "assignment_expression" | "compound_assignment_expr" => self.assignment(s, e, cur),
+            "assignment_expression" if inclusive_range_to(e).is_none() => self.assignment(s, e, cur),
+            "compound_assignment_expr" => self.assignment(s, e, cur),
             "macro_invocation" => self.macro_stmt(s, e, cur),
             "call_expression" => self.call_stmt(s, e, cur),
             "await_expression" => {
                 let inner = named_children(e).into_iter().next().unwrap_or(e);
-                if inner.kind() == "call_expression"
-                    && let Some(path) = callee_path(src, inner)
-                    && SLEEPS.contains(&path.as_str())
-                {
-                    let arg = inner.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next());
-                    let label = format!("wait {}", arg.map(|a| duration_text(src, a).unwrap_or_else(|| self.ex.natural(a))).unwrap_or_default());
-                    let focus = arg.and_then(|a| src.focus(a));
-                    return self.simple_with_focus(s, Concept::Wait, label, Some(e), vec!["async".into()], focus, cur);
-                }
                 let label = format!("wait for {}", self.ex.natural(inner));
                 self.simple(s, Concept::Await, label, Some(e), Vec::new(), cur)
             }
@@ -900,7 +838,7 @@ impl Lowering<'_, '_> {
                 self.simple(s, Concept::Lambda, label, Some(e), Vec::new(), cur)
             }
             "async_block" => {
-                let label = "create an async block (it runs when awaited)".to_owned();
+                let label = "create a future for this async block".to_owned();
                 self.simple(s, Concept::Lambda, label, Some(e), vec!["async".into()], cur)
             }
             "unit_expression" => cur,
@@ -929,7 +867,34 @@ impl Lowering<'_, '_> {
             }
             None => "return".to_owned(),
         };
-        self.simple(s, Concept::Return, label, e, flavors, cur)
+        if cur.is_none() || self.drops.iter().all(Vec::is_empty) {
+            return self.simple(s, Concept::Return, label, e, flavors, cur);
+        }
+        let spec = NodeSpec::new(Concept::Return, self.label(label), self.src.norm(s), self.src.span(s))
+            .flavors(flavors).focus(e.and_then(|value| self.src.focus(value))).expr(e.map(|value| self.ex.lower(value)));
+        let id = self.place(spec, &cur);
+        self.read_all(&id, e);
+        if let Some(value) = e.map(unparen).filter(|value| value.kind() == "identifier") {
+            self.b.read_with(&id, self.src.text(value), Some(Access::Move));
+        }
+        self.propagate(&id, e);
+        let at = (id.clone(), "out".to_owned());
+        let cleanup = self.cleanup_plan(&at, self.drops.iter().rev().flat_map(|scope| scope.iter().rev()));
+        if !cleanup.is_empty() {
+            self.b.relabel(&id, Concept::Call, self.label(match e {
+                Some(value) => format!("Compute the return value: {}", self.ex.natural(value)),
+                None => "Begin returning".into(),
+            }));
+            if let Some(index) = self.b.index_of(&id) {
+                self.b.add_flavor_at(index, "return-value");
+            }
+            let at = self.b.exec_out(&id, "out", "");
+            let span = self.src.index.span(self.src.file, s.end_byte(), s.end_byte());
+            let end = self.drop_locals(at, cleanup, &span, true);
+            self.place(NodeSpec::new(Concept::Return, if e.is_some() { "Return the computed value" } else { "Return" },
+                "return after cleanup", span).flavor("after-cleanup"), &Some(end));
+        }
+        None
     }
 
     fn unsafe_block(&mut self, s: Node, e: Node, cur: Flow, tail: &Tail) -> Flow {
@@ -1125,7 +1090,7 @@ impl Lowering<'_, '_> {
                 if let Some(p) = pattern {
                     pattern_bindings(src, p, false, &mut names);
                 }
-                if value.is_some_and(|v| unparen(v).kind() == "range_expression") {
+                if value.map(unparen).is_some_and(|v| v.kind() == "range_expression" || inclusive_range_to(v).is_some()) {
                     flavors.push("range".into());
                 }
                 let lowered = value.map(|v| self.ex.lower(v));
@@ -1242,54 +1207,11 @@ impl Lowering<'_, '_> {
     }
 
     fn call_stmt(&mut self, s: Node, e: Node, cur: Flow) -> Flow {
-        let src = self.src;
-        if let Some(path) = callee_path(src, e) {
-            let arg = e.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next());
-            if let Some((_, how)) = SPAWNS.iter().find(|(p, _)| *p == path) {
-                let what = arg.map(|a| self.ex.natural(a)).unwrap_or_default();
-                let label = format!("run {what} {how}");
-                let focus = arg.and_then(|a| src.focus(a));
-                return self.simple_with_focus(s, Concept::Spawn, label, Some(e), Vec::new(), focus, cur);
-            }
-            if SLEEPS.contains(&path.as_str()) {
-                let label = format!("wait {}", arg.map(|a| duration_text(src, a).unwrap_or_else(|| self.ex.natural(a))).unwrap_or_default());
-                let focus = arg.and_then(|a| src.focus(a));
-                return self.simple_with_focus(s, Concept::Wait, label, Some(e), vec!["blocking".into()], focus, cur);
-            }
-            if matches!(path.as_str(), "std::process::exit" | "process::exit" | "exit") {
-                let label = format!("end the program with exit code {}", arg.map(|a| self.ex.natural(a)).unwrap_or_default());
-                let focus = arg.and_then(|a| src.focus(a));
-                return self.simple_with_focus(s, Concept::Return, label, Some(e), vec!["exits".into()], focus, cur);
-            }
-            if matches!(path.as_str(), "drop" | "std::mem::drop" | "mem::drop") {
-                let label = format!("drop {} (free it now)", arg.map(|a| self.ex.natural(a)).unwrap_or_default());
-                return self.simple(s, Concept::Call, label, Some(e), vec!["drop".into()], cur);
-            }
-        }
-        // `tx.send(x)` (also `tx.send(x).unwrap()`): sending a value through a channel.
-        let mut send = e;
-        while let Some((recv, name)) = method_call(send)
-            && matches!(src.text(name), "unwrap" | "expect" | "ok")
-            && unparen(recv).kind() == "call_expression"
-        {
-            send = unparen(recv);
-        }
-        if let Some((receiver, name)) = method_call(send) {
-            let name = src.norm(name);
-            if name == "send" && self.ex.pipeline(send).is_none() {
-                let what = send.child_by_field_name("arguments").and_then(|a| named_children(a).into_iter().next()).map(|a| self.ex.natural(a)).unwrap_or_default();
-                let target = self.ex.natural(receiver);
-                let label = format!("send {what} through {target}");
-                let focus = reference_focus(src, receiver);
-                return self.simple_with_focus(s, Concept::Emit, label, Some(e), vec!["channel".into()], focus, cur);
-            }
-        }
         let mut flavors = Vec::new();
         if self.ex.pipeline(e).is_some() {
             flavors.push("iterator".to_owned());
         }
         let label = self.ex.natural(e);
-        let _ = children;
         self.simple(s, Concept::Call, label, Some(e), flavors, cur)
     }
 }

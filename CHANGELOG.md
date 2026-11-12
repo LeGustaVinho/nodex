@@ -8,6 +8,8 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints explain the paths through `let` conditions and short-circuit operators, which bounds a range includes, and where borrowed values come from. The Guide shows the full explanations, and the Inspector highlights the Rust syntax each explanation describes.
+
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
 - The **Context** picker limits six explorer views to one or more folders and symbols. Nodex remembers the selection for each project and dims Knowledge neighbors outside it.

@@ -35,6 +35,14 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
                             }
                         }
                     }
+                    if let Some(contract) = &s.rust_contract {
+                        let items = existing.rust_contract.get_or_insert_with(Vec::new);
+                        for item in contract {
+                            if !items.contains(item) {
+                                items.push(item.clone());
+                            }
+                        }
+                    }
                     existing.has_flow |= s.has_flow;
                     if existing.origins.len() > 1 && existing.kind.is_type() && !existing.flavors.iter().any(|f| f == "partial") {
                         existing.flavors.push("partial".into());
@@ -82,6 +90,7 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
             }
             if !symbols.contains_key(&from) {
                 external.entry(from.clone()).or_insert_with(|| Symbol {
+                    rust_contract: None,
                     external: false,
                     ..external_symbol(&from, SymbolKind::Namespace, &imp.from_scope, file.language)
                 });
@@ -152,7 +161,7 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
     let mut all: Vec<Symbol> = symbols.into_values().collect();
     all.extend(external.into_values());
     let revisions: BTreeMap<_, _> = files.iter()
-        .filter(|f| f.symbols.iter().any(|s| s.syntax_sites.is_some()))
+        .filter(|f| f.symbols.iter().any(|s| s.syntax_sites.is_some() || s.rust_contract.is_some()))
         .filter_map(|f| Some((f.file.clone(), f.source_revision.clone()?)))
         .collect();
     StructureGraph {
@@ -207,6 +216,7 @@ fn merge_impl_blocks(symbols: &mut BTreeMap<String, Symbol>) -> HashMap<String, 
 
 fn external_symbol(id: &str, kind: SymbolKind, name: &str, language: Language) -> Symbol {
     Symbol {
+        rust_contract: None,
         syntax_sites: None,
         type_info: None,
         value_info: None,

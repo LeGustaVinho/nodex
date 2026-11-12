@@ -160,6 +160,9 @@ pub struct Symbol {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional = false)]
     pub doc: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rust_contract: Option<Vec<reading::ContractItem>>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -791,6 +794,14 @@ pub struct FlowGraph {
     pub source_revision: Option<String>,
     pub nodes: Vec<FlowNode>,
     pub edges: Vec<FlowEdge>,
+    // Source-linked explanations have no execution identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reading: Option<Vec<reading::ReadingSite>>,
+    // Borrow origins available directly on the pins of a Rust Blueprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub borrows: Option<Vec<borrow::BorrowPreview>>,
 }
 
 impl FlowGraph {
@@ -808,6 +819,7 @@ impl FlowGraph {
 
 pub mod borrow;
 pub mod knowledge;
+pub mod reading;
 pub mod semantic;
 pub mod types;
 

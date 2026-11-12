@@ -183,6 +183,7 @@ impl<'a, 't> Collector<'a, 't> {
             return;
         }
         self.symbols.push(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -324,6 +325,7 @@ impl<'a, 't> Collector<'a, 't> {
 
         let signature = src.header(node, node.child_by_field_name("body").or_else(|| first_child_of_kind(node, "declaration_list")));
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -375,6 +377,7 @@ impl<'a, 't> Collector<'a, 't> {
             let params = parameters(src, node);
             let ctor_id = format!("{}..ctor({})", ctx.qualified, id_types(&params).join(", "));
             self.push_or_merge(Symbol {
+                rust_contract: None,
                 syntax_sites: None,
                 type_info: None,
                 value_info: None,
@@ -495,6 +498,7 @@ impl<'a, 't> Collector<'a, 't> {
                 let returns = child.child_by_field_name("type").map(|t| src.norm(t));
                 let signature = src.header(child, Some(fn_body));
                 self.push_or_merge(Symbol {
+                    rust_contract: None,
                     syntax_sites: None,
                     type_info: None,
                     value_info: None,
@@ -591,6 +595,7 @@ impl<'a, 't> Collector<'a, 't> {
         }
         let signature = src.header(lambda, Some(body));
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -702,6 +707,7 @@ impl<'a, 't> Collector<'a, 't> {
         let signature = src.header(node, body);
         let type_text = returns.map(|r| src.norm(r));
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -838,6 +844,7 @@ impl<'a, 't> Collector<'a, 't> {
             let mut acc_flavors = modifiers(src, acc);
             acc_flavors.push(role.into());
             self.symbols.push(Symbol {
+                rust_contract: None,
                 syntax_sites: None,
                 type_info: None,
                 value_info: None,
@@ -905,6 +912,7 @@ impl<'a, 't> Collector<'a, 't> {
             src.header(s, body).trim_end_matches(';').trim().to_owned()
         });
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -950,6 +958,7 @@ impl<'a, 't> Collector<'a, 't> {
         let parent = ns.map(|ns| format!("ns:{ns}"));
         if !self.symbols.iter().any(|s| s.id == qualified) {
             self.symbols.push(Symbol {
+                rust_contract: None,
                 syntax_sites: None,
                 type_info: None,
                 value_info: None,
@@ -970,6 +979,7 @@ impl<'a, 't> Collector<'a, 't> {
         }
         let id = format!("{qualified}.<Main>$(string[])");
         self.symbols.push(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,

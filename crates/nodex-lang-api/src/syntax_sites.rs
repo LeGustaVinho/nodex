@@ -11,6 +11,22 @@ struct Occurrence {
     statement: bool,
 }
 
+/// The Rust grammar parses `..=end` as `..` assigned to `end`. Recognize the joined operator.
+pub fn rust_inclusive_range_to(node: Node<'_>) -> Option<(Node<'_>, Node<'_>)> {
+    if node.kind() != "assignment_expression" {
+        return None;
+    }
+    let dots = node.child_by_field_name("left")?;
+    if dots.kind() != "range_expression" || dots.end_byte() - dots.start_byte() != 2 {
+        return None;
+    }
+    let equal = children(node)
+        .into_iter()
+        .find(|token| token.kind() == "=" && token.start_byte() == dots.end_byte())?;
+    let end = node.child_by_field_name("right")?;
+    Some((equal, end))
+}
+
 pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
     let mut occurrences = Vec::new();
     let mut stack = vec![root];
@@ -56,11 +72,20 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
     occurrences.sort_by_key(|o| (o.site.span.start_byte, o.site.span.end_byte));
     occurrences.dedup_by(|a, b| a.site == b.site && a.owner == b.owner);
     let field_modifiers: Vec<_> = occurrences.iter().filter(|o| o.field_modifier).collect();
+    let mut leading = std::collections::HashMap::<u32, Vec<&Occurrence>>::new();
+    for occurrence in &occurrences {
+        if occurrence.site.span.start_byte < occurrence.owner.start_byte {
+            leading.entry(occurrence.owner.start_byte).or_default().push(occurrence);
+        }
+    }
 
     // Each declaration gets only its header's details; a method body belongs to its flow.
     for symbol in &mut ir.symbols {
         let mut sites = Vec::new();
         for origin in &symbol.origins {
+            if let Some(attributes) = leading.get(&origin.start_byte) {
+                sites.extend(attributes.iter().map(|occurrence| occurrence.site.clone()));
+            }
             // C# field symbols can start at the declarator, after the shared modifiers.
             if symbol.kind == SymbolKind::Field {
                 let end =
@@ -94,6 +119,12 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
     }
 
     for flow in &mut ir.flows {
+        for node in &mut flow.nodes {
+            if let Some(attributes) = leading.get(&node.span.start_byte) {
+                node.syntax_sites.get_or_insert_with(Vec::new)
+                    .extend(attributes.iter().map(|occurrence| occurrence.site.clone()));
+            }
+        }
         let sites: Vec<_> = in_span(&occurrences, &flow.span)
             .filter(|o| o.site.key != "type-import")
             .collect();
@@ -202,6 +233,9 @@ fn syntax_span(language: Language, key: &str, src: Src, token: Node, owner: Node
             token.start_byte(),
             part("type_arguments").map_or(token.end_byte(), |n| n.end_byte()),
         ),
+        (Language::Rust, "range-inclusive") if owner.kind() == "assignment_expression" => {
+            (owner.start_byte(), token.end_byte())
+        }
         (Language::Typescript, "as-const") => (
             token.start_byte(),
             part("const").map_or(token.end_byte(), |n| n.end_byte()),
@@ -516,10 +550,53 @@ fn collect(
                 }
             }
             "range_expression" | "range_pattern" => {
-                emit("range-open", token(".."), false, false);
+                let split_inclusive = n.parent().is_some_and(|parent| {
+                    parent.child_by_field_name("left") == Some(n)
+                        && rust_inclusive_range_to(parent).is_some()
+                });
+                if !split_inclusive {
+                    emit("range-open", token(".."), false, false);
+                }
                 emit("range-inclusive", token("..="), false, false);
             }
+            "assignment_expression" => {
+                if let Some((equal, _)) = rust_inclusive_range_to(n) {
+                    emit("range-inclusive", Some(equal), false, false);
+                }
+            }
             "macro_invocation" => emit("macro", token("!"), false, false),
+            "macro_definition" => emit("macro-definition", token("macro_rules!"), true, true),
+            "trait_item" => emit("trait-contract", token("trait"), true, true),
+            "type_parameters" | "where_clause" | "trait_bounds" | "abstract_type" | "dynamic_type" => {
+                let owner = std::iter::successors(n.parent(), Node::parent)
+                    .take_while(|parent| parent.kind() != "block")
+                    .find(|parent| matches!(parent.kind(), "function_item" | "function_signature_item" | "struct_item"
+                        | "enum_item" | "trait_item" | "impl_item" | "field_declaration" | "type_item" | "associated_type"));
+                let is_return = owner.and_then(|parent| parent.child_by_field_name("return_type"))
+                    .is_some_and(|ty| ty.start_byte() <= n.start_byte() && ty.end_byte() >= n.end_byte());
+                let key = match kind {
+                    "type_parameters" => "type-parameters",
+                    "where_clause" => "where-constraints",
+                    "trait_bounds" => "trait-constraints",
+                    "abstract_type" if is_return => "opaque-return",
+                    "abstract_type" => "generic-parameter-type",
+                    _ => "trait-object",
+                };
+                add(key, n, owner.unwrap_or(n), owner.is_some(), true, None);
+            }
+            "attribute_item" => {
+                if let Some(attribute) = n.named_child(0)
+                    && let Some(name) = attribute.named_child(0)
+                    && let Some(owner) = std::iter::successors(n.next_named_sibling(), Node::next_named_sibling)
+                        .find(|node| node.kind() != "attribute_item" && !node.is_extra())
+                {
+                    match text(name) {
+                        "cfg" => add("cfg", n, owner, true, true, None),
+                        "derive" => add("derive-traits", n, owner, true, true, None),
+                        _ => {}
+                    }
+                }
+            }
             "generic_function" => emit("explicit-type-args", token("::"), false, false),
             "lifetime" => {
                 let mut parent = n.parent();

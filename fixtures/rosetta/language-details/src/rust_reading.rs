@@ -1,0 +1,375 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
+
+use crate::rust_reading_index::Encounter;
+
+pub fn prepare_crew(encounter: &Encounter, crew: &str) -> Option<usize> {
+    let host = |crew: &str| encounter.crew_index.get(crew).map(|&(host, _)| host);
+    host(crew)
+}
+
+pub fn find_local(crew: &str) -> Option<usize> {
+    let owner: HashMap<String, (usize, usize)> = HashMap::new();
+    HashMap::get(&owner, crew).map(|&(host, _)| host)
+}
+
+pub fn supplied_by_caller(crew: &str) -> Option<usize> {
+    let encounter = Encounter {
+        crew_index: HashMap::from([("captain".into(), (3, 2))]),
+    };
+    prepare_crew(&encounter, crew)
+}
+
+pub fn from_caller_only(encounter: &Encounter, crew: &str) -> Option<usize> {
+    let id = |crew: &str| encounter.crew_index.get(crew).map(|&(id, _)| id);
+    id(crew)
+}
+
+pub fn keep_borrow<'a>(map: &'a mut HashMap<&str, String>, key: &str) -> Option<&'a mut String> {
+    map.get_mut(key).map(|entry| {
+        return entry;
+    })
+}
+
+pub fn reborrow_entry<'a>(map: &'a HashMap<&str, (usize, usize)>, key: &str) -> Option<&'a usize> {
+    map.get(key).and_then(|entry| Some(&entry.0))
+}
+
+pub fn unpack_entry<'a>(map: &'a HashMap<&str, (usize, usize)>, key: &str) -> Option<&'a usize> {
+    map.get(key).map(|&(ref item, _)| item)
+}
+
+pub fn changed_capture<'a>(a: &'a i32, b: &'a i32) -> Option<&'a i32> {
+    let mut selected = a;
+    Some(()).map(|_| {
+        selected = b;
+    });
+    Some(()).map(|_| selected)
+}
+
+pub fn borrow_split(values: &mut [i32]) {
+    let (ref before, ref after) = values.split_at_mut(1);
+    let _ = (before, after);
+}
+
+const LIMIT: i32 = 1;
+
+pub fn match_value(x: i32, y: i32) -> i32 {
+    let result = match (x, y) {
+        (LIMIT, value) if value > 0 => value,
+        _ => 0,
+    };
+    result
+}
+
+pub fn shadowed_callback(map: &HashMap<&str, (usize, usize)>, key: &str) -> Option<usize> {
+    map.get(key).map(|&(host, _)| {
+        let host = host + 1;
+        host
+    })
+}
+
+pub fn may_exit_callback(values: &[Option<i32>]) -> Vec<Option<i32>> {
+    values.iter().map(|item| Some((*item)? + 1)).collect()
+}
+
+pub fn fallible(value: Option<Result<i32, &'static str>>) -> Result<Option<i32>, String> {
+    let value = value.transpose().map_err(str::to_owned)?;
+    let Some(value) = value.filter(|&n| n > 0) else {
+        return Ok(None);
+    };
+    Ok(Some(value))
+}
+
+pub fn defaults(value: Option<i32>, fallback: fn() -> i32) -> i32 {
+    let eager = value.unwrap_or(fallback());
+    let lazy = value.unwrap_or_else(fallback);
+    let result = value.ok_or_else(|| "absent");
+    eager + lazy + result.expect("present")
+}
+
+pub fn split(values: &mut [i32], mid: usize) {
+    let (before, after) = values.split_at_mut(mid);
+    if let Some(first) = before.first_mut() {
+        *first += 1;
+    }
+    match after {
+        [first, ..] => *first += 1,
+        _ => {}
+    }
+}
+
+pub trait Label {
+    fn describe<'a, T: AsRef<str>>(&self, value: &'a T) -> &'a str
+    where
+        T: 'a;
+}
+
+#[derive(Clone, Copy)]
+pub struct Number(pub i32);
+
+#[cfg(any(unix, windows))]
+pub fn trait_examples(
+    source: impl AsRef<str>,
+    fallback: &dyn AsRef<str>,
+) -> impl Iterator<Item = i32> {
+    let count = source
+        .as_ref()
+        .parse::<i32>()
+        .unwrap_or_else(|_| fallback.as_ref().len() as i32);
+    0..count
+}
+
+macro_rules! project_macro {
+    ($x:expr) => {
+        $x + 1
+    };
+}
+
+pub fn macros() -> String {
+    let one = project_macro!(1);
+    let numbers = vec![one];
+    assert!(!numbers.is_empty());
+    format!("{numbers:?}")
+}
+
+pub async fn get_number() -> i32 {
+    2
+}
+
+pub async fn deferred() -> i32 {
+    let count = 2;
+    let task = async move { get_number().await + count };
+    task.await
+}
+
+pub fn protected() -> i32 {
+    let shared = Arc::new(Mutex::new(0));
+    let other = Arc::clone(&shared);
+    let thread = std::thread::spawn(move || {
+        *other.lock().unwrap() = 5;
+    });
+    thread.join().unwrap();
+    let lock = RwLock::new(3);
+    let _guard = lock.read().unwrap();
+    *shared.lock().unwrap()
+}
+
+pub struct Custom;
+impl Custom {
+    fn get(&self, _key: usize) -> Self {
+        Self
+    }
+    fn map(self, _callback: fn(i32) -> i32) -> i32 {
+        42
+    }
+    fn unwrap(self) -> i32 {
+        42
+    }
+}
+
+pub fn not_a_lookup() -> i32 {
+    Custom.get(0).map(|value| value + 1) + Custom.unwrap()
+}
+
+pub fn synchronous_spawn() -> i32 {
+    mod thread {
+        pub fn spawn(work: impl FnOnce() -> i32) -> i32 {
+            work()
+        }
+    }
+    thread::spawn(|| 1);
+    let value = thread::spawn(|| 42);
+    value
+}
+
+pub fn effects_and_slices(values: &mut [i32], slot: &mut Option<i32>) -> i32 {
+    let chosen = slot.take().unwrap_or_else(|| 5);
+    let mut totals = HashMap::<i32, i32>::new();
+    let total = totals.entry(chosen).or_default();
+    *total += 1;
+    let (before, after) = values.split_at_mut(1);
+    let first = &before[0];
+    after[0] += *first;
+    after.iter().copied().sum::<i32>() + *total
+}
+
+pub fn ordinary_effect_names() -> i32 {
+    fn drop(value: i32) -> i32 { value }
+    fn exit() -> i32 { 1 }
+    fn sleep() -> i32 { 2 }
+    struct Counter;
+    impl Counter {
+        fn send(&self, value: i32) -> i32 { value }
+    }
+    drop(3);
+    exit();
+    sleep();
+    Counter.send(4);
+    10
+}
+
+pub fn ownership_labels(from_caller: &i32, change: bool) -> i32 {
+    let left = (1, 2);
+    let mut right = 3;
+    let view = &left.0;
+    let alias = view;
+    let mut cursor = &left.0;
+    if change {
+        cursor = &right;
+    }
+    let picked = *cursor;
+    let writer = &mut right;
+    *writer += *alias + picked + *from_caller;
+    right
+}
+
+pub struct MapView<'a>(&'a HashMap<&'a str, usize>);
+
+impl<'a> std::ops::Deref for MapView<'a> {
+    type Target = HashMap<&'a str, usize>;
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+pub fn opaque_receiver(view: MapView<'_>, key: &str) -> Option<usize> {
+    view.get(key).copied()
+}
+
+struct BorrowedSlice<'a>(&'a mut [i32]);
+
+impl std::ops::Deref for BorrowedSlice<'_> {
+    type Target = [i32];
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl std::ops::DerefMut for BorrowedSlice<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+    }
+}
+
+pub fn split_through_wrapper(input: &mut [i32]) -> i32 {
+    let mut wrapper = BorrowedSlice(input);
+    let (first, second) = wrapper.split_at_mut(1);
+    first[0] + second[0]
+}
+
+pub fn capture_only_field() -> String {
+    let pair = (String::from("retained"), 3_u32);
+    let callback = move || pair.1;
+    assert_eq!(callback(), 3);
+    pair.0
+}
+
+pub struct Cleanup;
+
+impl Cleanup {
+    fn read(&self) -> i32 { 7 }
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {}
+}
+
+pub fn cleanup_on_return(early: bool) -> i32 {
+    let outer: Cleanup = Cleanup;
+    if early {
+        let inner: Cleanup = Cleanup;
+        return inner.read() + outer.read();
+    }
+    outer.read()
+}
+
+pub fn return_owned_cleanup_value() -> Cleanup {
+    let local: Cleanup = Cleanup;
+    local
+}
+
+pub fn reading_ranges(values: &[i32], start: usize, end: usize) -> [&[i32]; 6] {
+    [
+        &values[start..end],
+        &values[start..=end],
+        &values[..end],
+        &values[..=end],
+        &values[start..],
+        &values[..],
+    ]
+}
+
+pub fn reading_inclusive_end(end: usize) -> std::ops::RangeToInclusive<usize> {
+    ..=end
+}
+
+pub fn reading_explicit_return_range() -> std::ops::RangeInclusive<usize> {
+    return 1..=3;
+}
+
+pub fn reading_boolean_checks(left: bool, right: fn() -> bool) -> (bool, bool, bool) {
+    (left && right(), left || right(), left & right())
+}
+
+pub fn reading_let_conditions(mut items: Vec<i32>, minimum: i32) -> i32 {
+    let mut total = 0;
+    while let Some(value) = items.pop() && value >= minimum {
+        total += value;
+    }
+    if let Some(value) = items.pop() && value > minimum && let Some(next) = items.pop() && next > value {
+        total += next;
+    }
+    while let Some(value) = items.pop() {
+        total += value;
+    }
+    total
+}
+
+pub fn reading_shadowed_conditions(input: Option<i32>, x: i32, y: i32) -> i32 {
+    let mut total = 0;
+    if let Some(x) = input && x > 0 {
+        total += x;
+    }
+    let mut values = 0..2;
+    while let Some(y) = values.next() && y > 0 {
+        total += y;
+    }
+    if let Some(x) = Some(x) && x > 0 {
+        total += x;
+    }
+    total + y
+}
+
+pub fn reading_let_else(input: Option<i32>, candidates: &[Option<i32>]) -> i32 {
+    let Some(value) = input else { return -1; };
+    for candidate in candidates {
+        let Some(_) = candidate else { continue; };
+        return value;
+    }
+    0
+}
+
+pub fn reading_let_else_closure(input: Option<i32>) -> i32 {
+    let convert_with_default = |input: Option<i32>| {
+        let Some(value) = input else { return 0; };
+        value
+    };
+    convert_with_default(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uses_only_the_first_item_of_a_present_entry() {
+        let encounter = Encounter {
+            crew_index: HashMap::from([("captain".into(), (3, 2))]),
+        };
+        assert_eq!(prepare_crew(&encounter, "captain"), Some(3));
+        assert_eq!(prepare_crew(&encounter, "missing"), None);
+        assert_eq!(encounter.crew_index["captain"], (3, 2));
+    }
+}

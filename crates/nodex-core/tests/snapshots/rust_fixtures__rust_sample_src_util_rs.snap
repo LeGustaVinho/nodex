@@ -4,7 +4,7 @@ expression: outline_file(ir)
 ---
 == crate::util::sleep_ms
 Entry — when sleep_ms(ms) is called
-Wait — wait ms milliseconds
+Call — thread::sleep(Duration::from_millis(ms))
 == crate::util::count_slowly
 Entry — when count_slowly(n) is called
 Var — count = 0

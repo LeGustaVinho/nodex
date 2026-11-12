@@ -264,9 +264,9 @@ async fn exercise() {
         ("for ", "0..count", None),
         ("match ", "value.kind", None),
         ("task().await", "task()", None),
-        ("tokio::time::sleep", "delay", None),
-        ("std::thread::spawn", "worker", None),
-        ("io.tx.send(", "tx", Some("io.")),
+        ("tokio::time::sleep", "tokio::time::sleep(delay)", None),
+        ("std::thread::spawn", "spawn", Some("std::thread::")),
+        ("io.tx.send(", "unwrap", Some("io.tx.send(value).")),
         ("panic!", r#""<img>  🐈""#, None),
     ] {
         focus(&statement(graph, code).focus, primary, prefix);

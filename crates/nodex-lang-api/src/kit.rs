@@ -1,6 +1,6 @@
 //! The lowering kit: helpers shared by every language frontend.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nodex_ir::{
     Access, Binding, BindingForm, BindingOrigin, CallTarget, Concept, Expr, FlowEdge, FlowEdgeKind, FlowGraph, FlowNode, Focus, Language, NodeId, Pin, PinKind,
@@ -369,9 +369,52 @@ impl FlowBuilder {
         self.nodes.iter().find(|n| n.id == node)?.outputs.iter().find(|p| p.id == pin)?.ty.clone()
     }
 
-    /// True when the value defined at `node`/`pin` was moved away (a data wire that moves it).
-    pub fn moved_from(&self, node: &str, pin: &str) -> bool {
-        self.edges.iter().any(|e| e.from == node && e.from_pin == pin && e.access == Some(Access::Move))
+    /// Whether a local is still initialized on a cleanup path. A structured join may
+    /// hide writes or moves on its arms, so that case can remain conditional.
+    pub fn initialized_before(&self, binding: &ExecCursor, at: &ExecCursor, initially: bool) -> Option<bool> {
+        let moves: HashSet<_> = self.edges.iter().filter(|e| {
+            e.from == binding.0 && e.from_pin == binding.1 && e.access == Some(Access::Move)
+                && self.nodes.iter().find(|node| node.id == e.to)
+                    .is_some_and(|node| !node.flavors.iter().any(|flavor| flavor == "implicit-drop"))
+        }).map(|e| e.to.as_str()).collect();
+        let writes_binding = |node: &FlowNode| node.binding_writes.iter()
+            .any(|origin| origin.node == binding.0 && origin.pin == binding.1);
+        let writes = self.nodes.iter().any(writes_binding);
+        if moves.is_empty() && !writes {
+            return Some(initially);
+        }
+        let mut cursor = (at.0.as_str(), at.1.as_str());
+        loop {
+            let node = self.nodes.iter().find(|node| node.id == cursor.0)?;
+            if node.id == binding.0 {
+                return Some(initially);
+            }
+            if cursor.1 == "out" && node.outputs.iter().any(|pin| {
+                pin.kind == PinKind::Exec && !matches!(pin.id.as_str(), "out" | "error")
+            }) {
+                return None;
+            }
+            if writes_binding(node) {
+                return Some(true);
+            }
+            if moves.contains(node.id.as_str()) {
+                return Some(false);
+            }
+            let mut predecessors = self.edges.iter().filter(|edge| edge.kind == FlowEdgeKind::Exec && edge.to == node.id);
+            let edge = predecessors.next()?;
+            if predecessors.next().is_some() {
+                return None;
+            }
+            // Exec edges point from earlier nodes during lowering.
+            cursor = (&edge.from, &edge.from_pin);
+        }
+    }
+
+    /// Changes the presentation while keeping the original statement ID for navigation and replay.
+    pub fn relabel(&mut self, node: &str, concept: Concept, label: String) {
+        let node = self.node_mut(node);
+        node.concept = concept;
+        node.label = label;
     }
 
     /// Changes the label of a pin (Rust shadowing: `value₂`).
@@ -422,7 +465,13 @@ impl FlowBuilder {
         let Some((def_node, def_pin)) = self.lookup(name) else {
             return;
         };
-        if &def_node == node {
+        self.read_binding(node, name, (&def_node, &def_pin), access);
+    }
+
+    /// Reads an exact binding even when a newer local with the same name is in scope.
+    pub fn read_binding(&mut self, node: &NodeId, name: &str, binding: (&str, &str), access: Option<Access>) {
+        let (def_node, def_pin) = binding;
+        if def_node == node {
             return;
         }
         let pin = format!("use:{name}");
@@ -444,8 +493,8 @@ impl FlowBuilder {
             binding: None,
         });
         self.edges.push(FlowEdge {
-            from: def_node,
-            from_pin: def_pin,
+            from: def_node.to_owned(),
+            from_pin: def_pin.to_owned(),
             to: node.clone(),
             to_pin: pin,
             kind: FlowEdgeKind::Data,
@@ -512,6 +561,8 @@ impl FlowBuilder {
             source_revision: None,
             nodes: self.nodes,
             edges: self.edges,
+            reading: None,
+            borrows: None,
         }
     }
 }

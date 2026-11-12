@@ -3,14 +3,16 @@
 use std::collections::HashMap;
 
 use nodex_ir::{
-    FlowGraph, Span, SymbolId,
-    borrow::{BorrowArgument, BorrowBinding, BorrowCall, BorrowModel, BorrowPath, BorrowRoot},
+    BindingOrigin, Concept, FlowGraph, FlowNode, Pin, Span, SymbolId, ValueKind,
+    borrow::{BorrowArgument, BorrowBinding, BorrowCall, BorrowFact, BorrowInput, BorrowModel, BorrowPath, BorrowPreview, BorrowRoot, BorrowRule, BorrowSource},
     semantic::{ByteRange, RustNominalType},
+    types::TypeShape,
 };
 use serde::Serialize;
 use ts_rs::TS;
 
 use crate::{knowledge::RawCallSite, project::Project};
+pub use nodex_ir::borrow::BorrowOriginKind;
 
 const PAGE_SIZE: usize = 20;
 const MAX_DEPTH: usize = 8;
@@ -22,6 +24,7 @@ pub(crate) struct CallIndex {
     incoming: HashMap<SymbolId, Vec<CallLink>>,
     method_owners: HashMap<SymbolId, SymbolId>,
     nominal_types: HashMap<ByteRange, Option<(SymbolId, bool)>>,
+    rules: HashMap<ByteRange, Option<BorrowRule>>,
 }
 
 struct CallLink {
@@ -37,8 +40,18 @@ impl CallIndex {
         graph: &nodex_ir::StructureGraph,
         locator: &crate::semantic::Locator,
         types: impl Iterator<Item = &'a RustNominalType>,
+        borrow_facts: impl Iterator<Item = &'a BorrowFact>,
     ) -> Self {
         let mut index = Self::default();
+        for fact in borrow_facts {
+            index.rules.entry(fact.site.clone())
+                .and_modify(|rule| {
+                    if rule.as_ref() != Some(&fact.rule) {
+                        *rule = None;
+                    }
+                })
+                .or_insert_with(|| Some(fact.rule.clone()));
+        }
         let rust: std::collections::HashSet<_> = graph
             .symbols
             .iter()
@@ -136,6 +149,12 @@ impl CallIndex {
             .as_deref()
     }
 
+    fn rule(&self, span: &Span) -> Option<&BorrowRule> {
+        self.rules.get(&ByteRange {
+            file: span.file.clone(), start: span.start_byte, end: span.end_byte,
+        })?.as_ref()
+    }
+
     fn actual_paths<'a>(
         &self,
         callee: &FlowGraph,
@@ -185,17 +204,6 @@ pub struct BorrowLocation {
     pub revision: Option<String>,
 }
 
-#[derive(Serialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
-#[ts(export)]
-pub enum BorrowOriginKind {
-    Local,
-    Shared,
-    Temporary,
-    Static,
-    Caller,
-    Unknown,
-}
-
 #[derive(Serialize, TS, Clone, Debug, PartialEq, Eq)]
 #[ts(export)]
 pub struct BorrowOrigin {
@@ -237,10 +245,7 @@ pub(crate) fn resolve(
 ) -> Option<BorrowOrigins> {
     let (flow, model) = project.borrow_model(symbol)?;
     let node = flow.node(node_id)?;
-    let mut start = None;
-    let mut end = None;
-    let mut name = None;
-    if let Some(path) = expr_path {
+    let paths = if let Some(path) = expr_path {
         let mut parts = path.split('.');
         if parts.next()? != "0" {
             return None;
@@ -256,53 +261,14 @@ pub(crate) fn resolve(
             .filter(|site| matches!(site.key.as_str(), "borrow" | "borrow-mut"))
             .min_by_key(|site| site.span.start_byte)
             .map(|site| &site.span);
-        start = Some(anchor.map_or(expr.span.start_byte, |s| s.start_byte));
-        end = Some(expr.span.end_byte);
+        paths_at(model, anchor.map_or(expr.span.start_byte, |s| s.start_byte), expr.span.end_byte).to_vec()
     } else if let Some(id) = pin {
         let selected = node
             .inputs
             .iter()
             .chain(&node.outputs)
             .find(|p| p.id == id)?;
-        if let Some(decl) = &selected.declaration {
-            start = Some(decl.start_byte);
-            end = Some(decl.end_byte);
-        } else {
-            name = id
-                .strip_prefix("var:")
-                .or_else(|| id.strip_prefix("use:"))
-                .or_else(|| id.strip_prefix("write:"));
-        }
-    }
-    let paths = if let (Some(start), Some(end)) = (start, end) {
-        model
-            .uses
-            .iter()
-            .filter(|site| site.span.start_byte == start && site.span.end_byte >= end)
-            .min_by_key(|site| site.span.end_byte)
-            .map(|site| site.paths.clone())
-            .unwrap_or_default()
-    } else if let Some(name) = name {
-        let mut paths = Vec::new();
-        for site in model.uses.iter().filter(|site| {
-            node.span.contains_byte(site.span.start_byte)
-                && site.paths.iter().any(|path| {
-                    path.through
-                        .last()
-                        .is_some_and(|binding| binding.name == name)
-                })
-        }) {
-            for path in site.paths.iter().filter(|path| {
-                path.through
-                    .last()
-                    .is_some_and(|binding| binding.name == name)
-            }) {
-                if !paths.contains(path) {
-                    paths.push(path.clone());
-                }
-            }
-        }
-        paths
+        pin_paths(model, node, selected)
     } else {
         Vec::new()
     };
@@ -314,6 +280,7 @@ pub(crate) fn resolve(
         next_offset: None,
         partial: false,
         visits: 0,
+        follow_callers: true,
     };
     let mut origins = query.paths(flow, model, &paths, &[], 0, None);
     if origins.is_empty() {
@@ -326,6 +293,109 @@ pub(crate) fn resolve(
     })
 }
 
+fn paths_at(model: &BorrowModel, start: u32, end: u32) -> &[BorrowPath] {
+    let at = model.uses.partition_point(|site| site.span.start_byte < start);
+    model.uses[at..].iter().take_while(|site| site.span.start_byte == start)
+        .find(|site| site.span.end_byte >= end).map_or(&[], |site| site.paths.as_slice())
+}
+
+fn pin_paths(model: &BorrowModel, node: &FlowNode, pin: &Pin) -> Vec<BorrowPath> {
+    if let Some(decl) = &pin.declaration {
+        return paths_at(model, decl.start_byte, decl.end_byte).to_vec();
+    }
+    let Some(name) = pin.id.strip_prefix("var:").or_else(|| pin.id.strip_prefix("use:"))
+        .or_else(|| pin.id.strip_prefix("write:")) else { return Vec::new() };
+    let at = model.uses.partition_point(|site| site.span.start_byte < node.span.start_byte);
+    let mut paths = Vec::new();
+    for site in model.uses[at..].iter().take_while(|site| node.span.contains_byte(site.span.start_byte)) {
+        for path in &site.paths {
+            if path.through.last().is_some_and(|binding| binding.name == name) && !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+    }
+    paths
+}
+
+pub(crate) fn attach_previews(project: &Project, calls: &CallIndex, flow: &mut FlowGraph) {
+    let Some((_, model)) = project.borrow_model(&flow.symbol) else { return };
+    let mut previews = Vec::new();
+    // Alias initializers can inherit a representation from the exact read on the right.
+    let mut filled_alias = false;
+    for node in &mut flow.nodes {
+        if node.concept == Concept::Var
+            && let Some(info) = node.expr.as_ref().filter(|expr| expr.concept == Concept::Var).and_then(|expr| expr.value_info)
+            && let Some(pin) = node.outputs.iter_mut().find(|pin| pin.id.starts_with("var:"))
+            && pin.ty.is_none() && pin.value_info.is_none()
+        {
+            pin.value_info = Some(info);
+            filled_alias = true;
+        }
+    }
+    if filled_alias {
+        nodex_lang_api::value_shapes::carry_to_uses(flow);
+    }
+    for node in &flow.nodes {
+        for pin in node.inputs.iter().chain(&node.outputs) {
+            let shape = pin.type_info.as_ref().map(|info| &info.shape);
+            if !pin.value_info.is_some_and(|info| info.kind == ValueKind::Reference)
+                && !matches!(shape, Some(TypeShape::Indirect { pointer: false, .. }))
+            {
+                continue;
+            }
+            let paths = pin_paths(model, node, pin);
+            let sources = preview_sources(project, calls, flow, model, &paths);
+            previews.push(BorrowPreview { node: node.id.clone(), pin: pin.id.clone(), sources });
+        }
+    }
+    if !previews.is_empty() {
+        flow.borrows = Some(previews);
+    }
+    if let Some(reading) = &flow.reading {
+        use nodex_ir::reading::ReadingContent;
+        let preview = |span: &Span| preview_sources(project, calls, flow, model,
+            paths_at(model, span.start_byte, span.end_byte));
+        let mut reading = reading.clone();
+        for site in &mut reading {
+            match &mut site.content {
+                ReadingContent::Detail { borrow: true, .. } => site.borrow_sources = Some(preview(&site.span)),
+                ReadingContent::Pattern { parts, .. } => {
+                    for part in parts.iter_mut().filter(|part| matches!(part.access, Some(nodex_ir::Access::Borrow | nodex_ir::Access::BorrowMut))) {
+                        part.borrow_sources = Some(preview(&part.span));
+                    }
+                }
+                _ => {}
+            }
+        }
+        flow.reading = Some(reading);
+    }
+}
+
+fn preview_sources(project: &Project, calls: &CallIndex, flow: &FlowGraph, model: &BorrowModel, paths: &[BorrowPath]) -> Vec<BorrowSource> {
+    let mut resolver = Resolver {
+        project, calls, offset: 0, page_end: None, next_offset: None,
+        partial: false, visits: 0, follow_callers: false,
+    };
+    let mut sources = Vec::new();
+    for origin in resolver.paths(flow, model, paths, &[], 0, None) {
+        let binding = origin.owner.as_ref().filter(|owner| owner.flow == flow.symbol).and_then(|owner| {
+            Some(BindingOrigin { node: owner.node.clone()?, pin: owner.pin.clone()? })
+        });
+        let source = BorrowSource {
+            kind: origin.kind, owner: origin.owner.map(|owner| owner.label), place: origin.borrowed, binding,
+        };
+        if !sources.contains(&source) {
+            sources.push(source);
+        }
+    }
+    if resolver.partial || sources.is_empty() {
+        let unknown = BorrowSource { kind: BorrowOriginKind::Unknown, owner: None, place: None, binding: None };
+        if !sources.contains(&unknown) {
+            sources.push(unknown);
+        }
+    }
+    sources
+}
 struct Frame<'a> {
     callee: &'a str,
     caller: &'a FlowGraph,
@@ -341,9 +411,14 @@ struct Resolver<'a> {
     next_offset: Option<usize>,
     partial: bool,
     visits: usize,
+    follow_callers: bool,
 }
 
 impl Resolver<'_> {
+    fn rule(&self, span: &Span) -> Option<&BorrowRule> {
+        self.project.rust_semantics_ready().then(|| self.calls.rule(span)).flatten()
+    }
+
     fn paths(
         &mut self,
         flow: &FlowGraph,
@@ -384,10 +459,50 @@ impl Resolver<'_> {
                     "Temporary value",
                 )],
                 BorrowRoot::Call(span) => self.call(flow, model, span, stack, depth, context),
-                BorrowRoot::Parameter(index) => self.parameter(flow, *index, stack, depth, context),
+                BorrowRoot::CallComponent { call, index } => {
+                    if let Some(BorrowRule::Split { input, at }) = self.rule(call).cloned()
+                        && let Some(site) = model.calls.iter().find(|site| &site.span == call)
+                    {
+                        let range = if *index == 0 { format!("[..{at}]") } else { format!("[{at}..]") };
+                        let mut found = self.paths(flow, model, input_paths(site, input), stack, depth + 1, context);
+                        for origin in &mut found {
+                            if let Some(place) = &mut origin.borrowed {
+                                place.push_str(&range);
+                            }
+                        }
+                        found
+                    } else {
+                        vec![BorrowOrigin::empty(BorrowOriginKind::Unknown)]
+                    }
+                }
+                BorrowRoot::Parameter(index) => {
+                    let mut origins = self.parameter(flow, *index, stack, depth, context);
+                    for origin in origins.iter_mut().filter(|origin| origin.kind == BorrowOriginKind::Caller && origin.borrowed.is_none()) {
+                        origin.borrowed = model.parameters.get(*index).and_then(Option::as_ref).map(|binding| binding.name.clone());
+                    }
+                    origins
+                }
+                BorrowRoot::CallbackInput { call, argument } => {
+                    let paths = match self.rule(call) {
+                        Some(BorrowRule::Callback { input, argument: callback }) if callback == argument => {
+                            model.calls.iter().find(|site| &site.span == call)
+                                .map_or(&[][..], |site| input_paths(site, *input))
+                        }
+                        _ => &[],
+                    };
+                    self.paths(flow, model, paths, stack, depth + 1, context)
+                }
+                BorrowRoot::Field { site, base, referent } => match self.rule(site) {
+                    Some(BorrowRule::Field { by_reference: false }) =>
+                        vec![binding_origin(flow, base, BorrowOriginKind::Local)],
+                    Some(BorrowRule::Field { by_reference: true }) =>
+                        self.paths(flow, model, referent, stack, depth + 1, context),
+                    _ => vec![BorrowOrigin::empty(BorrowOriginKind::Unknown)],
+                },
                 BorrowRoot::TypedPlace { binding, fallback } => {
                     use nodex_ir::{ValueKind, ValueQualifier};
-                    let info = self.project.borrow_binding_type(&binding.span);
+                    let info = self.project.rust_semantics_ready()
+                        .then(|| self.project.borrow_binding_type(&binding.span)).flatten();
                     match info.map(|info| (info.kind, info.qualifier)) {
                         Some((ValueKind::Pointer, Some(ValueQualifier::Unique))) => {
                             vec![binding_origin(flow, binding, BorrowOriginKind::Local)]
@@ -440,6 +555,34 @@ impl Resolver<'_> {
         depth: usize,
         context: Option<&BorrowLocation>,
     ) -> Vec<BorrowOrigin> {
+        let Some(call) = model.calls.iter().find(|call| &call.span == span) else {
+            return vec![BorrowOrigin::empty(BorrowOriginKind::Unknown)];
+        };
+        if self.project.rust_semantics_ready() && let Some(rule) = self.calls.rule(span) {
+            match rule {
+                BorrowRule::Lookup { input, projection } => {
+                    let mut origins = self.paths(flow, model, input_paths(call, *input), stack, depth + 1, context);
+                    for origin in &mut origins {
+                        if let Some(borrowed) = &mut origin.borrowed {
+                            borrowed.push_str(projection);
+                        }
+                    }
+                    return origins;
+                }
+                BorrowRule::Callback { argument, .. } => {
+                    let paths = call.callbacks.iter().find(|callback| callback.argument == *argument)
+                        .map_or(&[][..], |callback| callback.returns.as_slice());
+                    return self.paths(flow, model, paths, stack, depth + 1, context);
+                }
+                BorrowRule::Wrap => {
+                    let paths = call.arguments.first().map_or(&[][..], |arg| arg.value.as_slice());
+                    return self.paths(flow, model, paths, stack, depth + 1, context);
+                }
+                BorrowRule::Payload { input } =>
+                    return self.paths(flow, model, input_paths(call, *input), stack, depth + 1, context),
+                BorrowRule::Field { .. } | BorrowRule::Split { .. } => {}
+            }
+        }
         let Some(target) = self.calls.target(span) else {
             return vec![BorrowOrigin::empty(BorrowOriginKind::Unknown)];
         };
@@ -448,9 +591,6 @@ impl Resolver<'_> {
             return vec![BorrowOrigin::empty(BorrowOriginKind::Unknown)];
         }
         let Some((callee, callee_model)) = self.project.borrow_model(target) else {
-            return vec![BorrowOrigin::empty(BorrowOriginKind::Unknown)];
-        };
-        let Some(call) = model.calls.iter().find(|call| &call.span == span) else {
             return vec![BorrowOrigin::empty(BorrowOriginKind::Unknown)];
         };
         let mut frames: Vec<_> = stack.iter().map(|frame| Frame { ..*frame }).collect();
@@ -494,6 +634,9 @@ impl Resolver<'_> {
                 depth + 1,
                 context,
             );
+        }
+        if !self.follow_callers {
+            return vec![BorrowOrigin::empty(BorrowOriginKind::Caller)];
         }
         let Some(sites) = self.calls.incoming.get(&flow.symbol) else {
             return vec![BorrowOrigin::empty(BorrowOriginKind::Caller)];
@@ -579,6 +722,14 @@ impl Resolver<'_> {
         }
         origins
     }
+}
+
+fn input_paths(call: &BorrowCall, input: BorrowInput) -> &[BorrowPath] {
+    let argument = match input.argument {
+        Some(index) => call.arguments.get(index),
+        None => call.receiver.as_ref(),
+    };
+    argument.map_or(&[], |argument| if input.value { &argument.value } else { &argument.place })
 }
 
 fn actual(call: &BorrowCall, index: usize) -> Option<(&BorrowArgument, bool)> {

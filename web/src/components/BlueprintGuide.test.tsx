@@ -116,3 +116,63 @@ it("guides a selected branch and keeps explanations independent of the guide pre
     env.IS_REACT_ACT_ENVIRONMENT = oldEnvironment;
   }
 });
+
+it("explores a branch inside an expression without advancing to another execution node", () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const env = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previousEnvironment = env.IS_REACT_ACT_ENVIRONMENT;
+  env.IS_REACT_ACT_ENVIRONMENT = true;
+  const settings = useUi.getState();
+  const example: FlowGraph = {
+    ...flow, source_revision: "original", reading: [
+      { node: "Check input", path: "0", span, basis: "Syntax", content: {
+        kind: "Detail", label: "Create a function value",
+        text: "The function body waits until this value is called, even though it is written on the same line as its definition.",
+        definition: { ...span, file: "other.rs" }, borrow: false,
+      } },
+      { node: "Check input", path: "0.1", span, basis: "TypeAnalysis", content: {
+        kind: "Paths", input: "Look up a value", deferred: true,
+        branches: [{ label: "Found", action: "Run the callback", output: "Some(value)" }, { label: "Missing", action: "Skip the callback", output: "None" }],
+      } },
+      { node: "Check input", span, basis: "Syntax", content: {
+        kind: "Pattern", input: "Read the value", route: "true", parts: [],
+      } },
+    ],
+  };
+  function Harness() {
+    const [active, setActive] = useState("Check input");
+    return <BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode={active} onStep={(_, next) => setActive(next.id)} />;
+  }
+  const button = (name: string) => [...host.querySelectorAll("button")].find((entry) => entry.textContent === name)!;
+  try {
+    act(() => {
+      useUi.setState({ blueprintExplanations: true });
+      root.render(<Harness />);
+    });
+    const detail = host.querySelector('section[aria-label="Create a function value"]');
+    expect(detail?.querySelector("p")?.textContent).toContain("The function body waits until this value is called");
+    expect(detail?.textContent).not.toContain("Show macro definition");
+    act(() => detail!.querySelector("button")!.click());
+    expect(useUi.getState().codeFocus).toEqual(span);
+    expect(useUi.getState().codeFocusRevision).toBe("original");
+    expect(host.querySelector('section[aria-label="When called"]')?.textContent).toContain("Skip the callback");
+    expect(host.querySelector('section[aria-label="Unpack a pattern"]')?.textContent).toContain("When the pattern matches");
+    act(() => button("Missing").click());
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Missing → None");
+    expect(host.textContent).toContain("Check input");
+    act(() => button("Back").click());
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    act(() => button("Missing").click());
+    act(() => button("View after block").click());
+    expect(host.textContent).toContain("After block");
+    act(() => button("Back").click());
+    expect(host.textContent).toContain("Check input");
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(button("Back").disabled).toBe(true);
+  } finally {
+    act(() => root.unmount());
+    useUi.setState(settings);
+    env.IS_REACT_ACT_ENVIRONMENT = previousEnvironment;
+  }
+});

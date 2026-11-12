@@ -13,6 +13,7 @@ mod debug;
 pub mod instrument;
 mod knowledge;
 pub mod project;
+mod reading;
 pub mod semantic;
 mod structure;
 mod syntax;
@@ -242,7 +243,9 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
     nodex_lang_api::syntax_sites::annotate(&mut ir, root, src, false);
     nodex_lang_api::value_shapes::annotate(&mut ir, root, src);
     nodex_lang_api::blueprint_types::annotate(&mut ir, root, src, &Default::default());
+    let (reading, _, _) = reading::collect(src, root, &Default::default());
     for (job, graph) in bodies.iter().zip(&mut ir.flows) {
+        graph.attach_reading(&reading);
         let model = borrow::analyze(src, job, graph);
         if !model.uses.is_empty() {
             borrow::annotate_control_values(graph, &model);

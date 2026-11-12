@@ -222,7 +222,7 @@ function FunctionBlueprintView() {
     <div className="blueprint-workspace">
     <ReplayBar flow={flowSymbol} hasObservedTransition={!!observedEdge} />
     {blueprintGuide && flow.data && (
-      <BlueprintGuide key={flowSymbol} flows={[flow.data]} activeFlow={flowSymbol} activeNode={activeNode} replaying={!!replay}
+      <BlueprintGuide key={flowSymbol} flows={[flow.data]} activeFlow={flowSymbol} activeNode={activeNode} replaying={!!replay} sources={sources}
         onStep={(flow, node) => select({ kind: "flow-node", flow, id: node.id }, node.span)} />
     )}
     <GraphCanvas

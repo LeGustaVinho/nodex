@@ -11,6 +11,7 @@ import { LanguageBadges } from "./LanguageBadges";
 import { TypeLabel } from "./TypeLabel";
 import { blueprintTypeColor } from "../graph/blueprintTypes";
 import { useUi } from "../store";
+import { BlueprintReading } from "./BlueprintReading";
 
 const PIN = 18;
 /** Flavors that say nothing new on an operation node. */
@@ -18,7 +19,7 @@ const QUIET = new Set(["stage", "target", "loose-equality", "truthiness", "prefi
 
 /** A pure node from an expression tree: an operation (`≥ Greater or equal`) or another expression. */
 function ExprNodeImpl({ data, selected }: NodeProps) {
-  const { expr, language, code, pins, params, explanations, paramRoles, flow, ownerId, path } = data as unknown as ExprData;
+  const { expr, language, code, pins, params, explanations, paramRoles, flow, ownerId, path, reading, width, sourceRevision } = data as unknown as ExprData;
   const explain = useUi((state) => state.blueprintExplanations);
   const select = useUi((state) => state.select);
   const syntax = codeLanguage(language, expr.span.file);
@@ -38,7 +39,7 @@ function ExprNodeImpl({ data, selected }: NodeProps) {
   const output = op?.output?.split(":")[0] ?? (explain ? spreadOutput(expr) : undefined);
   const inspectType = (at: string) => select({ kind: "expr", flow, nodeId: ownerId, path: at });
   return (
-    <div className={`expr ${op ? "expr-op" : ""} ${selected ? "selected" : ""}`} style={{ "--accent": color } as React.CSSProperties}>
+    <div className={`expr ${op ? "expr-op" : ""} ${selected ? "selected" : ""}`} style={{ "--accent": color, width } as React.CSSProperties}>
       <div className="expr-head" title={op?.explain ?? info.explain}>
         <span className="expr-symbol">{symbol}</span>
         <span className="expr-title" title={!code ? expr.target ?? undefined : undefined}>{title}</span>
@@ -58,6 +59,9 @@ function ExprNodeImpl({ data, selected }: NodeProps) {
       </div>
       {code && <BlueprintCode preview={code} language={syntax} target={expr.target} />}
       {explanations?.map((label) => <div key={label} className="blueprint-explanation" title={label}>{label}</div>)}
+      {explain && reading && <BlueprintReading sites={reading} inspect={(site, span) => {
+        select({ kind: "expr", flow, nodeId: ownerId, path: site.path ?? path }, sourceRevision ? span : undefined, sourceRevision);
+      }} />}
       <div className="expr-pins" style={{ height: rows * PIN + params.length * PIN }}>
         {pins.map((p, i) => (
           <div key={p.id} className="expr-pin" style={{ top: i * PIN }} title={p.ty ? `${p.name ?? "input"}: ${p.ty}` : p.name ?? undefined}>
@@ -82,16 +86,19 @@ function ExprNodeImpl({ data, selected }: NodeProps) {
         ))}
         {params.map((name, i) => {
           const pin = expr.param_pins?.find((pin) => pin.label === name);
+          const part = reading?.flatMap(({ content }) => content.kind === "Pattern" ? content.parts : [])
+            .find((part) => part.binding === name);
+          const typeInfo = part?.type_info ?? pin?.type_info;
           return (
             <div key={name} className="expr-pin expr-param" style={{ top: (rows + i) * PIN }} title={paramRoles?.[i] ?? "A parameter: the value the caller passes in"}>
               <span className="expr-pin-name">{paramRoles?.[i] ? `${name} · ${paramRoles[i]}` : name}</span>
-              <TypeLabel info={pin?.type_info} onInspect={() => inspectType(path)} />
+              <TypeLabel info={typeInfo} onInspect={() => inspectType(path)} />
               <Handle
                 type="source"
                 position={Position.Right}
                 id={`p:${name}`}
                 className="handle-data"
-                style={{ top: PIN / 2, "--pin": blueprintTypeColor(pin?.type_info?.shape, pin?.ty) } as React.CSSProperties}
+                style={{ top: PIN / 2, "--pin": blueprintTypeColor(typeInfo?.shape, pin?.ty) } as React.CSSProperties}
                 isConnectable={false}
               />
             </div>

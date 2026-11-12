@@ -218,6 +218,7 @@ pub fn edges(facts: &SemanticFacts, locator: &Locator, language: Language) -> Se
 
 fn external_type(id: &str, target: &SemanticTarget, contract: bool, language: Language) -> Symbol {
     Symbol {
+        rust_contract: None,
         syntax_sites: None,
         type_info: None,
         value_info: None,
@@ -250,6 +251,7 @@ pub fn enrich_flow(flow: &FlowGraph, facts: &SemanticFacts, locator: &Locator) -
     annotate_expression_facts(&mut flow, facts.expressions.iter());
     annotate_value_facts(&mut flow, facts.values.iter(), &locals);
     annotate_types(&mut flow, facts.types.iter(), &locals);
+    flow.attach_reading(&facts.reading);
     annotate_collection_roles(&mut flow, &refs, facts.binding_uses.iter());
     flow
 }
@@ -385,6 +387,8 @@ pub(crate) fn annotate_expression_facts<'a>(flow: &mut FlowGraph, facts: impl It
                     ExpressionFactKind::ReferenceCopy => "reference-copy".into(),
                     ExpressionFactKind::Dynamic => "dynamic".into(),
                     ExpressionFactKind::Freeze => "runtime-freeze".into(),
+                    ExpressionFactKind::Spawn | ExpressionFactKind::Sleep | ExpressionFactKind::ChannelSend
+                    | ExpressionFactKind::ProcessExit => continue,
                 };
                 if !expr.flavors.contains(&flavor) {
                     expr.flavors.push(flavor.clone());
@@ -399,10 +403,30 @@ pub(crate) fn annotate_expression_facts<'a>(flow: &mut FlowGraph, facts: impl It
             annotate(child, by_site);
         }
     }
+    let mut process_exits = HashSet::new();
     for node in &mut flow.nodes {
         if let Some(expr) = &mut node.expr {
+            if matches!(node.concept, Concept::Call | Concept::Var)
+                && let Some(facts) = by_site.get(&(expr.span.start_byte, expr.span.end_byte))
+            {
+                for fact in facts {
+                    match fact.kind {
+                        ExpressionFactKind::Spawn => node.concept = Concept::Spawn,
+                        ExpressionFactKind::Sleep => node.concept = Concept::Wait,
+                        ExpressionFactKind::ChannelSend => node.concept = Concept::Emit,
+                        ExpressionFactKind::ProcessExit => {
+                            process_exits.insert(node.id.clone());
+                            node.outputs.retain(|pin| pin.kind != nodex_ir::PinKind::Exec);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             annotate(expr, &by_site);
         }
+    }
+    if !process_exits.is_empty() {
+        flow.edges.retain(|edge| edge.kind != nodex_ir::FlowEdgeKind::Exec || !process_exits.contains(&edge.from));
     }
 }
 

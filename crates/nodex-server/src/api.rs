@@ -131,6 +131,49 @@ pub async fn source(State(state): State<Arc<AppState>>, Query(q): Query<SourceQu
 }
 
 #[derive(Deserialize)]
+pub struct RustExpansionQuery {
+    file: String,
+    offset: usize,
+    revision: String,
+}
+
+pub async fn rust_macro_expansion(State(state): State<Arc<AppState>>, Query(q): Query<RustExpansionQuery>) -> ApiResult {
+    use std::sync::atomic::Ordering;
+    use nodex_core::navigation::source_revision;
+    static WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let _worker = WORKERS.try_acquire().map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "A macro expansion is already running".into()))?;
+    let generation = state.generation.load(Ordering::Acquire);
+    let (root, file, text) = {
+        let project = state.project.lock().map_err(poisoned)?;
+        let text = project.source(&q.file).ok_or_else(|| not_found("file"))?;
+        let file = project.absolute(&q.file).filter(|file| file.extension().is_some_and(|ext| ext == "rs"))
+            .ok_or_else(|| not_found("Rust file"))?;
+        (project.root().to_owned(), file, text)
+    };
+    let stale = || (StatusCode::CONFLICT, "The source has changed".into());
+    if source_revision(&text) != q.revision {
+        return Err(stale());
+    }
+    let at_macro = nodex_lang_rust::parse(&text).is_some_and(|tree| {
+        let Some(end) = q.offset.checked_add(1) else { return false };
+        let Some(node) = tree.root_node().descendant_for_byte_range(q.offset, end) else { return false };
+        std::iter::successors(Some(node), |node| node.parent())
+            .any(|node| node.kind() == "macro_invocation" || node.kind() == "attribute_item")
+    });
+    if !at_macro || !text.is_char_boundary(q.offset) {
+        return Err(not_found("macro occurrence"));
+    }
+    let result = crate::rust_expansion::expand(&root, &file, &text, q.offset).await;
+    let project = state.project.lock().map_err(poisoned)?;
+    if state.generation.load(Ordering::Acquire) != generation
+        || !project.source(&q.file).is_some_and(|text| source_revision(&text) == q.revision)
+    {
+        return Err(stale());
+    }
+    Ok(Json(result).into_response())
+}
+
+#[derive(Deserialize)]
 pub struct OpenRequest {
     path: String,
 }

@@ -149,6 +149,37 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .blueprint-sequence strong, .blueprint-sequence li span, .blueprint-sequence small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .blueprint-sequence small { color: var(--muted); }
 .blueprint-sequence-example { margin-top: 4px; border-top: 1px solid var(--line); padding-top: 3px; line-height: 17px; }
+.bp-reading { padding: 3px 8px; border-top: 1px solid var(--line); font-size: 11px; }
+.expr .bp-reading { padding-inline: 0; }
+.reading-heading, .reading-outcome { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.reading-heading { height: 18px; }
+.reading-heading > code, .reading-outcome > code { color: #c2d9ff; }
+.reading-heading button, .reading-outcome button { background: none; border: 0; padding: 0; text-align: left; font-size: inherit; }
+.reading-heading button { font-weight: 650; }
+.reading-heading button:hover, .reading-outcome button:hover { text-decoration: underline; }
+.reading-heading > *, .reading-outcome > *, .reading-input, .reading-action, .reading-arm, .reading-input-type {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reading-input { height: 18px; line-height: 18px; }
+.reading-fork, .reading-parts { margin: 2px 0 0; padding: 0 0 0 10px; list-style: none; border-left: 1px solid #6d829c; }
+.reading-fork li, .reading-parts li { position: relative; }
+.reading-fork li { height: 35px; padding: 1px 0; }
+.reading-parts li { height: 29px; }
+.reading-fork li::before, .reading-parts li::before {
+  content: ""; position: absolute; left: -10px; top: 8px; width: 7px; border-top: 1px solid #6d829c;
+}
+.reading-action, .reading-arm { color: var(--muted); font-size: 10.5px; }
+.reading-arm { line-height: 17px; }
+.reading-input-type { display: block; color: #c2d9ff; }
+.bp-reading-full { padding: 6px 0; min-width: 0; }
+.bp-reading-full :is(.reading-heading, .reading-input, .reading-fork li, .reading-parts li) { height: auto; min-height: 20px; }
+.bp-reading-full :is(.reading-fork li, .reading-parts li) { padding-block: 3px; }
+.bp-reading-full :is(.reading-heading, .reading-outcome) { flex-wrap: wrap; }
+.bp-reading-full :is(.reading-heading > *, .reading-outcome > *, .reading-input, .reading-action, .reading-arm, .reading-input-type, .explain) {
+  overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere;
+}
+.bp-reading-full .reading-source { overflow-wrap: anywhere; }
+.reading-native { color: #c2d9ff; }
 .blueprint-workspace { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .blueprint-workspace > :is(.canvas, .loading, .empty) { position: relative; flex: 1; min-height: 0; }
 .blueprint-guide { flex: none; max-height: 45%; overflow: auto; padding: 6px 10px; display: grid; gap: 4px; border-bottom: 1px solid #2a303a; }
@@ -160,6 +191,13 @@ code { font-family: var(--mono); font-size: 12px; color: #f0c674; }
 .code-token-comment { color: #91b482; }
 .code-token-operator { color: #a9b3c4; }
 .bp-pins { padding: 2px 0 4px; }
+.bp-ownership { display: grid; padding: 3px 8px; }
+.bp-ownership-row { display: grid; text-align: left; padding: 1px 5px; min-width: 0; background: transparent; border: 0; border-left: 2px solid #58768d; border-radius: 0; font-size: 11px; line-height: 19px; }
+.bp-ownership-row:hover, .bp-ownership-row:focus-visible { background: #253749; }
+.bp-ownership-summary { display: flex; gap: 7px; align-items: baseline; min-width: 0; }
+.bp-ownership-summary code, .bp-ownership-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-ownership-summary strong { color: #c9e4f8; white-space: nowrap; }
+.bp-ownership-row small { color: #b3bfce; font-size: 10px; line-height: 14px; }
 .pin-row { display: flex; justify-content: space-between; height: 22px; }
 .pin-cell { position: relative; flex: 1; min-width: 0; }
 .pin-cell.right { text-align: right; }

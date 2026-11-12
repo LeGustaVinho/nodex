@@ -897,6 +897,8 @@ mod tests {
             language: Language::Csharp,
             span: span(0, 100),
             source_revision: None,
+            reading: None,
+            borrows: None,
             nodes: vec![node("entry", Concept::Entry, 0, 10), node("a", Concept::Var, 20, 30), node("b", Concept::Return, 40, 50)],
             edges: Vec::new(),
         };
@@ -1075,6 +1077,8 @@ mod tests {
             language: Language::Csharp,
             span: span(0, 100),
             source_revision: None,
+            reading: None,
+            borrows: None,
             nodes: vec![node("entry", Concept::Entry, 0, 10), node("a", Concept::Var, 20, 30), node("b", Concept::Return, 40, 50)],
             edges: Vec::new(),
         };

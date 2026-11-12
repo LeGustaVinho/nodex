@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use nodex_ir::{
     FlowGraph, ValueBasis, ValueInfo, ValueKind, ValueQualifier,
     borrow::{
-        BorrowArgument, BorrowBinding, BorrowCall, BorrowModel, BorrowPath, BorrowRoot, BorrowUse,
+        BorrowArgument, BorrowBinding, BorrowCall, BorrowCallback, BorrowModel, BorrowPath, BorrowRoot, BorrowUse,
     },
 };
 use nodex_lang_api::syntax::{Src, children, named_children};
@@ -134,6 +134,7 @@ struct Analysis<'a, 'tree> {
     builtin_index: HashSet<u32>,
     direct_fields: HashMap<u32, DirectFields<'tree>>,
     targets: Vec<ControlTarget<'a>>,
+    deferred_writes: Option<HashSet<u32>>,
 }
 
 pub(crate) fn analyze(src: Src, job: &BodyJob<'_>, flow: &FlowGraph) -> BorrowModel {
@@ -163,6 +164,7 @@ pub(crate) fn analyze(src: Src, job: &BodyJob<'_>, flow: &FlowGraph) -> BorrowMo
             .collect(),
         direct_fields: HashMap::new(),
         targets: Vec::new(),
+        deferred_writes: None,
     };
     let mut state = State::default();
     state.push();
@@ -247,7 +249,8 @@ pub(crate) fn annotate_control_values(flow: &mut FlowGraph, model: &BorrowModel)
                 || paths.iter().any(|path| {
                     matches!(
                         path.root,
-                        BorrowRoot::Call(_) | BorrowRoot::TypedPlace { .. } | BorrowRoot::Unknown
+                        BorrowRoot::Call(_) | BorrowRoot::CallbackInput { .. } | BorrowRoot::Field { .. }
+                            | BorrowRoot::TypedPlace { .. } | BorrowRoot::Unknown
                     )
                 })
             {
@@ -570,33 +573,47 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
                 let base_end = base.end_byte();
                 let base = unparen(base);
                 let mut paths = if n.kind() == "field_expression" {
-                    let Some(fields) = self.fields_of_value(base, state).filter(|fields| {
+                    let fields = self.fields_of_value(base, state);
+                    if fields.as_ref().is_some_and(|fields| {
                         n.child_by_field_name("field")
-                            .is_some_and(|field| fields.fields.contains_key(self.src.text(field)))
-                    }) else {
-                        // Field lookup can implicitly call a custom Deref.
+                            .is_none_or(|field| !fields.fields.contains_key(self.src.text(field)))
+                    }) {
+                        // A different type's field can be reached through custom Deref.
                         return vec![BorrowPath::unknown()];
-                    };
-                    if fields.by_reference {
+                    }
+                    if fields.as_ref().is_some_and(|fields| fields.by_reference) {
                         state
                             .get(self.src.text(base))
                             .and_then(|binding| state.references.get(&binding.span.start_byte))
                             .filter(|paths| !paths.is_empty())
                             .cloned()
                             .unwrap_or_else(|| vec![BorrowPath::unknown()])
-                    } else {
+                    } else if fields.is_some() {
                         self.place(base, state)
+                    } else if let Some(binding) = state.get(self.src.text(base)) {
+                        // Field lookup can implicitly call a custom Deref. The index can
+                        // prove a direct field across files even when syntax alone cannot.
+                        vec![BorrowPath::from(BorrowRoot::Field {
+                            site: self.src.span(n),
+                            base: binding.clone(),
+                            referent: state.references.get(&binding.span.start_byte).cloned().unwrap_or_default(),
+                        })]
+                    } else {
+                        return vec![BorrowPath::unknown()];
                     }
                 } else {
                     let Some(binding) = state.get(self.src.text(base)) else {
                         return vec![BorrowPath::unknown()];
                     };
                     let key = binding.span.start_byte;
-                    if !self.builtin_index.contains(&key) {
+                    let split_paths = state.references.get(&key).filter(|paths| !paths.is_empty()
+                        && paths.iter().all(|path| matches!(path.root, BorrowRoot::CallComponent { .. })));
+                    if let Some(paths) = split_paths {
+                        paths.clone()
+                    } else if !self.builtin_index.contains(&key) {
                         // A custom Index implementation can return a reference from elsewhere.
                         return vec![BorrowPath::unknown()];
-                    }
-                    if self
+                    } else if self
                         .kinds
                         .get(&key)
                         .is_some_and(|(kind, _)| *kind == ValueKind::Value)
@@ -830,6 +847,9 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
                 let right = n.child_by_field_name("right")?;
                 let paths = self.eval(right, state)?;
                 if let Some(binding) = state.get(self.src.text(left)).cloned() {
+                    if let Some(writes) = &mut self.deferred_writes {
+                        writes.insert(binding.span.start_byte);
+                    }
                     let paths = through(paths, &binding);
                     self.record(self.src.span(left), paths.clone());
                     state.references.insert(binding.span.start_byte, paths);
@@ -878,7 +898,12 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
                 let future = named_children(n).into_iter().find(|child| !child.is_extra())?;
                 self.eval(future, state)?
             }
-            "closure_expression" | "function_item" | "function_signature_item" => Vec::new(),
+            "try_expression" => self.eval(named_children(n).into_iter().next()?, state)?,
+            "closure_expression" | "async_block" => {
+                self.deferred(n, state, None);
+                Vec::new()
+            }
+            "function_item" | "function_signature_item" => Vec::new(),
             "string_literal" | "raw_string_literal" => {
                 vec![BorrowPath::from(BorrowRoot::Static(self.src.span(n)))]
             }
@@ -932,9 +957,7 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
         state: &mut State,
     ) {
         if let Some(binding) = self.simple_binding(pattern) {
-            let paths = through(paths, &binding);
-            self.record(binding.span.clone(), paths.clone());
-            state.bind(binding, paths);
+            self.bind_with_paths(binding, paths, state);
         } else if pattern.kind() == "ref_pattern" {
             let Some(binding) = named_children(pattern)
                 .into_iter()
@@ -951,14 +974,82 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
             for path in &mut paths {
                 path.mutable = mutable;
             }
-            let paths = through(paths, &binding);
-            self.record(binding.span.clone(), paths.clone());
-            state.bind(binding, paths);
+            self.bind_with_paths(binding, paths, state);
+        } else if pattern.kind() == "tuple_pattern"
+            && let Some(value) = value.map(unparen)
+            && value.kind() == "call_expression"
+            && !children(pattern).iter().any(|child| child.kind() == "remaining_field_pattern")
+        {
+            let items = children(pattern).into_iter().filter(|child| !child.is_extra()
+                && (child.is_named() || child.kind() == "_")).collect::<Vec<_>>();
+            if items.len() == 2 && items.iter().all(|item| item.kind() == "_" || self.simple_binding(*item).is_some()) {
+                for (index, item) in items.into_iter().enumerate() {
+                    if let Some(binding) = self.simple_binding(item) {
+                        self.bind_with_paths(binding, vec![BorrowPath::from(BorrowRoot::CallComponent {
+                            call: self.src.span(value), index,
+                        })], state);
+                    }
+                }
+            } else {
+                for child in named_children(pattern) {
+                    self.bind_pattern(child, None, vec![BorrowPath::unknown()], state);
+                }
+            }
         } else {
             // Keep lexical identity for destructuring even when a component's source is unknown.
             for child in named_children(pattern) {
                 self.bind_pattern(child, None, vec![BorrowPath::unknown()], state);
             }
+        }
+    }
+
+    fn bind_with_paths(&mut self, binding: BorrowBinding, paths: Paths, state: &mut State) {
+        let paths = through(paths, &binding);
+        self.record(binding.span.clone(), paths.clone());
+        state.bind(binding, paths);
+    }
+
+    // After matching an explicit &, tuple projections still address the callback input.
+    // A nested dereference would need separate proof of the inner reference's origin.
+    fn bind_referent_pattern(&mut self, pattern: Node<'tree>, paths: Paths, state: &mut State) {
+        match pattern.kind() {
+            "tuple_pattern" => {
+                let tokens = children(pattern);
+                let items: Vec<_> = tokens.iter().copied().filter(|n| {
+                    !n.is_extra() && (n.is_named() || n.kind() == "_")
+                }).collect();
+                if let [item] = items.as_slice() && !tokens.iter().any(|n| n.kind() == ",") {
+                    self.bind_referent_pattern(*item, paths, state);
+                    return;
+                }
+                let mut index = Some(0);
+                for child in items {
+                    if child.kind() == "remaining_field_pattern" {
+                        index = None;
+                    } else if let Some(position) = index {
+                        let mut projected = paths.clone();
+                        for path in &mut projected {
+                            use std::fmt::Write;
+                            let _ = write!(path.projection, ".{position}");
+                        }
+                        self.bind_referent_pattern(child, projected, state);
+                        index = Some(position + 1);
+                    } else {
+                        self.bind_pattern(child, None, vec![BorrowPath::unknown()], state);
+                    }
+                }
+            }
+            "ref_pattern" => {
+                if let Some(binding) = named_children(pattern).into_iter().last().and_then(|node| self.simple_binding(node)) {
+                    let mutable = self.src.text(pattern).split_whitespace().nth(1) == Some("mut");
+                    let paths = paths.into_iter().map(|mut path| {
+                        path.mutable = mutable;
+                        path
+                    }).collect();
+                    self.bind_with_paths(binding, paths, state);
+                }
+            }
+            _ => self.bind_pattern(pattern, None, vec![BorrowPath::unknown()], state),
         }
     }
 
@@ -1198,22 +1289,72 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
         Some(result)
     }
 
+    fn deferred(&mut self, node: Node<'tree>, state: &mut State, input: Option<BorrowRoot>) -> Paths {
+        let mut scope = state.clone();
+        scope.push();
+        if let Some(parameters) = node.child_by_field_name("parameters") {
+            for (i, parameter) in children(parameters).into_iter().filter(|n| !n.is_extra() && (n.is_named() || n.kind() == "_")).enumerate() {
+                let pattern = parameter.child_by_field_name("pattern").unwrap_or(parameter);
+                let paths: Paths = if i == 0 {
+                    input.clone().map(BorrowPath::from).into_iter().collect()
+                } else {
+                    Vec::new()
+                };
+                if !paths.is_empty() && pattern.kind() == "reference_pattern"
+                    && let Some(referent) = named_children(pattern).into_iter().find(|n| n.kind() != "mutable_specifier")
+                {
+                    self.bind_referent_pattern(referent, paths, &mut scope);
+                } else {
+                    self.bind_pattern(pattern, None, paths, &mut scope);
+                }
+            }
+        }
+        let outer_returns = std::mem::take(&mut self.model.returns);
+        let outer_targets = std::mem::take(&mut self.targets);
+        let outer_writes = self.deferred_writes.replace(HashSet::new());
+        let body = node.child_by_field_name("body").or_else(|| {
+            (node.kind() == "async_block").then(|| node.named_child(0)).flatten()
+        });
+        if let Some(paths) = body.and_then(|body| self.eval(body, &mut scope)) {
+            union(&mut self.model.returns, paths);
+        }
+        self.targets = outer_targets;
+        let writes = std::mem::replace(&mut self.deferred_writes, outer_writes).unwrap_or_default();
+        // A closure can escape or run conditionally. Once it can write a captured
+        // slot, the prior origin alone is no longer sufficient at subsequent uses.
+        for key in writes {
+            self.invalidate_slot(key, state);
+        }
+        std::mem::replace(&mut self.model.returns, outer_returns)
+    }
+
+    fn read_argument(&mut self, expr: Node<'tree>, state: &mut State) -> Option<BorrowArgument> {
+        let value = self.eval(expr, state)?;
+        let place = self.place(expr, state);
+        Some(BorrowArgument { value, place })
+    }
+
     fn call(&mut self, n: Node<'tree>, state: &mut State) -> Option<Paths> {
         let span = self.src.span(n);
-        let mut read = |e| -> Option<BorrowArgument> {
-            let value = self.eval(e, state)?;
-            let place = self.place(e, state);
-            Some(BorrowArgument { value, place })
-        };
         let receiver = if let Some((receiver, _)) = method_call(n) {
-            Some(read(receiver)?)
+            Some(self.read_argument(receiver, state)?)
         } else {
             None
         };
         let mut arguments = Vec::new();
+        let mut callbacks = Vec::new();
         if let Some(args) = n.child_by_field_name("arguments") {
-            for arg in named_children(args) {
-                arguments.push(read(arg)?);
+            for arg in named_children(args).into_iter().filter(|n| !n.is_extra() && n.kind() != "attribute_item") {
+                let closure = unparen(arg);
+                if closure.kind() == "closure_expression" {
+                    let argument = arguments.len();
+                    let input = BorrowRoot::CallbackInput { call: span.clone(), argument };
+                    let returns = self.deferred(closure, state, Some(input));
+                    callbacks.push(BorrowCallback { argument, returns });
+                    arguments.push(BorrowArgument { value: Vec::new(), place: self.place(arg, state) });
+                } else {
+                    arguments.push(self.read_argument(arg, state)?);
+                }
             }
         }
         let call = self
@@ -1223,6 +1364,7 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
                 span: span.clone(),
                 receiver: receiver.clone(),
                 arguments: arguments.clone(),
+                callbacks: callbacks.clone(),
             });
         for (stored, current) in call
             .receiver
@@ -1232,6 +1374,9 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
         {
             union(&mut stored.value, current.value.clone());
             union(&mut stored.place, current.place.clone());
+        }
+        for (stored, current) in call.callbacks.iter_mut().zip(callbacks) {
+            union(&mut stored.returns, current.returns);
         }
         let mutable = receiver
             .into_iter()
@@ -1243,14 +1388,21 @@ impl<'a, 'tree> Analysis<'a, 'tree> {
         Some(vec![BorrowPath::from(BorrowRoot::Call(span))])
     }
 
-    fn invalidate_slots(&self, paths: Paths, state: &mut State) {
+    fn invalidate_slots(&mut self, paths: Paths, state: &mut State) {
         for path in paths {
             if let BorrowRoot::Local(binding) = path.root
                 && path.projection.is_empty()
-                && let Some(current) = state.references.get_mut(&binding.span.start_byte)
-                && !current.is_empty()
             {
-                *current = vec![BorrowPath::unknown()];
+                self.invalidate_slot(binding.span.start_byte, state);
+            }
+        }
+    }
+
+    fn invalidate_slot(&mut self, key: u32, state: &mut State) {
+        if let Some(current) = state.references.get_mut(&key) && !current.is_empty() {
+            *current = vec![BorrowPath::unknown()];
+            if let Some(writes) = &mut self.deferred_writes {
+                writes.insert(key);
             }
         }
     }

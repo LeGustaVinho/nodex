@@ -86,7 +86,7 @@ fn syntax_fixture_covers_the_vocabulary() {
     for c in [
         Concept::Var, Concept::Destructure, Concept::Assign, Concept::SetMember, Concept::Branch, Concept::Match, Concept::LoopForEach,
         Concept::LoopWhile, Concept::LoopInfinite, Concept::Break, Concept::Continue, Concept::Return, Concept::Throw, Concept::Scope,
-        Concept::Spawn, Concept::Wait, Concept::Await, Concept::Emit, Concept::Lambda, Concept::Call, Concept::Macro,
+        Concept::Await, Concept::Lambda, Concept::Call, Concept::Macro,
     ] {
         assert!(concepts.contains(&c), "no {c:?} in the syntax fixture");
     }

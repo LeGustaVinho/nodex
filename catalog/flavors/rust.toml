@@ -332,3 +332,48 @@ explain = "Supply type arguments at the use site."
 cue = "::<T>"
 phase = "Compile time"
 effects = [["parse::<i32>()", "Use i32 as the explicit result type argument"]]
+
+[trait-contract]
+label = "Trait contract"
+explain = "A trait describes operations a type can provide. An impl connects a concrete type to this contract."
+phase = "Compile time"
+
+[type-parameters]
+label = "Generic parameters"
+explain = "These names stand for types, lifetimes or constants that are supplied or inferred when the declaration is used."
+phase = "Compile time"
+
+[trait-constraints]
+label = "Trait and lifetime constraints"
+explain = "The compiler checks the listed requirements. T: Trait means the type chosen for T must implement Trait."
+phase = "Compile time"
+
+[where-constraints]
+label = "Where constraints"
+explain = "The where clause lists requirements the type or lifetime arguments must satisfy."
+phase = "Compile time"
+
+[opaque-return]
+label = "Return a type that implements a trait"
+explain = "The function chooses a concrete return type. Callers can use the listed trait operations."
+phase = "Compile time"
+
+[generic-parameter-type]
+label = "Accept a type that implements a trait"
+explain = "The caller can supply any concrete type that satisfies the listed constraints."
+phase = "Compile time"
+
+[trait-object]
+label = "Trait object"
+explain = "Calls through dyn Trait select the concrete type's implementation at runtime."
+phase = "Runtime"
+
+[derive-traits]
+label = "Generate trait implementations"
+explain = "The derive attribute asks macros to generate implementations for the listed traits during compilation."
+phase = "Compile time"
+
+[macro-definition]
+label = "Macro definition"
+explain = "Rust matches the invocation's tokens against these rules and substitutes the chosen expansion during compilation."
+phase = "Compile time"

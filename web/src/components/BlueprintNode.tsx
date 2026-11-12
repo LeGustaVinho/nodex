@@ -19,6 +19,9 @@ import { ValueBadge } from "./ValueBadge";
 import { LanguageBadges } from "./LanguageBadges";
 import { TypeLabel } from "./TypeLabel";
 import { blueprintTypeColor } from "../graph/blueprintTypes";
+import { routeName } from "../graph/blueprintReading";
+import { BlueprintReading } from "./BlueprintReading";
+import { RustContract } from "./RustContract";
 
 function PinView({ pin, side, value, code, syntax, label = pin.label, details, inspect, showKind }: {
   pin: Pin; side: "in" | "out"; value?: string; code?: CodePreview; syntax?: CodeLanguage; label?: string;
@@ -60,7 +63,7 @@ function PinView({ pin, side, value, code, syntax, label = pin.label, details, i
 const EXPR_PIN: Pin = { id: "expr", kind: "Data", label: "details", ty: null };
 
 function BlueprintNodeImpl({ id, data, selected }: NodeProps) {
-  const { node, code, sourceRevision, expanded, language, flow, argPins, hiddenInputs, canExpand, explanations, sequence, inputAccess, detailsLabel, resultInfo } = data as unknown as BlueprintData;
+  const { node, code, sourceRevision, expanded, language, flow, argPins, hiddenInputs, canExpand, explanations, sequence, reading, readingExec, contract, ownership, inputAccess, detailsLabel, resultInfo } = data as unknown as BlueprintData;
   const explain = useUi((s) => s.blueprintExplanations);
   const catalog = useCatalog();
   // Live execution overlay.
@@ -118,7 +121,7 @@ function BlueprintNodeImpl({ id, data, selected }: NodeProps) {
   const argPaths = new Map((argPins ?? []).map((p) => [p.id, p.path]));
   const argValues = new Map((argPins ?? []).flatMap((p) => p.value === null ? [] : [[p.id, { text: p.value, emphasis: p.emphasis }] as const]));
   const own = hiddenInputs?.length ? node.inputs.filter((p) => !hiddenInputs.includes(p.id)) : node.inputs;
-  const inputs = argPins ? [...own, ...args] : expanded ? [...own, { ...EXPR_PIN, label: detailsLabel ?? EXPR_PIN.label, type_info: node.expr?.type_info }] : own;
+  const inputs = argPins ? [...own, ...args] : expanded && node.expr ? [...own, { ...EXPR_PIN, label: detailsLabel ?? EXPR_PIN.label, type_info: node.expr.type_info }] : own;
   // A statement that performs a shared operation with an effect (print, write file) is titled by it.
   const op = node.expr && node.concept === "Call" ? operationInfo(catalog, node.expr.op) : undefined;
   const rows = Math.max(inputs.length, node.outputs.length);
@@ -186,7 +189,7 @@ function BlueprintNodeImpl({ id, data, selected }: NodeProps) {
           event.stopPropagation();
           select({ kind: "flow-node", flow, id: node.id }, node.span, sourceRevision ?? undefined);
         }}>Source</button>
-        {node.expr && canExpand !== false && (
+        {(canExpand ?? !!node.expr) && (
           <button
             className="bp-expand nodrag"
             title={expanded ? "Hide expression details" : "Show expression details"}
@@ -200,7 +203,30 @@ function BlueprintNodeImpl({ id, data, selected }: NodeProps) {
         )}
       </div>
       {code && <BlueprintCode preview={code} language={syntax} target={focusTarget} className="blueprint-statement-code" />}
+      {explain && !!contract?.length && <RustContract compact items={contract} inspect={(span) => {
+        if (sourceRevision) select({ kind: "flow-node", flow, id: node.id }, span, sourceRevision);
+      }} />}
+      {explain && !!ownership?.length && (
+        <div className="bp-ownership" aria-label="Rust ownership">
+          {ownership.map(({ pin, name, role, origin }) => (
+            <button key={pin} type="button" className="bp-ownership-row nodrag"
+              title={[name, role, origin].filter(Boolean).join(" · ")} onClick={(event) => {
+                event.stopPropagation();
+                select({ kind: "flow-node", flow, id: node.id, pin });
+              }}>
+              <span className="bp-ownership-summary"><code>{name}</code><strong>{role}</strong></span>
+              {origin && <small>{origin}</small>}
+            </button>
+          ))}
+        </div>
+      )}
       {explanations?.map((label) => <div key={label} className="blueprint-explanation" title={label}>{label}</div>)}
+      {explain && reading && <BlueprintReading sites={reading} route={(pin) => routeName(node, pin)} inspect={(site, span) => {
+        const selection = site.path
+          ? { kind: "expr" as const, flow, nodeId: node.id, path: site.path }
+          : { kind: "flow-node" as const, flow, id: node.id };
+        select(selection, sourceRevision ? span : undefined, sourceRevision ?? undefined);
+      }} />}
       {sequence && (
         <div className="blueprint-sequence" aria-label="Collection sequence">
           <strong>Collection steps</strong>
@@ -234,7 +260,7 @@ function BlueprintNodeImpl({ id, data, selected }: NodeProps) {
             <div className="pin-cell right">
               {node.outputs[i] && (
                 <PinView pin={node.outputs[i]} side="out" showKind={explain}
-                  label={explain ? executionPinLabel(node, node.outputs[i].id, node.outputs[i].label) : undefined}
+                  label={explain ? readingExec?.[node.outputs[i].id] ?? executionPinLabel(node, node.outputs[i].id, node.outputs[i].label) : undefined}
                   details={detailsFor(node.outputs[i], false)} inspect={(syntax) => inspect(node.outputs[i], syntax)}
                   value={replaying ? undefined : (pausedVars?.[node.outputs[i].label] ?? vars?.[node.outputs[i].label])} />
               )}

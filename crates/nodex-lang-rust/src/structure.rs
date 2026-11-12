@@ -21,7 +21,7 @@ use crate::syntax::{
 pub enum BodyKind {
     Function,
     Method,
-    /// A `fn` declared inside another function, or a block-bodied closure handed to a call.
+    /// A `fn` declared inside another function, or a block-bodied callback or local closure.
     LocalFunction,
 }
 
@@ -142,6 +142,7 @@ impl<'a, 't> Collector<'a, 't> {
         Symbol {
             syntax_sites: None,
             type_info: None,
+            rust_contract: crate::reading::contract(self.src, node),
             value_info: None,
             id: id.to_owned(),
             kind,
@@ -591,9 +592,7 @@ impl<'a, 't> Collector<'a, 't> {
         });
     }
 
-    /// Functions declared inside a body (`fn helper() {}`), block-bodied closures handed to a
-    /// call (`items.for_each(|x| { … })`), and items declared locally. Each function gets a
-    /// Blueprint of its own.
+    /// Local functions, block-bodied callbacks and closures bound to locals get their own Blueprint.
     fn local_functions(&mut self, body: Node<'t>, owner: &str) {
         let src = self.src;
         let mut stack = vec![body];
@@ -607,12 +606,13 @@ impl<'a, 't> Collector<'a, 't> {
                         self.function(c, &id, &name, owner, SymbolKind::Function, BodyKind::LocalFunction, flavors);
                     }
                     "closure_expression" => {
-                        if let Some(callee) = callback_callee(src, c)
+                        if let Some((name, callback)) = callback_callee(src, c)
+                            .map(|callee| (format!("{callee} callback"), true))
+                            .or_else(|| closure_binding(src, c).map(|binding| (format!("{binding} closure"), false)))
                             && c.child_by_field_name("body").is_some_and(|b| b.kind() == "block" && named_children(b).iter().any(|s| !crate::syntax::is_comment(s.kind())))
                         {
-                            let name = format!("{callee} callback");
                             let id = self.unique(format!("{owner}::{name}"));
-                            self.closure(c, &id, &name, owner);
+                            self.closure(c, &id, &name, owner, callback);
                         } else {
                             stack.push(c);
                         }
@@ -628,10 +628,13 @@ impl<'a, 't> Collector<'a, 't> {
         }
     }
 
-    fn closure(&mut self, c: Node<'t>, id: &str, name: &str, owner: &str) {
+    fn closure(&mut self, c: Node<'t>, id: &str, name: &str, owner: &str, callback: bool) {
         let src = self.src;
         let Some(body) = c.child_by_field_name("body") else { return };
-        let mut flavors = vec!["local-function".to_owned(), "callback".to_owned()];
+        let mut flavors = vec!["local-function".to_owned()];
+        if callback {
+            flavors.push("callback".into());
+        }
         let head = src.header(c, Some(body));
         if head.starts_with("move") || head.contains(" move ") {
             flavors.push("move".into());
@@ -677,6 +680,17 @@ impl<'a, 't> Collector<'a, 't> {
 
 /// The method or function a closure is passed to (`items.for_each(|x| …)` → `for_each`), or
 /// `None` when the closure is not a call argument.
+pub(crate) fn closure_binding(src: Src, mut value: Node) -> Option<String> {
+    while let Some(parent) = value.parent().filter(|p| p.kind() == "parenthesized_expression") {
+        value = parent;
+    }
+    let declaration = value.parent().filter(|p| p.kind() == "let_declaration")?;
+    if declaration.child_by_field_name("value") != Some(value) {
+        return None;
+    }
+    declaration.child_by_field_name("pattern").filter(|p| p.kind() == "identifier").map(|p| src.text(p).to_owned())
+}
+
 pub fn callback_callee(src: Src, closure: Node) -> Option<String> {
     let args = closure.parent().filter(|p| p.kind() == "arguments")?;
     let mut call = args.parent().filter(|p| p.kind() == "call_expression")?;

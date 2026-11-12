@@ -3,6 +3,10 @@ import type { FlowGraph } from "../gen/FlowGraph";
 import type { FlowNode } from "../gen/FlowNode";
 import { executionPinLabel, statementExplanations } from "../graph/blueprintExplanation";
 import { useUi } from "../store";
+import { BlueprintReading } from "./BlueprintReading";
+import { executionReading, routeName } from "../graph/blueprintReading";
+import { rustOwnershipRows } from "../graph/rustOwnership";
+import type { BlueprintSources } from "../graph/blueprintSource";
 
 function guideChoice(label: string) {
   if (label === "Then") return "View after block";
@@ -23,15 +27,28 @@ interface Props {
   activeNode?: string;
   replaying?: boolean;
   onStep: (flow: string, node: FlowNode) => void;
+  sources?: BlueprintSources;
 }
 
-export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onStep }: Props) {
+export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onStep, sources }: Props) {
   const [history, setHistory] = useState<Visit[]>([]);
+  const [localChoice, setLocalChoice] = useState<{ flow: string; node: string; revision?: string; text: string }>();
   const guideOnOpen = useUi((s) => s.blueprintGuideOnOpen);
+  const explanations = useUi((s) => s.blueprintExplanations);
+  const select = useUi((s) => s.select);
   const setGuideOnOpen = useUi((s) => s.setBlueprintGuideOnOpen);
   const flow = flows.find((f) => f.symbol === activeFlow);
   const entry = (f: FlowGraph) => f.nodes.find((n) => n.concept === "Entry" || n.concept === "EventEntry") ?? f.nodes[0];
   const node = flow && (flow.nodes.find((n) => n.id === activeNode) ?? entry(flow));
+  const revision = flow?.source_revision ?? undefined;
+  const source = flow && sources?.[flow.span.file];
+  const showReading = explanations && (!source || source.revision === revision);
+  const reading = showReading && flow && node ? flow.reading?.filter((site) => site.node === node.id) ?? [] : [];
+  const routed = node && executionReading(node, reading);
+  const ownership = flow && node ? rustOwnershipRows(flow, showReading).get(node.id) : undefined;
+  const choice = !replaying && showReading && localChoice?.flow === flow?.symbol && localChoice?.node === node?.id
+    && localChoice?.revision === revision ? localChoice : undefined;
+  if (localChoice && !choice) setLocalChoice(undefined);
   const current = history.at(-1);
   const visits = current?.flow === flow?.symbol && current?.node === node?.id ? history : [];
   const choices = flow?.edges.filter((edge) => edge.kind === "Exec" && edge.from === node?.id) ?? [];
@@ -50,6 +67,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
 
   const visit = (nextFlow: FlowGraph, target: FlowNode, via?: string) => {
     const trail = visits.length ? visits : flow && node ? [{ flow: flow.symbol, node: node.id }] : [];
+    setLocalChoice(undefined);
     setHistory([...trail, { flow: nextFlow.symbol, node: target.id, via }]);
     onStep(nextFlow.symbol, target);
   };
@@ -82,12 +100,31 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
       {!replaying && flow && node && (
         <>
           <div aria-live="polite">{node.label || node.concept}</div>
-          {statementExplanations(node, flow.language).map((label) => <div key={label}>{label}</div>)}
+          {statementExplanations(node, flow.language, reading.length > 0).map((label) => <div key={label}>{label}</div>)}
+          {ownership?.map((row) => <div key={row.pin}><code>{row.name}</code> · {row.role}{row.origin && ` · ${row.origin}`}</div>)}
+          <BlueprintReading full sites={reading} route={(pin) => routeName(node, pin)} choose={(site, label, output, pin) => {
+            const edge = routed?.site === site && pin ? choices.find((edge) => edge.from_pin === pin) : undefined;
+            const next = edge && flow.nodes.find((node) => node.id === edge.to);
+            if (next && edge) {
+              visit(flow, next, edge.from_pin);
+            } else {
+              setLocalChoice({ flow: flow.symbol, node: node.id, revision, text: `${label} → ${output}` });
+            }
+          }} inspect={(site, span) => {
+            const expected = span.file === flow.span.file ? revision : undefined;
+            if (!site.path) {
+              select({ kind: "flow-node", flow: flow.symbol, id: node.id }, expected ? span : undefined, expected);
+              return;
+            }
+            useUi.getState().toggleExpanded(flow.symbol, node.id, false);
+            select({ kind: "expr", flow: flow.symbol, nodeId: node.id, path: site.path }, expected ? span : undefined, expected);
+          }} />
+          {choice && <div role="status">{choice.text}</div>}
           <div className="blueprint-guide-row">
-            <button disabled={visits.length < 2} onClick={back}>Back</button>
+            <button disabled={visits.length < 2 && !choice} onClick={() => choice ? setLocalChoice(undefined) : back()}>Back</button>
             {choices.map((edge) => {
               const target = flow.nodes.find((n) => n.id === edge.to);
-              const label = executionPinLabel(node, edge.from_pin, node.outputs.find((p) => p.id === edge.from_pin)?.label ?? "");
+              const label = routed?.labels[edge.from_pin] ?? executionPinLabel(node, edge.from_pin, node.outputs.find((p) => p.id === edge.from_pin)?.label ?? "");
               return target && (
                 <button key={`${edge.from_pin}:${edge.to}`} onClick={() => visit(flow, target, edge.from_pin)}>
                   {guideChoice(label)}

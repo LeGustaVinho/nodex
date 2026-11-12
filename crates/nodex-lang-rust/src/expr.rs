@@ -8,7 +8,7 @@ use nodex_lang_api::kit::truncate;
 use nodex_lang_api::ops::{self, Equality};
 use tree_sitter::Node;
 
-use crate::syntax::{Src, children, last_segment, named_children, parameters, unparen};
+use crate::syntax::{Src, children, first_child_of_kind, inclusive_range_to, last_segment, named_children, parameters, pattern_bindings, unparen};
 
 pub(crate) fn reference_focus(src: Src, node: Node) -> Option<Focus> {
     let mut node = unparen(node);
@@ -370,6 +370,10 @@ impl<'a> ExprLowering<'a> {
                 self.mk(node, Concept::Await, "await".into(), kids)
             }
             "assignment_expression" => {
+                if let Some((_, end)) = inclusive_range_to(node) {
+                    let end = self.lower(end);
+                    return with(self.mk(node, Concept::Compose, format!("range {}", text()), vec![end]), "range");
+                }
                 let kids = ["left", "right"].iter().filter_map(|f| node.child_by_field_name(f)).map(|c| self.lower(c)).collect();
                 self.mk(node, Concept::Assign, "=".into(), kids)
             }
@@ -594,13 +598,6 @@ impl<'a> ExprLowering<'a> {
             {
                 flavors.push(format!("turbofish:{}", src.norm(args).trim_matches(['<', '>'])));
             }
-            match name.as_str() {
-                "clone" | "to_owned" | "to_string" if name == "clone" => flavors.push("clone".into()),
-                "unwrap" | "expect" | "unwrap_unchecked" => flavors.push("may-panic".into()),
-                "lock" | "try_lock" => flavors.push("lock".into()),
-                "borrow_mut" => flavors.push("runtime-borrow".into()),
-                _ => {}
-            }
             name
         } else {
             let path = callee_path(src, node).unwrap_or_else(|| node.child_by_field_name("function").map(|f| src.norm(f)).unwrap_or_default());
@@ -762,6 +759,7 @@ pub fn is_expression(kind: &str) -> bool {
 pub struct Read {
     pub name: String,
     pub access: Option<Access>,
+    projected: bool,
 }
 
 /// Locals read by `node` (names that may refer to locals or parameters) with their access.
@@ -773,6 +771,10 @@ pub fn reads(src: Src, node: Node) -> Vec<Read> {
 }
 
 fn push(out: &mut Vec<Read>, name: String, access: Option<Access>) {
+    push_place(out, name, access, false);
+}
+
+fn push_place(out: &mut Vec<Read>, name: String, access: Option<Access>, projected: bool) {
     let rank = |a: Option<Access>| match a {
         Some(Access::BorrowMut) => 4,
         Some(Access::Move | Access::ByValue) => 3,
@@ -781,9 +783,13 @@ fn push(out: &mut Vec<Read>, name: String, access: Option<Access>) {
         None => 0,
     };
     match out.iter_mut().find(|r| r.name == name) {
-        Some(r) if rank(access) > rank(r.access) => r.access = access,
-        Some(_) => {}
-        None => out.push(Read { name, access }),
+        Some(r) => {
+            if rank(access) > rank(r.access) {
+                r.access = access;
+            }
+            r.projected &= projected;
+        }
+        None => out.push(Read { name, access, projected }),
     }
 }
 
@@ -801,7 +807,7 @@ fn access_of(src: Src, id: Node) -> Option<Access> {
         "field_expression" | "index_expression" | "unary_expression" | "binary_expression" | "compound_assignment_expr"
         | "range_expression" | "type_cast_expression" | "try_expression" | "await_expression" | "if_expression"
         | "while_expression" | "match_expression" | "let_condition" => None,
-        "assignment_expression" if is_field("left") => None,
+        "assignment_expression" if is_field("left") || inclusive_range_to(parent).is_some() => None,
         "let_declaration" | "arguments" | "return_expression" | "field_initializer" | "shorthand_field_initializer"
         | "array_expression" | "tuple_expression" | "assignment_expression" | "break_expression" | "closure_expression"
         | "block" => Some(Access::Move),
@@ -818,7 +824,8 @@ fn collect(src: Src, node: Node, shadowed: &mut Vec<String>, out: &mut Vec<Read>
         "identifier" => {
             let name = src.text(node).to_owned();
             if !shadowed.contains(&name) && !is_non_value(node) {
-                push(out, name, access_of(src, node));
+                let projected = crate::syntax::field_projection(node).is_some();
+                push_place(out, name, access_of(src, node), projected);
             }
             return;
         }
@@ -836,8 +843,26 @@ fn collect(src: Src, node: Node, shadowed: &mut Vec<String>, out: &mut Vec<Read>
                 let mut inner = Vec::new();
                 collect(src, body, shadowed, &mut inner);
                 for r in inner {
-                    // A `move` closure takes what it captures; others borrow it.
-                    push(out, r.name, if moves { Some(Access::Move) } else { r.access.filter(|a| *a == Access::BorrowMut).or(Some(Access::Borrow)) });
+                    let access = if moves && r.projected { None }
+                        else if moves { Some(Access::Move) }
+                        else { r.access.filter(|a| *a == Access::BorrowMut).or(Some(Access::Borrow)) };
+                    push_place(out, r.name, access, r.projected);
+                }
+            }
+            shadowed.truncate(before);
+            return;
+        }
+        "let_chain" => {
+            let before = shadowed.len();
+            for condition in named_children(node) {
+                collect(src, condition, shadowed, out);
+                if condition.kind() == "let_condition"
+                    && let Some(pattern) = condition.child_by_field_name("pattern")
+                {
+                    let mutable = first_child_of_kind(condition, "mutable_specifier").is_some();
+                    let mut bindings = Vec::new();
+                    pattern_bindings(src, pattern, mutable, &mut bindings);
+                    shadowed.extend(bindings.into_iter().map(|(name, _)| name));
                 }
             }
             shadowed.truncate(before);

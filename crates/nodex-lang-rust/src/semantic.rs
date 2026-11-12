@@ -13,7 +13,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use nodex_ir::semantic::{ByteRange, LocalTypeFact, RefKind, RustNominalType, SemanticFacts, SemanticRef, SemanticTarget, TypeFact, ValueFact, ValueFactTarget};
+use nodex_ir::semantic::{ByteRange, ExpressionFact, ExpressionFactKind, LocalTypeFact, RefKind, RustNominalType, SemanticFacts, SemanticRef, SemanticTarget, TypeFact, ValueFact, ValueFactTarget};
+use nodex_ir::reading::{ReadingContent, ReadingFact};
 use nodex_ir::types::{CollectionKind, TypeInfo, TypeOrigin, TypeShape, native_shape};
 use nodex_ir::{Language, ValueBasis, ValueInfo, ValueKind};
 use nodex_lang_api::blueprint_types::{expression_type, project_pattern};
@@ -22,6 +23,8 @@ use nodex_lang_api::syntax::{Src, named_children};
 use nodex_lang_api::SemanticProvider;
 use protobuf::Message;
 use tree_sitter::Node;
+
+use crate::reading::{Evidence, Family, Operations, Resolved};
 
 /// Semantic facts from `rust-analyzer scip`.
 pub struct RustAnalyzer {
@@ -106,10 +109,11 @@ impl RustAnalyzer {
             source: format!("{} (SCIP)", self.version),
             ..Default::default()
         };
+        let packages = crate::project::cargo_packages(&self.root);
         for (n, crate_root) in self.crate_roots.iter().enumerate() {
             let index = self.index(crate_root, n)?;
             let prefix = crate_root.strip_prefix(&self.root).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-            convert(&index, &self.root, &prefix, &self.local_packages, &mut facts);
+            convert(&index, &self.root, &prefix, &self.local_packages, &packages, &mut facts);
         }
         Ok(facts)
     }
@@ -251,6 +255,101 @@ fn enclosing_call<'t>(name: Node<'t>) -> Option<Node<'t>> {
     call.child_by_field_name("function").is_some_and(|f| f.id() == callee.id()).then_some(call)
 }
 
+fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Family, String)> {
+    let descriptor = sym.descriptors;
+    let name = path.rsplit("::").next()?;
+    let name = name.strip_suffix("()").unwrap_or(name);
+    let family = if sym.standard() {
+        match path {
+            "alloc::macros::vec!" | "alloc::vec!" | "std::vec!" => return Some((Family::Macro, "vec".into())),
+            "alloc::macros::format!" | "alloc::format!" | "std::format!" => return Some((Family::Macro, "format".into())),
+            "core::macros::builtin::assert!" | "core::assert!" => return Some((Family::Macro, "assert".into())),
+            "core::option::Option::Some" => return Some((Family::Option, "Some".into())),
+            "core::result::Result::Ok" => return Some((Family::Result, "Ok".into())),
+            _ => {}
+        }
+        if !descriptor.ends_with("().") {
+            return None;
+        }
+        if sym.package == "core"
+            && let Some(method) = descriptor.strip_prefix("slice/impl#[`[T]`]").and_then(|name| name.strip_suffix("()."))
+        {
+            let family = if matches!(method, "iter" | "iter_mut") { Family::Iter } else { Family::Slice };
+            return Some((family, method.into()));
+        }
+        if descriptor.starts_with("sync/impl#[`Arc<") && name == "clone" && sym.package == "alloc" {
+            Family::Arc
+        } else if name == "clone" && (descriptor == "clone/Clone#clone()." || descriptor.contains("][Clone]clone().")) {
+            Family::Clone
+        } else if path.starts_with("core::option::Option::") {
+            Family::Option
+        } else if path.starts_with("core::result::Result::") {
+            Family::Result
+        } else if path.starts_with("std::collections::hash::map::HashMap::") || path.starts_with("alloc::collections::btree::map::BTreeMap::")
+            || path.starts_with("std::collections::hash::map::Entry::") || path.starts_with("alloc::collections::btree::map::entry::Entry::")
+        {
+            Family::Map
+        } else if path.starts_with("core::iter::traits::iterator::Iterator::")
+            || path.starts_with("core::iter::traits::collect::IntoIterator::")
+            || name == "into_iter" && descriptor.contains("][IntoIterator]into_iter().")
+            || matches!(name, "iter" | "iter_mut") && matches!(sym.package, "alloc" | "std") && descriptor.starts_with("collections/")
+        {
+            Family::Iter
+        } else if sym.package == "std" && descriptor.starts_with("thread/")
+            && (name == "spawn" || name == "join" && path.contains("::JoinHandle::"))
+        {
+            Family::Thread
+        } else if sym.package == "std" && descriptor.starts_with("sync/")
+            && (path.contains("::Mutex::") || path.contains("::RwLock::"))
+        {
+            Family::Lock
+        } else if sym.package == "core" && path == "core::cell::RefCell::borrow_mut()" {
+            Family::Cell
+        } else if matches!(path, "core::mem::drop()" | "std::process::exit()")
+            || sym.package == "std" && (descriptor.starts_with("thread/") && name == "sleep"
+                || descriptor.starts_with("sync/mpsc/") && matches!(name, "send" | "recv"))
+        {
+            Family::Effect
+        } else {
+            return None;
+        }
+    } else {
+        match (external, sym.package, descriptor) {
+            (true, "tokio", "task/spawn/spawn().") => Family::Task,
+            (true, "tokio", "macros/select/select!" | "select!") => return Some((Family::Macro, "select".into())),
+            (true, "tokio", descriptor) if (descriptor.starts_with("time/") && matches!(name, "sleep" | "timeout_at"))
+                || (descriptor.starts_with("sync/mpsc/") || descriptor.starts_with("sync/broadcast/") || descriptor.starts_with("sync/oneshot/"))
+                    && matches!(name, "send" | "recv")
+                || descriptor.starts_with("sync/semaphore/") && name == "acquire" => Family::Effect,
+            (true, "rayon", descriptor) if descriptor.starts_with("iter/")
+                && (descriptor.contains("ParallelIterator#") || descriptor.contains("][`IntoParallelRefIterator")
+                    || descriptor.contains("][`IntoParallelRefMutIterator") || descriptor.contains("][IntoParallelIterator]")) => Family::ParIter,
+            _ => return None,
+        }
+    };
+    let operation = match (family, sym.package, name) {
+        (Family::Effect, "tokio", "recv") if descriptor.starts_with("sync/mpsc/") => "recv_optional",
+        (Family::Effect, "tokio", "send") if descriptor.starts_with("sync/mpsc/bounded/") => "send_async",
+        (Family::Effect, "tokio", "sleep") => "sleep_async",
+        _ => name,
+    };
+    Some((family, operation.into()))
+}
+
+fn record_operation(operations: &mut Operations, node: Node<'_>, resolved: Resolved) {
+    operations.entry((node.start_byte(), node.end_byte())).and_modify(|previous| {
+        if previous.as_ref().is_some_and(|op| op.family != resolved.family || op.name != resolved.name || op.definition != resolved.definition) {
+            *previous = None;
+        }
+    }).or_insert_with(|| Some(resolved));
+}
+
+fn macro_invocation(name: Node<'_>) -> Option<Node<'_>> {
+    let invocation = std::iter::successors(Some(name), Node::parent).find(|node| node.kind() == "macro_invocation")?;
+    let callee = invocation.child_by_field_name("macro")?;
+    (callee.start_byte() <= name.start_byte() && name.end_byte() <= callee.end_byte()).then_some(invocation)
+}
+
 /// The struct literal whose type is `name` (`Order { … }`, `Shape::Circle { … }`).
 fn enclosing_struct_literal<'t>(name: Node<'t>) -> Option<Node<'t>> {
     let mut n = name;
@@ -348,7 +447,7 @@ fn propagate_nominal_locals(
     file: &str,
     root: Node<'_>,
     definitions: &HashMap<&str, (usize, usize)>,
-    mut uses: Vec<(usize, usize, &str)>,
+    uses: &[(usize, usize, &str)],
 ) {
     let mut types = HashMap::new();
     let record = |fact: &RustNominalType, types: &mut HashMap<_, _>| {
@@ -362,8 +461,7 @@ fn propagate_nominal_locals(
     for fact in &facts[first..] {
         record(fact, &mut types);
     }
-    uses.sort_unstable_by_key(|&(start, _, _)| start);
-    for (start, end, symbol) in uses {
+    for &(start, end, symbol) in uses {
         let Some(&(decl_start, decl_end)) = definitions.get(symbol) else { continue };
         let Some(Some((declaration, by_reference))) = types.get(&(decl_start as u32, decl_end as u32)).cloned() else { continue };
         let Some(name) = root.descendant_for_byte_range(start, end).filter(|name| name.kind() == "identifier") else { continue };
@@ -734,7 +832,7 @@ fn rust_type_facts(
     }
 }
 
-fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages: &HashSet<String>, facts: &mut SemanticFacts) {
+fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages: &HashSet<String>, packages: &[crate::project::CargoPackage], facts: &mut SemanticFacts) {
     // Where each project symbol is defined, and what every symbol is.
     let rel_of = |doc: &scip::types::Document| {
         let rel = doc.relative_path.replace('\\', "/");
@@ -793,16 +891,33 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
     for (definition, result) in return_types.values() {
         facts.types.push(TypeFact { site: (*definition).clone(), target: ValueFactTarget::Member, info: result.info.clone() });
     }
+    let fields: HashMap<_, _> = definitions.iter().filter_map(|(&symbol, definition)| {
+        let (text, _) = texts.get(&definition.file)?;
+        let (tree, identities) = typed_documents.get(&definition.file)?;
+        let name = tree.root_node().descendant_for_byte_range(definition.start as usize, definition.end as usize)?;
+        let field = name.parent().filter(|node| node.kind() == "field_declaration")?;
+        let ty = field.child_by_field_name("type")?;
+        let owner = field.parent()?.parent()?.child_by_field_name("name")?;
+        let owner = ByteRange { file: definition.file.clone(), start: owner.start_byte() as u32, end: owner.end_byte() as u32 };
+        let info = TypeInfo::new(written_shape(ty, text, identities), TypeOrigin::Declared, Some(text[ty.byte_range()].to_owned()));
+        Some((symbol, (owner, info)))
+    }).collect();
 
     for doc in &index.documents {
         let rel = rel_of(doc);
         let Some((text, starts)) = texts.get(&rel) else { continue };
         let Some((tree, identities)) = typed_documents.get(&rel) else { continue };
         let root_node = tree.root_node();
+        let line_index = LineIndex::new(text);
+        let site = |a: usize, b: usize| ByteRange { file: rel.clone(), start: a as u32, end: b as u32 };
         let first_nominal = facts.rust_nominal_types.len();
+        let first_type = facts.types.len();
         let mut local_definitions = HashMap::new();
         let mut local_uses = Vec::new();
         let mut initializers = InitializerTypes::default();
+        let mut operations = Operations::new();
+        let mut non_bindings = HashSet::new();
+        let mut field_uses = Vec::new();
         let vec_macros: HashSet<_> = doc.occurrences.iter().filter_map(|occurrence| {
             let symbol = parse_symbol(&occurrence.symbol)?;
             (symbol.standard() && matches!(display(&symbol).as_str(), "alloc::macros::vec!" | "alloc::vec!" | "std::vec!"))
@@ -816,7 +931,6 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let mut seen: HashSet<(usize, usize, String)> = HashSet::new();
         for o in &doc.occurrences {
             let Some((s, e)) = range_bytes(starts, &o.range) else { continue };
-            let site = |a: usize, b: usize| ByteRange { file: rel.clone(), start: a as u32, end: b as u32 };
             // Local definitions: their types.
             if o.symbol.starts_with("local ") {
                 if o.symbol_roles & 1 == 1 {
@@ -837,21 +951,29 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             }
             let Some(sym) = parse_symbol(&o.symbol) else { continue };
             let external = !local_packages.contains(sym.package);
+            let Some(name) = root_node.descendant_for_byte_range(s, e) else { continue };
+            if name.kind() == "identifier" && name.start_byte() == s && name.end_byte() == e {
+                non_bindings.insert((s, e));
+            }
             if sym.descriptors.ends_with('!') {
-                if vec_macros.contains(&(s, e))
-                    && let Some(name) = root_node.descendant_for_byte_range(s, e)
-                    && let Some(invocation) = std::iter::successors(Some(name), Node::parent)
-                        .find(|node| node.kind() == "macro_invocation")
-                    && let Some(macro_name) = invocation.child_by_field_name("macro")
-                    && macro_name.start_byte() <= s && e <= macro_name.end_byte()
-                    && let Some(tokens) = named_children(invocation).into_iter().find(|node| node.kind() == "token_tree")
-                {
-                    initializers.shapes.insert((invocation.start_byte(), invocation.end_byte()),
-                        vec_macro_shape(tokens, &text[macro_name.byte_range()], text, &vec_macros, 0));
+                if let Some(invocation) = macro_invocation(name) {
+                    if vec_macros.contains(&(s, e))
+                        && let Some(macro_name) = invocation.child_by_field_name("macro")
+                        && let Some(tokens) = named_children(invocation).into_iter().find(|node| node.kind() == "token_tree")
+                    {
+                        initializers.shapes.insert((invocation.start_byte(), invocation.end_byte()),
+                            vec_macro_shape(tokens, &text[macro_name.byte_range()], text, &vec_macros, 0));
+                    }
+                    let definition = definitions.get(o.symbol.as_str()).and_then(|definition| {
+                        let (text, _) = texts.get(&definition.file)?;
+                        Some(LineIndex::new(text).span(&definition.file, definition.start as usize, definition.end as usize))
+                    });
+                    let builtin = reading_operation(&sym, &display(&sym), external);
+                    let name = builtin.map_or_else(String::new, |(_, name)| name);
+                    record_operation(&mut operations, invocation, Resolved { family: Family::Macro, name, definition });
                 }
                 continue;
             }
-            let Some(name) = root_node.descendant_for_byte_range(s, e) else { continue };
             let kind = kind_of(sym.descriptors);
             let segs = segments(sym.descriptors);
             let target = SemanticTarget {
@@ -862,6 +984,40 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                 linq: false,
                 external,
             };
+            if sym.descriptors.ends_with("().")
+                && let Some(expression) = name.parent().filter(|expr| match expr.kind() {
+                    "binary_expression" | "compound_assignment_expr" => expr.child_by_field_name("operator") == Some(name),
+                    "unary_expression" => expr.child(0) == Some(name),
+                    "index_expression" => name.kind() == "[",
+                    _ => false,
+                })
+            {
+                facts.reading.push(ReadingFact {
+                    anchor: line_index.span(&rel, expression.start_byte(), expression.end_byte()),
+                    span: line_index.span(&rel, name.start_byte(), name.end_byte()),
+                    basis: ValueBasis::TypeAnalysis,
+                    content: ReadingContent::Detail {
+                        label: "Resolve the operator".into(),
+                        text: format!("This operator calls {}.", target.display),
+                        definition: None,
+                        borrow: false,
+                    },
+                });
+            }
+            if let Some((family, operation)) = reading_operation(&sym, &target.display, external) {
+                let at = if name.kind() == "?" && operation == "branch" && sym.descriptors.ends_with("][Try]branch().") {
+                    name.parent().filter(|node| node.kind() == "try_expression")
+                } else { enclosing_call(name) };
+                if let Some(at) = at {
+                    record_operation(&mut operations, at, Resolved { family, name: operation, definition: None });
+                }
+            }
+            if let Some(field) = name.parent().filter(|parent| parent.kind() == "field_expression"
+                && parent.child_by_field_name("field") == Some(name))
+                && let Some((owner, info)) = fields.get(o.symbol.as_str())
+            {
+                field_uses.push((field, owner, info));
+            }
             let mut add_value = |node: Node, fact_target, mut info: ValueInfo| {
                 info.basis = ValueBasis::TypeAnalysis;
                 facts.values.push(ValueFact { site: site(node.start_byte(), node.end_byte()), target: fact_target, info });
@@ -989,7 +1145,66 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             }
         }
         rust_type_facts(facts, &rel, text, root_node, &local_definitions, &local_uses, &signatures, identities, &initializers);
-        propagate_nominal_locals(&mut facts.rust_nominal_types, first_nominal, &rel, root_node, &local_definitions, local_uses);
+        local_uses.sort_unstable_by_key(|&(start, _, _)| start);
+        propagate_nominal_locals(&mut facts.rust_nominal_types, first_nominal, &rel, root_node, &local_definitions, &local_uses);
+
+        let mut effects: Vec<_> = operations.iter().filter_map(|(&range, operation)| {
+            let operation = operation.as_ref()?;
+            let kind = match (operation.family, operation.name.as_str()) {
+                (Family::Thread | Family::Task, "spawn") => ExpressionFactKind::Spawn,
+                (Family::Effect, "sleep") => ExpressionFactKind::Sleep,
+                (Family::Effect, "send") => ExpressionFactKind::ChannelSend,
+                (Family::Effect, "exit") => ExpressionFactKind::ProcessExit,
+                _ => return None,
+            };
+            Some((range, kind))
+        }).collect();
+        effects.sort_unstable_by_key(|(range, _)| *range);
+        facts.expressions.extend(effects.into_iter().map(|((start, end), kind)| ExpressionFact {
+            site: site(start, end),
+            kind,
+            ty: None,
+        }));
+        let file = root.join(&rel);
+        let edition = packages.iter().rev().find(|package| package.manifest.parent().is_some_and(|dir| file.starts_with(dir)))
+            .and_then(|package| package.edition.as_deref());
+        let mut evidence = Evidence {
+            operations,
+            non_bindings,
+            types: &facts.types[first_type..],
+            definitions: Some(&local_definitions),
+            uses: &local_uses,
+            precise_captures: match edition {
+                Some("2015" | "2018") => Some(false),
+                Some("2021" | "2024") => Some(true),
+                _ => None,
+            },
+            ..Default::default()
+        };
+        let uses: HashMap<_, _> = local_uses.iter().map(|&(s, e, symbol)| ((s, e), symbol)).collect();
+        let mut nominals = HashMap::new();
+        for fact in &facts.rust_nominal_types[first_nominal..] {
+            let identity = (&fact.declaration, fact.by_reference);
+            nominals.entry((fact.site.start as usize, fact.site.end as usize)).and_modify(|previous| {
+                if *previous != Some(identity) { *previous = None; }
+            }).or_insert(Some(identity));
+        }
+        for (field, owner, info) in field_uses {
+            let range = (field.start_byte(), field.end_byte());
+            evidence.fields.insert(range, info.clone());
+            let Some(base) = field.child_by_field_name("value").map(crate::syntax::unparen) else { continue };
+            let Some(declaration) = uses.get(&(base.start_byte(), base.end_byte())).and_then(|symbol| local_definitions.get(symbol)) else { continue };
+            if let Some(Some((actual, by_reference))) = nominals.get(declaration)
+                && *actual == owner
+            {
+                evidence.direct_fields.insert(range, *by_reference);
+            }
+        }
+        let src = Src { text, file: &rel, index: &line_index };
+        let (reading, borrows, inferred) = crate::reading::collect(src, root_node, &evidence);
+        facts.reading.extend(reading.into_iter().filter(|fact| fact.basis == ValueBasis::TypeAnalysis));
+        facts.rust_borrows.extend(borrows);
+        facts.types.extend(inferred);
     }
 }
 
@@ -1012,5 +1227,12 @@ mod tests {
         assert_eq!(local_signature("let mut total: i64"), Some(("total".into(), "i64".into())));
         assert_eq!(local_signature("customer: &str"), Some(("customer".into(), "&str".into())));
         assert_eq!(local_signature("self: &OrderService<R>"), None);
+    }
+
+    #[test]
+    fn recognizes_tokio_select_by_macro_identity() {
+        let symbol = parse_symbol("rust-analyzer cargo tokio 1.47.1 macros/select/select!").unwrap();
+        assert_eq!(reading_operation(&symbol, &display(&symbol), true), Some((Family::Macro, "select".into())));
+        assert!(reading_operation(&symbol, &display(&symbol), false).is_none());
     }
 }

@@ -298,7 +298,7 @@ fn activity_diagrams_in_typescript_and_rust() {
 
     let rs = diagram("rust/Sample", UmlKind::Activity, UmlScope::Symbol { id: "crate::main".into() }, UmlOptions::default());
     save("rust_activity_main", &rs);
-    assert!(rs.mermaid.contains("[/\""), "a spawned thread: {}", rs.mermaid);
+    assert!(rs.mermaid.contains("std::thread::spawn") && !rs.mermaid.contains("[/\""), "an unresolved call: {}", rs.mermaid);
     assert_eq!(rs.title, "Activity of main.main");
 
     // One action per statement instead of merged runs.
