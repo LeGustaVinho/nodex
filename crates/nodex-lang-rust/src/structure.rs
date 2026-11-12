@@ -140,9 +140,9 @@ impl<'a, 't> Collector<'a, 't> {
             flavors.push("lifetime".into());
         }
         Symbol {
+            rust_contract: crate::reading::contract(self.src, node),
             syntax_sites: None,
             type_info: None,
-            rust_contract: crate::reading::contract(self.src, node),
             value_info: None,
             id: id.to_owned(),
             kind,
@@ -678,8 +678,6 @@ impl<'a, 't> Collector<'a, 't> {
     }
 }
 
-/// The method or function a closure is passed to (`items.for_each(|x| …)` → `for_each`), or
-/// `None` when the closure is not a call argument.
 pub(crate) fn closure_binding(src: Src, mut value: Node) -> Option<String> {
     while let Some(parent) = value.parent().filter(|p| p.kind() == "parenthesized_expression") {
         value = parent;
@@ -691,6 +689,8 @@ pub(crate) fn closure_binding(src: Src, mut value: Node) -> Option<String> {
     declaration.child_by_field_name("pattern").filter(|p| p.kind() == "identifier").map(|p| src.text(p).to_owned())
 }
 
+/// The method or function a closure is passed to (`items.for_each(|x| …)` → `for_each`), or
+/// `None` when the closure is not a call argument.
 pub fn callback_callee(src: Src, closure: Node) -> Option<String> {
     let args = closure.parent().filter(|p| p.kind() == "arguments")?;
     let mut call = args.parent().filter(|p| p.kind() == "call_expression")?;

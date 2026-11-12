@@ -624,6 +624,7 @@ impl<'a, 't> Collector<'a, 't> {
                     f.push("object".into());
                 }
                 self.push_or_merge(Symbol {
+                    rust_contract: None,
                     syntax_sites: None,
                     type_info: None,
                     value_info: None,
@@ -631,7 +632,6 @@ impl<'a, 't> Collector<'a, 't> {
                     kind: SymbolKind::Field,
                     name: field.clone(),
                     qualified_name: id.clone(),
-                    rust_contract: None,
                     parent: Some(parent.to_owned()),
                     language: Language::Typescript,
                     origins: vec![src.span(d)],
@@ -746,6 +746,7 @@ impl<'a, 't> Collector<'a, 't> {
         let src = self.src;
         let id = format!("{qual}.global");
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -753,7 +754,6 @@ impl<'a, 't> Collector<'a, 't> {
             kind: SymbolKind::Namespace,
             name: "global".into(),
             qualified_name: id.clone(),
-            rust_contract: None,
             parent: Some(parent.to_owned()),
             language: Language::Typescript,
             origins: vec![src.span(decl)],
@@ -825,6 +825,7 @@ impl<'a, 't> Collector<'a, 't> {
             _ => header,
         };
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -832,7 +833,6 @@ impl<'a, 't> Collector<'a, 't> {
             kind: SymbolKind::Function,
             name: name.clone(),
             qualified_name: id.clone(),
-            rust_contract: None,
             parent: Some(parent.to_owned()),
             language: Language::Typescript,
             origins: vec![src.span(decl)],
@@ -974,6 +974,7 @@ impl<'a, 't> Collector<'a, 't> {
             flavors.push("declare".into());
         }
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -996,7 +997,6 @@ impl<'a, 't> Collector<'a, 't> {
                 for base in named_children(clause).into_iter().filter(|b| b.kind() != "type_arguments") {
                     let name = bare_type_name(&src.norm(base));
                     if !name.is_empty() {
-            rust_contract: None,
                         self.type_refs.push(TypeRef { from: id.clone(), name, relation: TypeRelation::Base });
                     }
                 }
@@ -1109,6 +1109,7 @@ impl<'a, 't> Collector<'a, 't> {
             let keyword = if is_getter { "get" } else { "set" };
             let acc_id = format!("{prop_id}.{keyword}");
             self.push_or_merge(Symbol {
+                rust_contract: None,
                 syntax_sites: None,
                 type_info: None,
                 value_info: None,
@@ -1131,7 +1132,6 @@ impl<'a, 't> Collector<'a, 't> {
                 self.function_ids.insert(m.start_byte(), acc_id.clone());
                 self.local_functions(b, &acc_id);
                 self.bodies.push(BodyJob {
-                rust_contract: None,
                     symbol: acc_id,
                     name: format!("{name}.{keyword}"),
                     kind,
@@ -1151,6 +1151,7 @@ impl<'a, 't> Collector<'a, 't> {
         };
         let signature = src.header(m, body);
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -1173,7 +1174,6 @@ impl<'a, 't> Collector<'a, 't> {
             self.function_ids.insert(m.start_byte(), id.clone());
             self.local_functions(b, &id);
             self.bodies.push(BodyJob {
-            rust_contract: None,
                 symbol: id,
                 name: label,
                 kind: body_kind,
@@ -1261,6 +1261,7 @@ impl<'a, 't> Collector<'a, 't> {
         let mut flavors = flavors;
         flavors.push("type-only".into());
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -1283,7 +1284,6 @@ impl<'a, 't> Collector<'a, 't> {
                 let name = bare_type_name(&src.norm(base));
                 if !name.is_empty() {
                     self.type_refs.push(TypeRef { from: id.clone(), name, relation: TypeRelation::Base });
-            rust_contract: None,
                 }
             }
         }
@@ -1338,6 +1338,7 @@ impl<'a, 't> Collector<'a, 't> {
             None => SymbolKind::TypeAlias,
         };
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -1360,7 +1361,6 @@ impl<'a, 't> Collector<'a, 't> {
                 self.type_members(v, &id);
             }
             self.refs(&id, v);
-            rust_contract: None,
         }
     }
 
@@ -1372,6 +1372,7 @@ impl<'a, 't> Collector<'a, 't> {
         let mut flavors = flavors;
         flavors.extend(modifiers(src, decl));
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -1394,7 +1395,6 @@ impl<'a, 't> Collector<'a, 't> {
             let name_node = match m.kind() {
                 "enum_assignment" => m.child_by_field_name("name"),
                 "property_identifier" | "string" => Some(m),
-            rust_contract: None,
                 _ => None,
             };
             if let Some(n) = name_node {
@@ -1415,6 +1415,7 @@ impl<'a, 't> Collector<'a, 't> {
         let name = src.norm(name_node);
         let id = format!("{qual}.{name}");
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -1437,7 +1438,6 @@ impl<'a, 't> Collector<'a, 't> {
             for child in named_children(body) {
                 self.top_item(child, &id, &id, &mut Vec::new(), &mut ignored);
             }
-            rust_contract: None,
         }
     }
 
@@ -1447,6 +1447,7 @@ impl<'a, 't> Collector<'a, 't> {
         let id = format!("{owner}.{name}");
         let body = node.child_by_field_name("body").or_else(|| node.child_by_field_name("value"));
         self.push_or_merge(Symbol {
+            rust_contract: None,
             syntax_sites: None,
             type_info: None,
             value_info: None,
@@ -1469,7 +1470,6 @@ impl<'a, 't> Collector<'a, 't> {
         }
         id
     }
-            rust_contract: None,
 
     fn param_refs(&mut self, from: &str, func: Node) {
         if let Some(list) = func.child_by_field_name("parameters") {
