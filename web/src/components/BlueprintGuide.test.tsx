@@ -61,6 +61,47 @@ const flow: FlowGraph = {
     .map(([from, from_pin, to]) => ({ from, from_pin, to, to_pin: "in", kind: "Exec", access: null })),
 };
 
+it("explains a Rust break result and follows only a mapped exit", () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const env = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previousEnvironment = env.IS_REACT_ACT_ENVIRONMENT;
+  env.IS_REACT_ACT_ENVIRONMENT = true;
+  const leave = {
+    ...step("Leave search", "Break", [output("error", "Return early if absent")]),
+    flavors: ["label:'search", "break-value-target:block", "break-value-binding:target₂"],
+  };
+  const after = step("Use target", "Call");
+  const example = { ...flow, nodes: [leave, after], edges: [] };
+  const onStep = vi.fn();
+  const render = (graph: FlowGraph) => act(() => root.render(
+    <BlueprintGuide flows={[graph]} activeFlow={graph.symbol} activeNode={leave.id} onStep={onStep} />,
+  ));
+  try {
+    render(example);
+    expect(host.textContent).toContain("If the expression after break produces a value, execution leaves the block 'search.");
+    expect(host.textContent).toContain("That value initializes target₂.");
+    expect(host.textContent).toContain("Return early if absent");
+    expect(host.textContent).toContain("End of the mapped path");
+    expect(host.querySelectorAll("button")).toHaveLength(1);
+    expect(onStep).not.toHaveBeenCalled();
+
+    render({ ...example, language: "csharp" });
+    expect(host.textContent).toContain("End of this path");
+    expect(host.textContent).not.toContain("initializes target₂");
+
+    render({ ...example, nodes: [{ ...leave, outputs: [...leave.outputs, output("out", "")] }, after], edges: [
+      { from: leave.id, from_pin: "out", to: after.id, to_pin: "in", kind: "Exec", access: null },
+    ] });
+    const next = [...host.querySelectorAll("button")].find((button) => button.textContent === "Next")!;
+    act(() => next.click());
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, after);
+  } finally {
+    act(() => root.unmount());
+    env.IS_REACT_ACT_ENVIRONMENT = previousEnvironment;
+  }
+});
+
 it("marks only an observed, unique execution edge and excludes the after-block shortcut", () => {
   const step = { index: 1, micros: 10, thread: 1, node: "Return now", previous_node: "Check input", values: [] };
   expect(recordedEdgeId(flow, step, "example::")).toBe("example::Check input:true->Return now:in");

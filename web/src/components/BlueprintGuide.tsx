@@ -49,6 +49,16 @@ function continueTarget(flow: FlowGraph, node: FlowNode) {
   }
 }
 
+function rustBreakResult(node: FlowNode) {
+  if (node.concept !== "Break") return;
+  const target = node.flavors.includes("break-value-target:block") ? "block"
+    : node.flavors.includes("break-value-target:loop") ? "loop" : undefined;
+  if (!target) return;
+  const label = node.flavors.find((flavor) => flavor.startsWith("label:"))?.slice("label:".length);
+  const binding = node.flavors.find((flavor) => flavor.startsWith("break-value-binding:"))?.slice("break-value-binding:".length);
+  return { target, label, binding, returns: node.flavors.includes("break-value-return") };
+}
+
 interface Visit {
   flow: string;
   node: string;
@@ -108,6 +118,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
   ) ?? [];
   const terminal = node && ["Return", "Throw", "Break", "Continue", "Jump"].includes(node.concept);
   const continues = flow?.language === "rust" && node?.concept === "Continue";
+  const breakResult = currentSource && flow?.language === "rust" && node ? rustBreakResult(node) : undefined;
   const nextIteration = !replaying && currentSource && continues && flow && node ? continueTarget(flow, node) : undefined;
   const enclosing = !choices.length && !terminal && flow ? enclosingBlock(flow, visits) : undefined;
 
@@ -146,6 +157,15 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
       {!replaying && flow && node && (
         <>
           <div aria-live="polite">{node.label || node.concept}</div>
+          {breakResult && (
+            <div>
+              If the expression after <code>break</code> produces a value, execution leaves the {breakResult.target}
+              {breakResult.label && <> <code>{breakResult.label}</code></>}.
+              {breakResult.binding ? <> That value initializes <code>{breakResult.binding}</code>.</>
+                : breakResult.returns ? " That value becomes the result of this body."
+                  : ` That value becomes the result of the ${breakResult.target}.`}
+            </div>
+          )}
           {statementExplanations(node, flow.language, reading.length > 0).map((label) => <div key={label}>{label}</div>)}
           {guards[0] && <div>{guards[0].detail.explain}</div>}
           {ownership?.map((row) => <div key={row.pin}><code>{row.name}</code> · {row.role}{row.origin && ` · ${row.origin}`}</div>)}
@@ -198,9 +218,9 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             {unmapped.map((pin) => (
               <span key={pin.id}>{executionPinLabel(node, pin.id, pin.label)} · no mapped step</span>
             ))}
-            {continues ? <span>Skip the rest of this iteration</span> : terminal && <span>End of this path</span>}
+            {continues ? <span>Skip the rest of this iteration</span> : terminal && !breakResult && <span>End of this path</span>}
             {nextIteration && <button type="button" onClick={() => visit(flow, nextIteration.node, { resumesLoop: true })}>{nextIteration.action}</button>}
-            {!terminal && !choices.length && !enclosing && <span>End of the mapped path</span>}
+            {(!terminal || breakResult) && !choices.length && !enclosing && <span>End of the mapped path</span>}
           </div>
         </>
       )}

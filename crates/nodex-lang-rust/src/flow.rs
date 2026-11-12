@@ -7,8 +7,10 @@
 //! - `expr?` adds an `error` exec output: if it fails, the error is returned right there;
 //! - data wires say whether the value moves, is copied or is borrowed.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+use icu_normalizer::ComposingNormalizer;
 use nodex_ir::{Access, BindingForm, CallTarget, Concept, FlowEdgeKind, FlowGraph, Focus, Language, SymbolId, TypeRef, TypeRelation};
 use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, callback_entry_label, truncate};
 use tree_sitter::Node;
@@ -36,8 +38,8 @@ struct Lowering<'a, 'f> {
     drops: Vec<Vec<DropLocal>>,
     /// Project types with `impl Drop` → their `drop` method.
     drop_types: &'f HashMap<String, SymbolId>,
-    /// While lowering `let x = loop { … }`: `break value` sets `x`.
-    target: Option<String>,
+    /// Lexically enclosing loops and labeled blocks, innermost last.
+    break_scopes: Vec<BreakScope>,
     propagation_label: &'static str,
 }
 
@@ -60,13 +62,30 @@ enum Tail {
     /// It is the function's result.
     Return,
     /// It is the value of `let name = …`.
-    Set(String),
+    Set { name: String, shown: String },
 }
 
 impl Tail {
     fn on(&self) -> bool {
         *self != Tail::No
     }
+}
+
+struct BreakScope {
+    label: Option<String>,
+    kind: BreakScopeKind,
+    tail: Tail,
+}
+
+enum BreakScopeKind {
+    ValueLoop,
+    UnitLoop,
+    LabeledBlock,
+}
+
+fn label_identifier(label: &str) -> Cow<'_, str> {
+    let identifier = label.trim_start_matches('\'');
+    ComposingNormalizer::new_nfc().normalize(identifier.strip_prefix("r#").unwrap_or(identifier))
 }
 
 /// `2` → `₂`.
@@ -159,7 +178,7 @@ pub fn lower_body(
         defined: HashMap::new(),
         drops: Vec::new(),
         drop_types,
-        target: None,
+        break_scopes: Vec::new(),
         propagation_label,
     };
     let params: Vec<&str> = job.params.iter().map(|(n, _)| n.as_str()).collect();
@@ -416,6 +435,14 @@ impl Lowering<'_, '_> {
     /// A block's statements; `tail` says what its final expression (without `;`) does.
     fn block(&mut self, block: Node, cur: Flow, tail: &Tail) -> Flow {
         let mut items = block_statements(block).peekable();
+        let label = first_child_of_kind(block, "label");
+        if let Some(label) = label {
+            self.break_scopes.push(BreakScope {
+                label: Some(label_identifier(self.src.text(label)).into_owned()),
+                kind: BreakScopeKind::LabeledBlock,
+                tail: tail.clone(),
+            });
+        }
         self.b.push_scope();
         self.drops.push(Vec::new());
         let mut cur = cur;
@@ -435,6 +462,9 @@ impl Lowering<'_, '_> {
         }
         self.drops.pop();
         self.b.pop_scope();
+        if label.is_some() {
+            self.break_scopes.pop();
+        }
         cur
     }
 
@@ -478,7 +508,8 @@ impl Lowering<'_, '_> {
             "block" => self.block(e, cur, tail),
             "unsafe_block" => self.unsafe_block(s, e, cur, tail),
             "assignment_expression" if inclusive_range_to(e).is_none() => self.expr_stmt(s, e, cur),
-            "return_expression" | "break_expression" | "continue_expression" | "loop_expression"
+            "loop_expression" => self.loop_expr(e, cur, tail),
+            "return_expression" | "break_expression" | "continue_expression"
             | "while_expression" | "for_expression" | "compound_assignment_expr" | "unit_expression" => {
                 self.expr_stmt(s, e, cur)
             }
@@ -486,7 +517,7 @@ impl Lowering<'_, '_> {
                 self.expr_stmt(s, e, cur)
             }
             _ => match tail {
-                Tail::Set(name) => self.set_value(s, e, name, cur),
+                Tail::Set { name, .. } => self.set_value(s, e, name, cur),
                 _ => self.return_value(s, Some(e), cur, true),
             },
         }
@@ -649,24 +680,15 @@ impl Lowering<'_, '_> {
             .flavor("block-value");
         let id = self.place(spec, &cur);
         let cur = Some(self.b.exec_out(&id, "out", ""));
-        let tail = Tail::Set(name.to_owned());
+        let tail = Tail::Set { name: name.to_owned(), shown };
         let end = match v.kind() {
             "if_expression" => self.if_expr(v, v, cur, &tail),
             "match_expression" => self.match_expr(v, v, cur, &tail),
             "unsafe_block" => self.unsafe_block(v, v, cur, &tail),
-            "loop_expression" | "while_expression" | "for_expression" => {
-                let before = self.target.replace(name.to_owned());
-                let end = self.loop_expr(v, v, cur);
-                self.target = before;
-                end
-            }
+            "loop_expression" | "while_expression" | "for_expression" => self.loop_expr(v, cur, &tail),
             _ => {
                 let block = if v.kind() == "block" { v } else { first_child_of_kind(v, "block").unwrap_or(v) };
-                // A labelled block: `break 'b value` leaves it with that value.
-                let before = self.target.replace(name.to_owned());
-                let end = self.block(block, cur, &tail);
-                self.target = before;
-                end
+                self.block(block, cur, &tail)
             }
         };
         self.define_local(&id, name, ty, mutable, true);
@@ -765,7 +787,7 @@ impl Lowering<'_, '_> {
         match e.kind() {
             "if_expression" => self.if_expr(s, e, cur, &Tail::No),
             "match_expression" => self.match_expr(s, e, cur, &Tail::No),
-            "loop_expression" | "while_expression" | "for_expression" => self.loop_expr(s, e, cur),
+            "loop_expression" | "while_expression" | "for_expression" => self.loop_expr(e, cur, &Tail::No),
             "block" => self.block(e, cur, &Tail::No),
             "unsafe_block" => self.unsafe_block(s, e, cur, &Tail::No),
             "return_expression" => {
@@ -774,13 +796,17 @@ impl Lowering<'_, '_> {
             }
             "break_expression" | "continue_expression" => {
                 let label_name = first_child_of_kind(e, "label").map(|l| src.norm(l));
-                let value = named_children(e).into_iter().find(|c| c.kind() != "label");
+                let value = named_children(e).into_iter().find(|c| c.kind() != "label" && !c.is_extra());
                 let is_break = e.kind() == "break_expression";
                 let mut flavors = Vec::new();
                 if let Some(l) = &label_name {
                     flavors.push(format!("label:{l}"));
                 }
-                let into = self.target.as_ref().map(|t| format!(" ({t} takes it)")).unwrap_or_default();
+                let into = if is_break && value.is_some() {
+                    self.break_value_destination(label_name.as_deref(), &mut flavors)
+                } else {
+                    String::new()
+                };
                 let label = match (is_break, &label_name, value) {
                     (true, Some(l), Some(v)) => format!("leave {l} with {}{into}", self.ex.natural(v)),
                     (true, None, Some(v)) => format!("leave the loop with {}{into}", self.ex.natural(v)),
@@ -1035,16 +1061,43 @@ impl Lowering<'_, '_> {
         Some(self.b.exec_out(&id, "out", "Then"))
     }
 
-    fn loop_expr(&mut self, s: Node, e: Node, cur: Flow) -> Flow {
+    fn break_value_destination(&self, label: Option<&str>, flavors: &mut Vec<String>) -> String {
+        let label = label.map(label_identifier);
+        let Some(scope) = self.break_scopes.iter().rev().find(|scope| {
+            label.as_deref().is_none_or(|label| scope.label.as_deref() == Some(label))
+        }) else {
+            return String::new();
+        };
+        let target = match scope.kind {
+            BreakScopeKind::ValueLoop => "loop",
+            BreakScopeKind::LabeledBlock if label.is_some() => "block",
+            // A value cannot break a `while`/`for`, or cross a labeled block without a label.
+            _ => return String::new(),
+        };
+        flavors.push(format!("break-value-target:{target}"));
+        match &scope.tail {
+            Tail::Set { shown, .. } => {
+                flavors.push(format!("break-value-binding:{shown}"));
+                format!(" ({shown} takes it)")
+            }
+            Tail::Return => {
+                flavors.push("break-value-return".into());
+                String::new()
+            }
+            Tail::No => String::new(),
+        }
+    }
+
+    fn loop_expr(&mut self, e: Node, cur: Flow, tail: &Tail) -> Flow {
         let src = self.src;
         let body = e.child_by_field_name("body");
         let mut flavors = Vec::new();
-        if let Some(l) = first_child_of_kind(e, "label") {
+        let label = first_child_of_kind(e, "label");
+        if let Some(l) = label {
             flavors.push(format!("label:{}", src.norm(l)));
         }
         let code = src.header(e, body);
         let span = src.header_span(e, body);
-        let _ = s;
         let (id, defines) = match e.kind() {
             "loop_expression" => {
                 let spec = NodeSpec::new(Concept::LoopInfinite, "repeat forever", code, span).flavors(flavors);
@@ -1101,7 +1154,14 @@ impl Lowering<'_, '_> {
         }
         let b = self.b.exec_out(&id, "body", "Loop body");
         if let Some(body) = body {
+            let kind = if e.kind() == "loop_expression" { BreakScopeKind::ValueLoop } else { BreakScopeKind::UnitLoop };
+            self.break_scopes.push(BreakScope {
+                label: label.map(|label| label_identifier(src.text(label)).into_owned()),
+                kind,
+                tail: tail.clone(),
+            });
             self.block(body, Some(b), &Tail::No);
+            self.break_scopes.pop();
         }
         self.b.pop_scope();
         Some(self.b.exec_out(&id, "out", "Completed"))

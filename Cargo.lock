@@ -2815,6 +2815,7 @@ dependencies = [
 name = "nodex-lang-rust"
 version = "0.1.0"
 dependencies = [
+ "icu_normalizer",
  "insta",
  "nodex-ir",
  "nodex-lang-api",
