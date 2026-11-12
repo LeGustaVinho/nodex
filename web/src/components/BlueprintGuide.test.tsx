@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { FlowGraph } from "../gen/FlowGraph";
 import type { FlowNode } from "../gen/FlowNode";
 import { useUi } from "../store";
@@ -174,5 +174,92 @@ it("explores a branch inside an expression without advancing to another executio
     act(() => root.unmount());
     useUi.setState(settings);
     env.IS_REACT_ACT_ENVIRONMENT = previousEnvironment;
+  }
+});
+
+const exec = (from: string, from_pin: string, to: string): FlowGraph["edges"][number] => ({
+  from, from_pin, to, to_pin: "in", kind: "Exec", access: null,
+});
+const loops: FlowGraph = {
+  ...flow,
+  nodes: [
+    { ...step("For each door", "Loop.ForEach", [output("body", "Loop body")]), flavors: ["label:'doors"] },
+    step("While waiting", "Loop.While", [output("body", "Loop body"), output("out", "Completed")]),
+    step("Check the door", "Branch", [output("true", "True"), output("false", "False"), output("out", "Then")]),
+    step("Skip", "Continue"),
+    { ...step("Skip to the next door", "Continue"), flavors: ["label:'doors"] },
+    step("After the loop", "Call"),
+  ],
+  edges: [
+    exec("For each door", "body", "While waiting"),
+    exec("While waiting", "body", "Check the door"),
+    exec("While waiting", "out", "After the loop"),
+    exec("Check the door", "true", "Skip"),
+    exec("Check the door", "false", "Skip to the next door"),
+  ],
+};
+const exitEdges = loops.edges.filter((edge) => edge.from_pin !== "body");
+
+it.each([
+  { scenario: "finds the innermost loop", graph: loops, active: "Skip", action: "Check the loop condition again", target: "While waiting" },
+  { scenario: "uses an explicit label to find an outer loop", graph: loops, active: "Skip to the next door", action: "Check for the next item", target: "For each door" },
+  { scenario: "restarts a loop with no condition", active: "Skip", action: "Start the next iteration", target: "While waiting",
+    graph: { ...loops, nodes: loops.nodes.map((node) => node.id === "While waiting" ? { ...node, concept: "Loop.Infinite" as const } : node) } },
+  { scenario: "stops at ambiguous predecessors", active: "Skip",
+    graph: { ...loops, edges: [...loops.edges, exec("For each door", "body", "Skip")] } },
+  { scenario: "stops at a cycle", active: "Skip",
+    graph: { ...loops, edges: [...exitEdges, exec("Check the door", "out", "Check the door")] } },
+  { scenario: "stops at an unknown predecessor", active: "Skip",
+    graph: { ...loops, edges: [...exitEdges, exec("Missing step", "body", "Check the door")] } },
+  { scenario: "does not reenter a loop through its exit", active: "Skip",
+    graph: { ...loops, edges: [...exitEdges, exec("While waiting", "out", "Check the door")] } },
+  { scenario: "withholds the jump when the source has changed", active: "Skip",
+    graph: { ...loops, source_revision: "original" }, sources: { [span.file]: { bytes: new Uint8Array(), revision: "edited" } } },
+])("explains a directly selected Rust continue and $scenario", async ({ graph, active, action, target, sources }) => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const onStep = vi.fn();
+  try {
+    await act(async () => root.render(<BlueprintGuide flows={[graph]} activeFlow={graph.symbol} activeNode={active} onStep={onStep} sources={sources} />));
+    expect(host.textContent).toContain("Skip the rest of this iteration");
+    expect(host.textContent).not.toContain("End of this path");
+    const buttons = [...host.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent)).toEqual(action ? ["Back", action] : ["Back"]);
+    if (action) {
+      await act(async () => buttons[1].click());
+      expect(onStep).toHaveBeenCalledExactlyOnceWith(graph.symbol, expect.objectContaining({ id: target }));
+    }
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("keeps Back across a continue but leaves the previous iteration's blocks behind when the loop exits", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  function Harness() {
+    const [active, setActive] = useState("While waiting");
+    return <BlueprintGuide flows={[loops]} activeFlow={loops.symbol} activeNode={active} onStep={(_, next) => setActive(next.id)} />;
+  }
+  const click = async (label: string) => {
+    const button = [...host.querySelectorAll("button")].find((entry) => entry.textContent === label);
+    expect(button, label).toBeDefined();
+    await act(async () => button!.click());
+  };
+  try {
+    await act(async () => root.render(<Harness />));
+    await click("Loop body");
+    await click("If the condition is true");
+    await click("Check the loop condition again");
+    await click("Completed");
+    expect(host.textContent).toContain("After the loop");
+    expect(host.textContent).toContain("End of the mapped path");
+    expect(host.textContent).not.toContain("View enclosing block");
+    await click("Back");
+    expect(host.textContent).toContain("While waiting");
+    await click("Back");
+    expect(host.textContent).toContain("Skip the rest of this iteration");
+  } finally {
+    await act(async () => root.unmount());
   }
 });

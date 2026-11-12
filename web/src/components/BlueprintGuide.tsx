@@ -15,10 +15,55 @@ function guideChoice(label: string) {
   return label || "Next";
 }
 
+function nextIterationAction(node: FlowNode) {
+  switch (node.concept) {
+    case "Loop.ForEach":
+    case "Loop.Range": return "Check for the next item";
+    case "Loop.While": return "Check the loop condition again";
+    case "Loop.Infinite": return "Start the next iteration";
+    default: return undefined;
+  }
+}
+
+function continueTarget(flow: FlowGraph, node: FlowNode) {
+  const label = node.flavors.find((flavor) => flavor.startsWith("label:"));
+  const predecessors = new Map<string, FlowGraph["edges"][number] | null>();
+  for (const edge of flow.edges) {
+    if (edge.kind !== "Exec") continue;
+    predecessors.set(edge.to, predecessors.has(edge.to) ? null : edge);
+  }
+  const nodes = new Map(flow.nodes.map((entry) => [entry.id, entry]));
+  const seen = new Set([node.id]);
+  let edge = predecessors.get(node.id);
+  while (edge && !seen.has(edge.from)) {
+    const { from, from_pin: port } = edge;
+    const previous = nodes.get(from);
+    if (!previous?.outputs.some((pin) => pin.kind === "Exec" && pin.id === port)) return;
+    if (port === "body" && (!label || previous.flavors.includes(label))) {
+      const action = nextIterationAction(previous);
+      if (action) return { node: previous, action };
+    }
+    seen.add(previous.id);
+    edge = predecessors.get(previous.id);
+  }
+}
+
 interface Visit {
   flow: string;
   node: string;
   via?: string;
+  resumesLoop?: true;
+}
+
+function enclosingBlock(flow: FlowGraph, visits: readonly Visit[]) {
+  for (let i = visits.length - 2; i >= 0; i--) {
+    const { via, resumesLoop } = visits[i + 1];
+    if (resumesLoop) return;
+    const visit = visits[i];
+    if (visit.flow !== flow.symbol || !via || via === "out") continue;
+    const node = flow.nodes.find((entry) => entry.id === visit.node);
+    if (node && (node.concept.startsWith("Loop.") || node.outputs.some((pin) => pin.id === "out" && pin.label === "Then"))) return node;
+  }
 }
 
 interface Props {
@@ -42,7 +87,8 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
   const node = flow && (flow.nodes.find((n) => n.id === activeNode) ?? entry(flow));
   const revision = flow?.source_revision ?? undefined;
   const source = flow && sources?.[flow.span.file];
-  const showReading = explanations && (!source || source.revision === revision);
+  const currentSource = !source || source.revision === revision;
+  const showReading = explanations && currentSource;
   const reading = showReading && flow && node ? flow.reading?.filter((site) => site.node === node.id) ?? [] : [];
   const routed = node && executionReading(node, reading);
   const ownership = flow && node ? rustOwnershipRows(flow, showReading).get(node.id) : undefined;
@@ -56,19 +102,14 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
     pin.kind === "Exec" && pin.id !== "out" && pin.id !== "error" && pin.label && !choices.some((edge) => edge.from_pin === pin.id),
   ) ?? [];
   const terminal = node && ["Return", "Throw", "Break", "Continue", "Jump"].includes(node.concept);
-  const enclosing = choices.length === 0 && !terminal && flow
-    ? visits.slice(0, -1).flatMap((visit, i) => {
-      const via = visits[i + 1].via;
-      return visit.flow === flow.symbol && via && via !== "out"
-        ? [flow.nodes.find((n) => n.id === visit.node)] : [];
-    }).reverse()
-      .find((n) => n && (n.concept.startsWith("Loop.") || n.outputs.some((p) => p.id === "out" && p.label === "Then")))
-    : undefined;
+  const continues = flow?.language === "rust" && node?.concept === "Continue";
+  const nextIteration = !replaying && currentSource && continues && flow && node ? continueTarget(flow, node) : undefined;
+  const enclosing = !choices.length && !terminal && flow ? enclosingBlock(flow, visits) : undefined;
 
-  const visit = (nextFlow: FlowGraph, target: FlowNode, via?: string) => {
+  const visit = (nextFlow: FlowGraph, target: FlowNode, transition?: Pick<Visit, "via" | "resumesLoop">) => {
     const trail = visits.length ? visits : flow && node ? [{ flow: flow.symbol, node: node.id }] : [];
     setLocalChoice(undefined);
-    setHistory([...trail, { flow: nextFlow.symbol, node: target.id, via }]);
+    setHistory([...trail, { flow: nextFlow.symbol, node: target.id, ...transition }]);
     onStep(nextFlow.symbol, target);
   };
   const back = () => {
@@ -106,7 +147,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             const edge = routed?.site === site && pin ? choices.find((edge) => edge.from_pin === pin) : undefined;
             const next = edge && flow.nodes.find((node) => node.id === edge.to);
             if (next && edge) {
-              visit(flow, next, edge.from_pin);
+              visit(flow, next, { via: edge.from_pin });
             } else {
               setLocalChoice({ flow: flow.symbol, node: node.id, revision, text: `${label} → ${output}` });
             }
@@ -126,7 +167,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
               const target = flow.nodes.find((n) => n.id === edge.to);
               const label = routed?.labels[edge.from_pin] ?? executionPinLabel(node, edge.from_pin, node.outputs.find((p) => p.id === edge.from_pin)?.label ?? "");
               return target && (
-                <button key={`${edge.from_pin}:${edge.to}`} onClick={() => visit(flow, target, edge.from_pin)}>
+                <button key={`${edge.from_pin}:${edge.to}`} onClick={() => visit(flow, target, { via: edge.from_pin })}>
                   {guideChoice(label)}
                 </button>
               );
@@ -142,7 +183,8 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             {unmapped.map((pin) => (
               <span key={pin.id}>{executionPinLabel(node, pin.id, pin.label)} · no mapped step</span>
             ))}
-            {terminal && <span>End of this path</span>}
+            {continues ? <span>Skip the rest of this iteration</span> : terminal && <span>End of this path</span>}
+            {nextIteration && <button type="button" onClick={() => visit(flow, nextIteration.node, { resumesLoop: true })}>{nextIteration.action}</button>}
             {!terminal && !choices.length && !enclosing && <span>End of the mapped path</span>}
           </div>
         </>
