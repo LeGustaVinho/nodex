@@ -280,6 +280,70 @@ fn rust_match_guards_stay_on_expression_arms_or_statement_pins() {
     assert_eq!(syntax(&ir).iter().filter(|site| site.key == "match-guard").count(), 3);
 }
 
+#[test]
+fn rust_pattern_tokens_keep_exact_spans_and_their_match_arm() {
+    let source = r#"
+        struct Point { x: i32, y: i32 }
+        fn f(values: &[i32], choice: Option<i32>, point: Point) -> i32 {
+            let Point { x, .. } = point;
+            let (first, _, ..) = (1, 2, 3);
+            let limits = 0..2;
+            let _inferred: _ = x | first;
+            _ = x;
+            let _updated = Point { x, ..point };
+            let next = match choice {
+                | Some(n @ (1 | 2 | 3)) if n > 0 => n,
+                _ => first,
+            };
+            match values {
+                [head, middle @ .., _] => *head,
+                [only] => *only,
+                [] => next + x,
+            }
+        }
+    "#;
+    let ir = nodex_lang_rust::lower_source("src/lib.rs", source);
+    assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
+    let graph = ir.flows.iter().find(|graph| graph.name == "f").unwrap();
+    let token = |site: &nodex_ir::SyntaxSite| {
+        &source[site.span.start_byte as usize..site.span.end_byte as usize]
+    };
+
+    let embedded = statement(graph, "let next").expr.as_ref().unwrap();
+    let first_arm = embedded.children[1].syntax_sites.as_deref().unwrap();
+    assert_eq!(first_arm.iter().map(|site| (site.key.as_str(), token(site), site.pin.as_deref()))
+        .collect::<Vec<_>>(), [
+            ("pattern-leading-bar", "|", None),
+            ("pattern-bind", "@", None),
+            ("pattern-alternative", "|", None),
+            ("pattern-alternative", "|", None),
+            ("match-guard", "if", None),
+        ]);
+    let fallback = embedded.children[2].syntax_sites.as_deref().unwrap();
+    assert_eq!((fallback[0].key.as_str(), token(&fallback[0])), ("pattern-wildcard", "_"));
+
+    let decision = statement(graph, "match values");
+    let patterns: Vec<_> = decision.syntax_sites.iter().flatten().map(|site| {
+        (site.key.as_str(), token(site), site.pin.as_deref())
+    }).collect();
+    assert_eq!(patterns, [
+        ("pattern-bind", "@", Some("case:0")),
+        ("pattern-rest", "..", Some("case:0")),
+        ("pattern-wildcard", "_", Some("case:0")),
+    ]);
+    for (code, key) in [("let Point", "pattern-rest"), ("let (first", "pattern-wildcard")] {
+        assert!(statement(graph, code).syntax_sites.iter().flatten().any(|site| site.key == key));
+    }
+    let range = source.find("0..2").unwrap() + 1;
+    let sites = syntax(&ir);
+    let ranges: Vec<_> = sites.iter().filter(|site| site.span.start_byte as usize == range).collect();
+    assert_eq!(ranges.iter().map(|site| site.key.as_str()).collect::<Vec<_>>(), ["range-open"]);
+    for (fragment, offset) in [(": _", 2), ("x | first", 2), ("_ = x;", 0), ("..point", 0)] {
+        let start = source.find(fragment).unwrap() + offset;
+        assert!(!sites.iter().any(|site| site.key.starts_with("pattern-") && site.span.start_byte as usize == start));
+    }
+}
+
 
 #[test]
 fn syntax_only_value_shape_is_independent_of_reference_passing() {

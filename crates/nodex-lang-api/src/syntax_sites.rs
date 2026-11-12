@@ -50,7 +50,10 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
                 | "try_expression"
                 | "unary_expression" => crate::syntax::named_children(owner).into_iter().next(),
                 "reference_expression" => owner.child_by_field_name("value"),
-                "match_expression" if key == "match-guard" => token.parent().and_then(|pattern| pattern.parent()),
+                "match_expression" if pin.as_deref().is_some_and(|pin| pin.starts_with("case:")) => {
+                    std::iter::successors(token.parent(), Node::parent)
+                        .find(|ancestor| ancestor.kind() == "match_arm")
+                }
                 _ => None,
             }
             .map(|n| src.span(n));
@@ -155,7 +158,7 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
             }
         }
         for (o, target) in sites.iter().zip(&mut targets) {
-            if o.site.key == "match-guard"
+            if match_case_site(o)
                 && let Some(match_node) = flow.nodes.iter().position(|n| {
                     n.concept == Concept::Match && n.span.start_byte == o.owner.start_byte
                 })
@@ -172,14 +175,14 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
             if o.declaration && !matches!(node.concept, Concept::Entry | Concept::EventEntry) {
                 continue;
             }
-            let guard_in_expression = o.site.key == "match-guard"
+            let case_in_expression = match_case_site(o)
                 && (node.concept != Concept::Match || node.span.start_byte != o.owner.start_byte);
             let mut site = o.site.clone();
             site.pin = site.pin.filter(|pin| {
-                !guard_in_expression
+                !case_in_expression
                     && node.inputs.iter().chain(&node.outputs).any(|p| &p.id == pin)
             });
-            if (guard_in_expression || !o.statement && o.site.pin.is_none())
+            if (case_in_expression || !o.statement && o.site.pin.is_none())
                 && node.expr.as_mut().is_some_and(|e| attach_expr(e, o, &site))
             {
                 continue;
@@ -201,6 +204,43 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
             }
         }
     }
+}
+
+fn match_case_site(occurrence: &Occurrence) -> bool {
+    occurrence.site.pin.as_deref().is_some_and(|pin| pin.starts_with("case:"))
+}
+
+fn rust_match_case(pattern: Node<'_>) -> Option<(Node<'_>, String)> {
+    let arm = pattern.parent().filter(|parent| parent.kind() == "match_arm")?;
+    let block = arm.parent()?;
+    let owner = block.parent().filter(|parent| parent.kind() == "match_expression")?;
+    let index = std::iter::successors(arm.prev_named_sibling(), Node::prev_named_sibling)
+        .filter(|sibling| sibling.kind() == "match_arm")
+        .count();
+    Some((owner, format!("case:{index}")))
+}
+
+fn rust_pattern_owner(node: Node<'_>) -> Option<(Node<'_>, Option<String>)> {
+    let mut child = node;
+    for parent in std::iter::successors(node.parent(), Node::parent) {
+        match parent.kind() {
+            "match_pattern" if parent.child_by_field_name("condition") != Some(child) => {
+                return rust_match_case(parent).map(|(owner, pin)| (owner, Some(pin)));
+            }
+            "let_declaration" | "let_condition" | "for_expression" | "parameter" | "variadic_parameter"
+                if parent.child_by_field_name("pattern") == Some(child) =>
+            {
+                return Some((parent, None));
+            }
+            "closure_parameters" => return parent.parent().map(|owner| (owner, None)),
+            "field_pattern" if parent.child_by_field_name("pattern") == Some(child) => {}
+            "tuple_pattern" | "tuple_struct_pattern" | "slice_pattern" | "struct_pattern"
+            | "mut_pattern" | "ref_pattern" | "captured_pattern" | "reference_pattern" | "or_pattern" => {}
+            _ => return None,
+        }
+        child = parent;
+    }
+    None
 }
 
 fn syntax_span(language: Language, key: &str, src: Src, token: Node, owner: Node) -> Span {
@@ -533,22 +573,25 @@ fn collect(
             "let_declaration" => emit("let-else", token("else"), false, true),
             "match_pattern" => {
                 if let Some(t) = token("if")
-                    && let Some(arm) = n.parent()
-                    && let Some(block) = arm.parent()
-                    && let Some(owner) = block.parent()
-                    && let Some(index) = children(block)
-                        .into_iter()
-                        .filter(|a| a.kind() == "match_arm")
-                        .position(|a| a.id() == arm.id())
+                    && let Some((owner, pin)) = rust_match_case(n)
                 {
-                    add(
-                        "match-guard",
-                        t,
-                        owner,
-                        false,
-                        true,
-                        Some(format!("case:{index}")),
-                    );
+                    add("match-guard", t, owner, false, true, Some(pin));
+                }
+            }
+            "captured_pattern" | "or_pattern" | "remaining_field_pattern" | "_" => {
+                if let Some((owner, pin)) = rust_pattern_owner(n) {
+                    let site = match kind {
+                        "captured_pattern" => token("@").map(|t| ("pattern-bind", t)),
+                        "or_pattern" => token("|").map(|t| {
+                            let key = if t.start_byte() == n.start_byte() { "pattern-leading-bar" } else { "pattern-alternative" };
+                            (key, t)
+                        }),
+                        "remaining_field_pattern" => Some(("pattern-rest", n)),
+                        _ => Some(("pattern-wildcard", n)),
+                    };
+                    if let Some((key, token)) = site {
+                        add(key, token, owner, false, pin.is_some(), pin);
+                    }
                 }
             }
             "range_expression" | "range_pattern" => {

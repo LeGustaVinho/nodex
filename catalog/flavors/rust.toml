@@ -305,6 +305,41 @@ cue = "if"
 phase = "Runtime"
 effects = [["Pattern matches and guard passes", "Take the arm"], ["Guard fails", "Try the next pattern or alternative"]]
 
+[pattern-bind]
+label = "Name a matched value"
+explain = "Give the matched part a name and check it against the pattern to the right. The binding can move, copy, or borrow the value according to the usual rules."
+cue = "@"
+phase = "Runtime"
+effects = [["Some(n @ 1..=3)", "Match Some containing 1, 2, or 3 and give that number the name n"]]
+
+[pattern-alternative]
+label = "Match either pattern"
+explain = "The input can match any of the alternatives. Every alternative must bind the same names with the same types and binding modes."
+cue = "|"
+phase = "Runtime"
+effects = [["Some(0 | 1)", "Match Some containing either 0 or 1"]]
+
+[pattern-leading-bar]
+label = "Optional first bar"
+explain = "A bar before the first pattern lets it line up with the alternatives that follow. The bar itself adds no condition."
+cue = "|"
+phase = "Compile time"
+effects = [["| None | Some(0)", "Match None or Some(0)"]]
+
+[pattern-rest]
+label = "Match the remaining parts"
+explain = "The dots match any number of remaining elements or fields. In a slice pattern a name followed by @ can bind the matched elements."
+cue = ".."
+phase = "Runtime"
+effects = [["[first, middle @ .., last]", "Name the elements between first and last as middle"], ["Point { x, .. }", "Bind x and leave the other fields unnamed"]]
+
+[pattern-wildcard]
+label = "Match and ignore one part"
+explain = "Accept any value in this position. The wildcard creates no binding and leaves the matched value in place."
+cue = "_"
+phase = "Runtime"
+effects = [["Some(_)", "Check for Some and ignore its inner value"]]
+
 [tail-expression]
 label = "Tail expression"
 explain = "The trailing expression supplies the block's value."

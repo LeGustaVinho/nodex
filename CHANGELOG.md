@@ -17,6 +17,7 @@ The release workflow publishes the section of the version it builds as the relea
 - When Rust Analyzer confirms the standard iterator and types, the Guide explains how collecting optional items into `Option<Vec<_>>` stops at the first `None`.
 - Rust Blueprints distinguish the type of a captured reference from how a closure or async block uses it. The Guide, Inspector and wires show when the access mode is uncertain.
 - When a Rust closure's result expression uses `&` or `&mut`, its Blueprint explains that borrow and highlights the operator in the source.
+- The Rust Inspector explains the exact `@`, `|`, `..` and `_` tokens in patterns. In a `match`, each explanation follows the arm that contains it.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
