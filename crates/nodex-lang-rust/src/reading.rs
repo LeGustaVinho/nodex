@@ -255,6 +255,8 @@ pub(crate) enum Family {
     Clone,
     Macro,
     Effect,
+    NumericFrom { source: &'static str, target: &'static str },
+    NumericTryFrom { source: &'static str, target: &'static str },
 }
 
 pub(crate) struct Resolved {
@@ -426,19 +428,24 @@ impl CastNumber {
     }
 }
 
+fn fixed_integer_range(bits: u32, signed: bool) -> String {
+    let maximum = u128::MAX >> (128 - bits + u32::from(signed));
+    let minimum = if signed {
+        format!("-{}", maximum + 1)
+    } else {
+        "0".into()
+    };
+    format!("{minimum} through {maximum}")
+}
+
 fn numeric_cast_text(from: CastNumber, to: CastNumber) -> String {
     use CastNumber::{Float, Integer};
     let target = to.name();
     match (from, to) {
         (Float { .. }, Integer { bits, signed, .. }) => {
-            let maximum = u128::MAX >> (128 - bits + u32::from(signed));
-            let minimum = if signed {
-                format!("-{}", maximum + 1)
-            } else {
-                "0".into()
-            };
+            let range = fixed_integer_range(bits, signed);
             format!(
-                "Drop the fractional part by rounding toward zero. Values outside {minimum} through {maximum}, including infinities, stop at the nearest limit. NaN becomes 0."
+                "Drop the fractional part by rounding toward zero. Values outside {range}, including infinities, stop at the nearest limit. NaN becomes 0."
             )
         }
         (Integer { bits: source, .. }, Integer { bits, .. }) if source > bits => format!(
@@ -1460,6 +1467,9 @@ impl Reader<'_, '_> {
         match family {
             Family::Bool => self.bool_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
+            Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
+                self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
+            }
             Family::Map | Family::Slice if matches!(name.as_str(), "get" | "get_mut") => {
                 self.get(node)
             }
@@ -1500,6 +1510,62 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn numeric_conversion(&mut self, node: Node<'_>, source: &str, target: &str, checked: bool) {
+        let Some(callee) = node.child_by_field_name("function") else { return };
+        let method = callee.child_by_field_name("name").unwrap_or(callee);
+        let span = self.src.span(method);
+        if !checked {
+            self.push(
+                self.src.span(node),
+                span,
+                true,
+                detail(
+                    &format!("Convert {source} to {target}"),
+                    format!("Preserve the numeric value and return it directly as {target}."),
+                ),
+            );
+            return;
+        }
+
+        let range = match CastNumber::from_shape(&syntax_shape(Language::Rust, target)) {
+            Some(CastNumber::Integer { bits, signed, .. }) => {
+                format!("the range {}", fixed_integer_range(bits, signed))
+            }
+            _ => format!("the range of {target} on the target platform"),
+        };
+        let label = format!("Try converting {source} to {target}");
+        if matches!(source, "isize" | "usize") || matches!(target, "isize" | "usize") {
+            let mut text = String::new();
+            if matches!(source, "isize" | "usize") {
+                text = format!("The range of {source} depends on the target platform. ");
+            }
+            text.push_str(&format!(
+                "If the number fits in {range}, return Ok({target} value). If it falls outside that range, return Err(TryFromIntError)."
+            ));
+            self.push(self.src.span(node), span, true, detail(&label, text));
+            return;
+        }
+        self.paths(
+            node,
+            span,
+            true,
+            label,
+            vec![
+                branch(
+                    "Fits",
+                    format!("If the number fits in {range}, preserve its value."),
+                    format!("Ok({target} value)"),
+                ),
+                branch(
+                    "Out of range",
+                    "If the number is outside the destination range, return a conversion error.",
+                    "Err(TryFromIntError)",
+                ),
+            ],
+            None,
+        );
     }
 
     fn bool_call(&mut self, node: Node<'_>, name: &str) {

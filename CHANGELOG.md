@@ -27,6 +27,7 @@ The release workflow publishes the section of the version it builds as the relea
 - When rust-analyzer confirms that a `try_fold` callback returns `Option`, the Guide shows when `?` makes the fold return `None`. A callback can still succeed with `Some(None)` if its accumulator is itself optional.
 - When rust-analyzer confirms the standard `bool` methods, the Guide shows when `then` calls its closure and when `then_some` evaluates its argument, including the value each method returns for a false condition.
 - Rust Blueprints highlight the `as` operator. When the numeric types are known, the Guide explains rounding, truncation, range limits, and changes in how the destination interprets the bits.
+- For standard numeric conversions, the Rust Guide shows when `From` returns the destination value directly and when `TryFrom` returns `Ok` or `Err`. Follow the conversion separately from the `expect` or other call that handles its result.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

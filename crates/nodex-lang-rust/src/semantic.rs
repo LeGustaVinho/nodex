@@ -255,6 +255,27 @@ fn enclosing_call<'t>(name: Node<'t>) -> Option<Node<'t>> {
     call.child_by_field_name("function").is_some_and(|f| f.id() == callee.id()).then_some(call)
 }
 
+fn numeric_conversion(descriptor: &str) -> Option<(Family, String)> {
+    const NUMBERS: &[&str] = &[
+        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+        "f16", "f32", "f64", "f128",
+    ];
+    let implementation = descriptor.strip_prefix("convert/num/")?;
+    let implementation = implementation.strip_prefix("ptr_try_from_impls/").unwrap_or(implementation);
+    let (target, conversion) = implementation.strip_prefix("impl#[")?.split_once("][`")?;
+    let (conversion, method) = conversion.split_once(">`]")?;
+    let (trait_name, source) = conversion.split_once('<')?;
+    let source = NUMBERS.iter().copied().find(|number| *number == source)?;
+    let target = NUMBERS.iter().copied().find(|number| *number == target)?;
+    match (trait_name, method) {
+        ("From", "from().") => Some((Family::NumericFrom { source, target }, "from".into())),
+        ("TryFrom", "try_from().") if !source.starts_with('f') && !target.starts_with('f') => {
+            Some((Family::NumericTryFrom { source, target }, "try_from".into()))
+        }
+        _ => None,
+    }
+}
+
 fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Family, String)> {
     let descriptor = sym.descriptors;
     let name = path.rsplit("::").next()?;
@@ -271,6 +292,9 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         }
         if !descriptor.ends_with("().") {
             return None;
+        }
+        if sym.package == "core" && let Some(conversion) = numeric_conversion(descriptor) {
+            return Some(conversion);
         }
         if sym.package == "core"
             && let Some(method) = descriptor.strip_prefix("slice/impl#[`[T]`]").and_then(|name| name.strip_suffix("()."))
