@@ -273,7 +273,7 @@ pub(crate) struct Evidence<'a> {
     pub direct_fields: HashMap<Range, bool>,
     pub non_bindings: HashSet<Range>,
     pub types: &'a [TypeFact],
-    pub standard_types: Option<&'a TypeIdentities>,
+    pub type_identities: Option<&'a TypeIdentities>,
     pub definitions: Option<&'a HashMap<&'a str, Range>>,
     pub uses: &'a [(usize, usize, &'a str)],
     pub precise_captures: Option<bool>,
@@ -368,6 +368,210 @@ fn option(shape: TypeShape) -> TypeInfo {
         TypeOrigin::Compiler,
         None,
     )
+}
+
+#[derive(Clone, Copy)]
+enum CastNumber {
+    Integer {
+        name: &'static str,
+        bits: u32,
+        signed: bool,
+    },
+    Float {
+        name: &'static str,
+        bits: u32,
+        precision: u32,
+    },
+}
+
+impl CastNumber {
+    fn from_shape(shape: &TypeShape) -> Option<Self> {
+        let TypeShape::Scalar { name } = shape else {
+            return None;
+        };
+        let (name, bits, signed) = match name.as_str() {
+            "Int8" => ("i8", 8, true),
+            "Int16" => ("i16", 16, true),
+            "Int32" => ("i32", 32, true),
+            "Int64" => ("i64", 64, true),
+            "Int128" => ("i128", 128, true),
+            "UInt8" => ("u8", 8, false),
+            "UInt16" => ("u16", 16, false),
+            "UInt32" => ("u32", 32, false),
+            "UInt64" => ("u64", 64, false),
+            "UInt128" => ("u128", 128, false),
+            "Float32" => {
+                return Some(Self::Float {
+                    name: "f32",
+                    bits: 32,
+                    precision: 24,
+                });
+            }
+            "Float64" => {
+                return Some(Self::Float {
+                    name: "f64",
+                    bits: 64,
+                    precision: 53,
+                });
+            }
+            _ => return None,
+        };
+        Some(Self::Integer { name, bits, signed })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Integer { name, .. } | Self::Float { name, .. } => name,
+        }
+    }
+}
+
+fn numeric_cast_text(from: CastNumber, to: CastNumber) -> String {
+    use CastNumber::{Float, Integer};
+    let target = to.name();
+    match (from, to) {
+        (Float { .. }, Integer { bits, signed, .. }) => {
+            let maximum = u128::MAX >> (128 - bits + u32::from(signed));
+            let minimum = if signed {
+                format!("-{}", maximum + 1)
+            } else {
+                "0".into()
+            };
+            format!(
+                "Drop the fractional part by rounding toward zero. Values outside {minimum} through {maximum}, including infinities, stop at the nearest limit. NaN becomes 0."
+            )
+        }
+        (Integer { bits: source, .. }, Integer { bits, .. }) if source > bits => format!(
+            "Keep the lowest {bits} bits and interpret them as {target}. Values outside the destination range can change."
+        ),
+        (
+            Integer {
+                bits: source,
+                signed,
+                ..
+            },
+            Integer {
+                bits,
+                signed: target_signed,
+                ..
+            },
+        ) if source == bits => {
+            if signed == target_signed {
+                "Keep the same value and integer type.".into()
+            } else {
+                format!(
+                    "Keep the same {bits} bits and interpret them as {target}. Changing the sign interpretation can change the numeric value."
+                )
+            }
+        }
+        (
+            Integer { signed, .. },
+            Integer {
+                bits,
+                signed: target_signed,
+                ..
+            },
+        ) => {
+            if signed && !target_signed {
+                format!(
+                    "Extend the sign bit to {bits} bits, then interpret the result as {target}. A negative input becomes a large positive number."
+                )
+            } else if signed {
+                format!(
+                    "Extend the sign bit to {bits} bits. The original numeric value is preserved."
+                )
+            } else {
+                format!(
+                    "Fill the new high bits with zeroes to reach {bits} bits. The original numeric value is preserved."
+                )
+            }
+        }
+        (Integer { bits, .. }, Float { precision, .. }) if bits <= precision => format!(
+            "Convert to floating point. Every {} value fits exactly in {target}.",
+            from.name()
+        ),
+        (Integer { name, .. }, Float { .. }) => {
+            let mut text = format!(
+                "Use the nearest {target} value. A tie rounds to the result with an even last bit. Large integers can lose precision."
+            );
+            if name == "u128" && target == "f32" {
+                text.push_str(" A result too large after rounding becomes positive infinity.");
+            }
+            text
+        }
+        (Float { bits: source, .. }, Float { bits, .. }) if source < bits => format!(
+            "Keep every finite value exactly in {target}. Infinity remains infinity and NaN remains NaN."
+        ),
+        (Float { bits: source, .. }, Float { bits, .. }) if source > bits => format!(
+            "Use the nearest {target} value. A tie rounds to the result with an even last bit. Overflow after rounding becomes infinity with the same sign."
+        ),
+        (Float { .. }, Float { .. }) => "Keep the same floating-point type.".into(),
+    }
+}
+
+fn cast_name_matches(src: Src<'_>, node: Node<'_>, name: &str) -> bool {
+    let written = src.text(node);
+    written.strip_prefix("r#").unwrap_or(written) == name
+}
+
+fn imports_cast_type(src: Src<'_>, import: Node<'_>, name: &str) -> bool {
+    let named =
+        |node: Node| cast_name_matches(src, node.child_by_field_name("name").unwrap_or(node), name);
+    match import.kind() {
+        "use_wildcard" => true,
+        "use_as_clause" => import
+            .child_by_field_name("alias")
+            .is_some_and(|alias| cast_name_matches(src, alias, name)),
+        "scoped_use_list" => import.child_by_field_name("list").is_some_and(|list| {
+            imports_cast_type(src, list, name)
+                || import.child_by_field_name("path").is_some_and(named)
+                    && named_children(list)
+                        .iter()
+                        .any(|item| item.kind() == "self")
+        }),
+        "use_list" => named_children(import)
+            .into_iter()
+            .any(|item| imports_cast_type(src, item, name)),
+        _ => named(import),
+    }
+}
+
+fn may_shadow_cast_type(src: Src<'_>, ty: Node<'_>, analyzed: bool) -> bool {
+    let name = src.text(ty);
+    std::iter::successors(ty.parent(), Node::parent).any(|scope| {
+        let named = |node: Node| {
+            node.child_by_field_name("name")
+                .is_some_and(|n| cast_name_matches(src, n, name))
+        };
+        if scope
+            .child_by_field_name("type_parameters")
+            .is_some_and(|parameters| {
+                named_children(parameters)
+                    .into_iter()
+                    .any(|parameter| parameter.kind() == "type_parameter" && named(parameter))
+            })
+        {
+            return true;
+        }
+        matches!(scope.kind(), "block" | "source_file" | "declaration_list")
+            && named_children(scope)
+                .into_iter()
+                .any(|item| match item.kind() {
+                    "type_item" | "struct_item" | "enum_item" | "union_item" | "trait_item"
+                    | "mod_item" | "associated_type" | "foreign_type_item" => named(item),
+                    "extern_crate_declaration" => item
+                        .child_by_field_name("alias")
+                        .map_or_else(|| named(item), |alias| cast_name_matches(src, alias, name)),
+                    "use_declaration" => item
+                        .child_by_field_name("argument")
+                        .is_some_and(|import| imports_cast_type(src, import, name)),
+                    "macro_invocation" => !analyzed,
+                    "expression_statement" if !analyzed => item
+                        .named_child(0)
+                        .is_some_and(|expr| expr.kind() == "macro_invocation"),
+                    _ => false,
+                })
+    })
 }
 
 fn reference_access(ty: &str) -> Access {
@@ -729,6 +933,7 @@ impl Reader<'_, '_> {
         match node.kind() {
             "call_expression" => self.call(node),
             "try_expression" => self.propagation(node),
+            "type_cast_expression" => self.numeric_cast(node),
             "range_expression" => self.range_expression(node),
             "assignment_expression" => {
                 if let Some((equal, end)) = inclusive_range_to(node) {
@@ -781,6 +986,102 @@ impl Reader<'_, '_> {
             }
             _ => {}
         }
+    }
+
+    fn numeric_cast(&mut self, node: Node<'_>) {
+        if node.has_error() {
+            return;
+        }
+        let Some(target) = node.child_by_field_name("type") else {
+            return;
+        };
+        let Some(to) = self.written_cast_number(target) else {
+            return;
+        };
+        let Some(value) = node.child_by_field_name("value").map(unparen) else {
+            return;
+        };
+        let Some(operator) = children(node)
+            .into_iter()
+            .find(|token| token.kind() == "as" && !token.is_missing())
+        else {
+            return;
+        };
+        let Some((from, resolved)) = self.cast_source_number(value, 0) else {
+            return;
+        };
+        let label = format!("Convert {} to {}", from.name(), to.name());
+        self.push(
+            self.src.span(node),
+            self.src.span(operator),
+            resolved || target.kind() != "primitive_type",
+            detail(&label, numeric_cast_text(from, to)),
+        );
+    }
+
+    fn cast_source_number(&self, value: Node<'_>, depth: usize) -> Option<(CastNumber, bool)> {
+        if depth > 12 {
+            return None;
+        }
+        let value = unparen(value);
+        match value.kind() {
+            "identifier" => {
+                // The short type in a SCIP local signature can also name an enum.
+                let inferred = CastNumber::from_shape(&self.known_type(value)?.shape)?;
+                let (start, end) = self.definition(value)?;
+                let root = std::iter::successors(Some(value), Node::parent).last()?;
+                let leaf = root.descendant_for_byte_range(start, end)?;
+                let declaration = std::iter::successors(leaf.parent(), Node::parent)
+                    .find(|parent| matches!(parent.kind(), "let_declaration" | "parameter"))?;
+                let pattern = declaration.child_by_field_name("pattern")?;
+                let written = if let Some(ty) = declaration.child_by_field_name("type") {
+                    self.written_cast_number(project_pattern(self.src, pattern, ty, leaf)?)?
+                } else {
+                    let init = declaration.child_by_field_name("value")?;
+                    let projected = project_pattern(self.src, pattern, init, leaf)?;
+                    self.cast_source_number(projected, depth + 1)?.0
+                };
+                (inferred.name() == written.name()).then_some((written, true))
+            }
+            "type_cast_expression" => {
+                let ty = value.child_by_field_name("type")?;
+                self.written_cast_number(ty)
+                    .map(|from| (from, ty.kind() != "primitive_type"))
+            }
+            "unary_expression" if children(value).iter().any(|token| token.kind() == "-") => {
+                let literal = named_children(value)
+                    .into_iter()
+                    .find(|child| matches!(child.kind(), "integer_literal" | "float_literal"))?;
+                self.cast_source_number(literal, depth + 1)
+            }
+            "field_expression" => {
+                let info = self.evidence.fields.get(&range(value))?;
+                CastNumber::from_shape(&info.shape).map(|from| (from, true))
+            }
+            "call_expression" | "integer_literal" | "float_literal" => {
+                let info = self.known_type(value)?;
+                CastNumber::from_shape(&info.shape)
+                    .map(|from| (from, info.origin == TypeOrigin::Compiler))
+            }
+            _ => None,
+        }
+    }
+
+    fn written_cast_number(&self, ty: Node<'_>) -> Option<CastNumber> {
+        if let Some((_, identity)) = self
+            .evidence
+            .type_identities
+            .and_then(|types| types.get(&ty.start_byte()))
+            .filter(|(end, _)| *end == ty.end_byte())
+        {
+            return CastNumber::from_shape(&syntax_shape(Language::Rust, identity));
+        }
+        if ty.kind() != "primitive_type"
+            || may_shadow_cast_type(self.src, ty, self.evidence.type_identities.is_some())
+        {
+            return None;
+        }
+        CastNumber::from_shape(&syntax_shape(Language::Rust, self.src.text(ty)))
     }
 
     fn block_result(&mut self, block: Node<'_>) {
@@ -1305,7 +1606,7 @@ impl Reader<'_, '_> {
         let Some(list) = single_type_argument(option) else { return false };
         let exact_name = |application: Node| {
             let name = application.child_by_field_name("type")?;
-            let (end, path) = self.evidence.standard_types?.get(&name.start_byte())?;
+            let (end, path) = self.evidence.type_identities?.get(&name.start_byte())?;
             (*end == name.end_byte()).then_some(path.as_str())
         };
         exact_name(option) == Some("core::option::Option")

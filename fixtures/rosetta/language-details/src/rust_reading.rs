@@ -516,6 +516,64 @@ pub fn reading_matches_shadowed(value: Option<i32>) -> bool {
     standard || local
 }
 
+pub fn reading_heading_cast(heading: Option<f64>) -> u16 {
+    let full_turn = std::f64::consts::TAU;
+    let turn = ((heading.unwrap_or(0.0) % full_turn) + full_turn) % full_turn;
+    crate::rust_reading_index::reading_round(turn / full_turn * 65_535.0) as u16
+}
+
+pub struct ReadingCastField {
+    pub value: f64,
+}
+
+pub fn reading_field_cast(input: ReadingCastField) -> i64 {
+    input.value as i64
+}
+
+pub mod reading_cast_shadows {
+    #![allow(non_camel_case_types)]
+
+    type u8 = *const i32;
+    type f64 = i32;
+
+    pub fn reading_alias_target_cast() -> u8 {
+        1_u64 as u8
+    }
+
+    fn aliased_input() -> f64 {
+        1
+    }
+
+    pub fn reading_alias_source_cast() -> u16 {
+        aliased_input() as u16
+    }
+}
+
+pub mod reading_cast_nominal {
+    #[allow(non_camel_case_types)]
+    pub enum u8 {
+        Idle,
+    }
+
+    pub fn reading_nominal_source_cast(value: u8) -> u64 {
+        value as u64
+    }
+
+    pub fn reading_inferred_nominal_source_cast() -> u64 {
+        let value = u8::Idle;
+        value as u64
+    }
+
+    pub fn reading_qualified_primitive_source_cast(value: std::primitive::u8) -> u64 {
+        value as u64
+    }
+
+    pub fn reading_inferred_primitive_source_cast() -> u64 {
+        let value = 20_u8;
+        value as u64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

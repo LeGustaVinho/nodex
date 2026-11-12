@@ -361,6 +361,12 @@ cue = "..="
 phase = "Runtime"
 effects = [["1..=3", "1, 2, 3"]]
 
+[type-cast]
+label = "Convert to another type"
+explain = "The as keyword asks Rust to convert a value to the type written on the right. The rules depend on the input and destination types."
+cue = "as"
+effects = [["3.75_f64 as u16", "The result is the integer 3"]]
+
 [explicit-type-args]
 label = "Explicit generic arguments"
 explain = "Supply generic arguments such as types, lifetimes, or constants. An underscore asks Rust to infer that part from context."

@@ -523,16 +523,11 @@ fn written_shape(ty: Node<'_>, text: &str, identities: &TypeIdentities) -> TypeS
     native_shape(Language::Rust, &resolved)
 }
 
-fn standard_type_identities(doc: &scip::types::Document, starts: &[usize], root: Node<'_>) -> TypeIdentities {
+fn written_type_identities(doc: &scip::types::Document, starts: &[usize], root: Node<'_>, text: &str) -> TypeIdentities {
     doc.occurrences.iter().filter_map(|occurrence| {
         let symbol = parse_symbol(&occurrence.symbol)?;
-        if !symbol.standard() || kind_of(symbol.descriptors) != "type" { return None; }
-        let path = display(&symbol);
-        if path != "core::option::Option"
-            && !matches!(native_shape(Language::Rust, &path), TypeShape::Collection { .. } | TypeShape::Scalar { .. })
-        {
-            return None;
-        }
+        let primitive_module = symbol.standard() && symbol.package == "core" && symbol.descriptors == "primitive/";
+        if !primitive_module && kind_of(symbol.descriptors) != "type" { return None; }
         let (start, end) = range_bytes(starts, &occurrence.range)?;
         let mut node = root.descendant_for_byte_range(start, end)?;
         if node.start_byte() != start || node.end_byte() != end { return None; }
@@ -541,6 +536,22 @@ fn standard_type_identities(doc: &scip::types::Document, starts: &[usize], root:
                 && parent.child_by_field_name("name").is_some_and(|name| name.id() == node.id())
         }) {
             node = parent;
+        }
+        if primitive_module {
+            // SCIP resolves the standard primitive module. The final primitive has no occurrence.
+            let ty = node.parent().filter(|parent| parent.kind() == "scoped_type_identifier"
+                && parent.child_by_field_name("path") == Some(node))?;
+            let name = &text[ty.child_by_field_name("name")?.byte_range()];
+            return matches!(native_shape(Language::Rust, name), TypeShape::Scalar { .. })
+                .then(|| (ty.start_byte(), (ty.end_byte(), name.to_owned())));
+        }
+        let path = display(&symbol);
+        // A symbol on a primitive-shaped token identifies a shadowing type.
+        let name = node.child_by_field_name("name").unwrap_or(node);
+        if name.kind() != "primitive_type" && (!symbol.standard() || path != "core::option::Option"
+            && !matches!(native_shape(Language::Rust, &path), TypeShape::Collection { .. } | TypeShape::Scalar { .. }))
+        {
+            return None;
         }
         Some((node.start_byte(), (node.end_byte(), path)))
     }).collect()
@@ -872,7 +883,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let rel = rel_of(doc);
         let Some((text, starts)) = texts.get(&rel) else { continue };
         let Some(tree) = crate::parse(text) else { continue };
-        let identities = standard_type_identities(doc, starts, tree.root_node());
+        let identities = written_type_identities(doc, starts, tree.root_node(), text);
         typed_documents.insert(rel, (tree, identities));
     }
     let return_types: HashMap<_, _> = definitions.iter().filter_map(|(&symbol, definition)| {
@@ -1180,7 +1191,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             operations,
             non_bindings,
             types: &facts.types[first_type..],
-            standard_types: Some(identities),
+            type_identities: Some(identities),
             definitions: Some(&local_definitions),
             uses: &local_uses,
             precise_captures: match edition {

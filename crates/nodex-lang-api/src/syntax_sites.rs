@@ -569,6 +569,7 @@ fn collect(
                 emit("mut", Some(n), false, true)
             }
             "unary_expression" => emit("deref", token("*"), false, false),
+            "type_cast_expression" => emit("type-cast", token("as"), false, false),
             "try_expression" => emit("try", token("?"), false, false),
             "let_declaration" => emit("let-else", token("else"), false, true),
             "match_pattern" => {
