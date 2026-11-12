@@ -255,18 +255,22 @@ fn enclosing_call<'t>(name: Node<'t>) -> Option<Node<'t>> {
     call.child_by_field_name("function").is_some_and(|f| f.id() == callee.id()).then_some(call)
 }
 
-fn numeric_conversion(descriptor: &str) -> Option<(Family, String)> {
+fn primitive_number(name: &str) -> Option<&'static str> {
     const NUMBERS: &[&str] = &[
         "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
         "f16", "f32", "f64", "f128",
     ];
+    NUMBERS.iter().copied().find(|number| *number == name)
+}
+
+fn numeric_conversion(descriptor: &str) -> Option<(Family, String)> {
     let implementation = descriptor.strip_prefix("convert/num/")?;
     let implementation = implementation.strip_prefix("ptr_try_from_impls/").unwrap_or(implementation);
     let (target, conversion) = implementation.strip_prefix("impl#[")?.split_once("][`")?;
     let (conversion, method) = conversion.split_once(">`]")?;
     let (trait_name, source) = conversion.split_once('<')?;
-    let source = NUMBERS.iter().copied().find(|number| *number == source)?;
-    let target = NUMBERS.iter().copied().find(|number| *number == target)?;
+    let source = primitive_number(source)?;
+    let target = primitive_number(target)?;
     match (trait_name, method) {
         ("From", "from().") => Some((Family::NumericFrom { source, target }, "from".into())),
         ("TryFrom", "try_from().") if !source.starts_with('f') && !target.starts_with('f') => {
@@ -274,6 +278,29 @@ fn numeric_conversion(descriptor: &str) -> Option<(Family, String)> {
         }
         _ => None,
     }
+}
+
+fn arithmetic_result(sym: &Sym<'_>, operator: &str) -> Option<TypeShape> {
+    if !sym.standard() || sym.package != "core" {
+        return None;
+    }
+    let (trait_name, method_name) = match operator {
+        "+" => ("Add", "add()."),
+        "-" => ("Sub", "sub()."),
+        "*" => ("Mul", "mul()."),
+        "/" => ("Div", "div()."),
+        "%" => ("Rem", "rem()."),
+        _ => return None,
+    };
+    let implementation = sym.descriptors.strip_prefix("ops/arith/impl#[")?;
+    let (left, descriptor) = implementation.split_once("][`")?;
+    let (right, method) = descriptor.strip_prefix(trait_name)?.strip_prefix('<')?.split_once(">`]")?;
+    let left = left.strip_prefix("`&").and_then(|left| left.strip_suffix('`')).unwrap_or(left);
+    let left = primitive_number(left)?;
+    let right = right.strip_prefix('&').unwrap_or(right);
+    // The primitive implementation and its shared-reference variants have the same output.
+    (method == method_name && (right == "Self" || right == left))
+        .then(|| native_shape(Language::Rust, left))
 }
 
 fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Family, String)> {
@@ -957,6 +984,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let mut local_definitions = HashMap::new();
         let mut local_uses = Vec::new();
         let mut initializers = InitializerTypes::default();
+        let mut arithmetic_outputs = HashMap::new();
         let mut operations = Operations::new();
         let mut non_bindings = HashSet::new();
         let mut field_uses = Vec::new();
@@ -1034,6 +1062,13 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                     _ => false,
                 })
             {
+                if expression.kind() == "binary_expression" && name.start_byte() == s && name.end_byte() == e {
+                    let range = (expression.start_byte(), expression.end_byte());
+                    let output = arithmetic_result(&sym, name.kind());
+                    arithmetic_outputs.entry(range).and_modify(|previous| {
+                        if *previous != output { *previous = None; }
+                    }).or_insert(output);
+                }
                 facts.reading.push(ReadingFact {
                     anchor: line_index.span(&rel, expression.start_byte(), expression.end_byte()),
                     span: line_index.span(&rel, name.start_byte(), name.end_byte()),
@@ -1188,6 +1223,14 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             }
         }
         rust_type_facts(facts, &rel, text, root_node, &local_definitions, &local_uses, &signatures, identities, &initializers);
+        for ((start, end), shape) in arithmetic_outputs {
+            let Some(shape) = shape else { continue };
+            facts.types.push(TypeFact {
+                site: site(start, end),
+                target: ValueFactTarget::Expression,
+                info: TypeInfo::new(shape, TypeOrigin::Compiler, None),
+            });
+        }
         local_uses.sort_unstable_by_key(|&(start, _, _)| start);
         propagate_nominal_locals(&mut facts.rust_nominal_types, first_nominal, &rel, root_node, &local_definitions, &local_uses);
 

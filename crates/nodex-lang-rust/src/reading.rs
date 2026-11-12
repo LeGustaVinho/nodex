@@ -1068,6 +1068,13 @@ impl Reader<'_, '_> {
                 let info = self.evidence.fields.get(&range(value))?;
                 CastNumber::from_shape(&info.shape).map(|from| (from, true))
             }
+            "binary_expression" => {
+                let info = self.types.get(&range(value))?;
+                if info.origin != TypeOrigin::Compiler {
+                    return None;
+                }
+                CastNumber::from_shape(&info.shape).map(|from| (from, true))
+            }
             "call_expression" | "integer_literal" | "float_literal" => {
                 let info = self.known_type(value)?;
                 CastNumber::from_shape(&info.shape)
