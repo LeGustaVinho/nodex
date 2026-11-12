@@ -41,6 +41,102 @@ fn lookup(flow: &FlowGraph) -> &ReadingSite {
 }
 
 #[test]
+fn rust_pattern_cards_keep_checks_alternative_bindings_and_slice_rest() {
+    let source = r#"
+        enum Value { Array(Vec<i32>), Null }
+        enum Stop { Near(i32), Far(i32) }
+        fn slot(mut entry: Option<Value>) {
+            if let Some(ref mut slot @ Value::Array(_)) = entry {
+                *slot = Value::Null;
+            }
+        }
+        fn movement(order: Option<&str>) -> bool {
+            match order {
+                Some(kind @ ("orbit" | "approach" | "keep-range" | "hold  position")) => !kind.is_empty(),
+                _ => false,
+            }
+        }
+        fn route(input: (Stop, i32)) -> i32 {
+            match input {
+                (Stop::Near(target) | Stop::Far(target), 0) | (Stop::Near(target), 1) => target,
+                _ => 0,
+            }
+        }
+        fn slice(input: &[i32]) -> i32 {
+            match input {
+                [head, middle @ .., before_last, last] => head + middle.len() as i32 + before_last + last,
+                _ => 0,
+            }
+        }
+        fn grouping() {
+            let (whole /* group */) = (1_i32, 2_i32);
+            let (only,) = (1_i32,);
+            let ref all @ (item,) = (7_i32,);
+        }
+        fn grouped_alias((alias): &i32) -> i32 { *alias }
+    "#;
+    let ir = nodex_lang_rust::lower_source("patterns.rs", source);
+    assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
+    let get = |function: &str, pattern: &str| {
+        let graph = ir.flows.iter().find(|graph| graph.name == function).unwrap();
+        let site = sites(graph).iter().find(|site| {
+            &source[site.span.start_byte as usize..site.span.end_byte as usize] == pattern
+        }).unwrap_or_else(|| panic!("missing {pattern} in {:?}", sites(graph)));
+        assert_eq!(site.basis, ValueBasis::Syntax, "{site:?}");
+        let ReadingContent::Pattern { parts, .. } = &site.content else { panic!("{site:?}") };
+        parts.as_slice()
+    };
+
+    let [slot] = get("slot", "Some(ref mut slot @ Value::Array(_))") else { panic!("expected one slot binding") };
+    assert_eq!(slot.binding.as_deref(), Some("slot"));
+    assert_eq!(slot.condition.as_deref(), Some("Value::Array(_)"));
+    assert_eq!(slot.access, Some(Access::BorrowMut));
+
+    let [check, kind] = get("movement", r#"Some(kind @ ("orbit" | "approach" | "keep-range" | "hold  position"))"#) else {
+        panic!("expected one comparison and one binding");
+    };
+    assert_eq!(check.condition.as_deref(), Some(r#""orbit" | "approach" | "keep-range" | "hold  position""#));
+    assert_eq!(check.projection, "Some.0");
+    assert_eq!(kind.binding.as_deref(), Some("kind"));
+    assert_eq!(kind.projection, "Some.0");
+
+    let route = get("route", "(Stop::Near(target) | Stop::Far(target), 0) | (Stop::Near(target), 1)");
+    assert_eq!(route.len(), 4, "{route:?}");
+    assert_eq!(route[0].condition.as_deref(), Some("(Stop::Near(target) | Stop::Far(target), 0) | (Stop::Near(target), 1)"));
+    for (part, context) in route[1..].iter().zip([
+        "Selected alternative Stop::Near(target) within (Stop::Near(target) | Stop::Far(target), 0)",
+        "Selected alternative Stop::Far(target) within (Stop::Near(target) | Stop::Far(target), 0)",
+        "Selected alternative (Stop::Near(target), 1)",
+    ]) {
+        assert_eq!(part.binding.as_deref(), Some("target"));
+        assert!(part.projection.contains(context), "{part:?}");
+    }
+
+    let parts = get("slice", "[head, middle @ .., before_last, last]");
+    assert_eq!(parts.iter().map(|part| (part.binding.as_deref(), part.projection.as_str())).collect::<Vec<_>>(), [
+        (Some("head"), "[0]"),
+        (Some("middle"), "Remaining items"),
+        (Some("before_last"), "Item 2 from the end"),
+        (Some("last"), "Last item"),
+    ]);
+    let whole = &get("grouping", "(whole /* group */)")[0];
+    assert_eq!(whole.projection, "Value");
+    assert!(matches!(whole.type_info.as_ref().map(|info| &info.shape), Some(TypeShape::Tuple { items }) if items.len() == 2));
+    assert_eq!(whole.access, Some(Access::ByValue));
+    let only = &get("grouping", "(only,)")[0];
+    assert_eq!(only.projection, ".0");
+    assert!(matches!(only.type_info.as_ref().map(|info| &info.shape), Some(TypeShape::Scalar { name }) if name == "Int32"));
+    assert_eq!(only.access, Some(Access::Copy));
+    let alias = &get("grouped_alias", "(alias)")[0];
+    assert_eq!(alias.access, Some(Access::Copy));
+    assert!(matches!(alias.type_info.as_ref().map(|info| &info.shape), Some(TypeShape::Indirect { pointer: false, .. })));
+    let [all, item] = get("grouping", "ref all @ (item,)") else { panic!("expected both bindings") };
+    assert_eq!((all.binding.as_deref(), all.access), (Some("all"), Some(Access::Borrow)));
+    assert_eq!(item.binding.as_deref(), Some("item"));
+    assert!(matches!(item.access, Some(Access::Copy | Access::ByValue)));
+}
+
+#[test]
 fn return_paths_evaluate_then_clean_up_in_reverse_scope_order() {
     let mut project = project();
     let graph = flow(&mut project, "cleanup_on_return");

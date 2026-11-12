@@ -8,7 +8,7 @@ use nodex_ir::{
     types::{CollectionKind, TypeInfo, TypeOrigin, TypeShape, syntax_shape},
 };
 use nodex_lang_api::{
-    blueprint_types::{expression_type, project_pattern},
+    blueprint_types::{expression_type, project_pattern, rust_grouped_pattern},
     kit::truncate,
     syntax::{Src, children, named_children},
 };
@@ -1784,7 +1784,7 @@ impl Reader<'_, '_> {
         if pattern.kind() == "reference_pattern" {
             input = if patterns(pattern)
                 .first()
-                .is_some_and(|node| node.kind() == "tuple_pattern")
+                .is_some_and(|node| node.kind() == "tuple_pattern" && rust_grouped_pattern(*node).is_none())
             {
                 format!("Read the referenced tuple · {input}")
             } else {
@@ -1822,7 +1822,12 @@ impl Reader<'_, '_> {
         }
         if !parts.is_empty() {
             let resolved = source.is_some()
-                || parts.iter().any(|part| part.condition.is_some())
+                || input_type.as_ref().is_some_and(|info| info.origin == TypeOrigin::Compiler)
+                || parts.iter().any(|part| {
+                    part.condition.is_some() && self.evidence.non_bindings.contains(&(
+                        part.span.start_byte as usize, part.span.end_byte as usize,
+                    ))
+                })
                 || parts.iter().any(|part| {
                     part.type_info
                         .as_ref()
@@ -1854,57 +1859,61 @@ impl Reader<'_, '_> {
         ty: Option<&TypeInfo>,
     ) -> Vec<ReadingPart> {
         let mut parts = Vec::new();
-        let mut collect =
-            |leaf: Node<'_>, projection: String, mode: Option<Access>, borrows: bool| {
-                let condition = self
-                    .evidence
-                    .non_bindings
-                    .contains(&range(leaf))
-                    .then(|| self.short(leaf));
-                if leaf.kind() == "identifier"
-                    && condition.is_none()
-                    && mode.is_none()
-                    && !leaf.parent().is_some_and(|parent| {
-                        parent.kind() == "mut_pattern"
-                            || parent.kind() == "captured_pattern"
-                                && parent.named_child(0) == Some(leaf)
-                    })
-                    && !self.types.contains_key(&range(leaf))
-                    && self
-                        .src
-                        .text(leaf)
-                        .chars()
-                        .next()
-                        .is_some_and(char::is_uppercase)
-                {
-                    return;
-                }
-                let binding = (condition.is_none()
-                    && !matches!(leaf.kind(), "_" | "remaining_field_pattern"))
-                .then(|| self.short(leaf));
-                let type_info = self
-                    .types
-                    .get(&range(leaf))
-                    .map(|info| (*info).clone())
-                    .or_else(|| {
-                        let projected = project_pattern(self.src, pattern, value?, leaf)?;
-                        if matches!(
-                            projected.kind(),
-                            "primitive_type" | "reference_type" | "tuple_type" | "array_type"
-                        ) {
-                            let text = self.src.text(projected);
-                            return Some(TypeInfo::new(
-                                syntax_shape(Language::Rust, text),
-                                TypeOrigin::Declared,
-                                Some(text.into()),
-                            ));
-                        }
-                        self.known_type(projected)
-                    });
-                let access = binding.as_ref().map(|_| {
-                    mode.or_else(|| {
+        let mut collect = |leaf: Node<'_>, context: PatternContext<'_>, item: PatternItem| {
+            let item = if self.evidence.non_bindings.contains(&range(leaf)) {
+                PatternItem::Check(self.short(leaf))
+            } else {
+                item
+            };
+            if context.checks_covered && !matches!(item, PatternItem::Bind(_)) {
+                return;
+            }
+            if matches!(item, PatternItem::Bind(_))
+                && leaf.kind() == "identifier"
+                && context.mode.is_none()
+                && !leaf.parent().is_some_and(|parent| {
+                    parent.kind() == "mut_pattern"
+                        || parent.kind() == "captured_pattern"
+                            && parent.named_child(0) == Some(leaf)
+                })
+                && !self.types.contains_key(&range(leaf))
+                && self
+                    .src
+                    .text(leaf)
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_uppercase)
+            {
+                return;
+            }
+            let (binding, condition) = match item {
+                PatternItem::Bind(condition) => (Some(self.short(leaf)), condition),
+                PatternItem::Check(condition) => (None, Some(condition)),
+                PatternItem::Ignore => (None, None),
+            };
+            let type_info = self
+                .types
+                .get(&range(leaf))
+                .map(|info| (*info).clone())
+                .or_else(|| {
+                    let projected = project_pattern(self.src, pattern, value?, leaf)?;
+                    if matches!(
+                        projected.kind(),
+                        "primitive_type" | "reference_type" | "tuple_type" | "array_type"
+                    ) {
+                        let text = self.src.text(projected);
+                        return Some(TypeInfo::new(
+                            syntax_shape(Language::Rust, text),
+                            TypeOrigin::Declared,
+                            Some(text.into()),
+                        ));
+                    }
+                    self.known_type(projected)
+                });
+            let access = binding.as_ref().map(|_| {
+                context.mode.or_else(|| {
                     let info = type_info.as_ref()?;
-                    if borrows
+                    if context.borrows
                         && let Some(ty) = info.native.as_deref().filter(|ty| ty.starts_with('&'))
                     {
                         return Some(reference_access(ty));
@@ -1937,95 +1946,180 @@ impl Reader<'_, '_> {
                     None
                 })
                 .unwrap_or(Access::ByValue)
-                });
-                let projection = if projection.is_empty() {
-                    "Value".into()
-                } else {
-                    projection
-                };
-                parts.push(ReadingPart {
-                    projection,
-                    span: self.src.span(leaf),
-                    binding,
-                    condition,
-                    access,
-                    type_info,
-                    borrow_sources: None,
-                });
+            });
+            let place = if context.projection.is_empty() {
+                "Value"
+            } else {
+                context.projection
             };
-        let borrows = !matches!(pattern.kind(), "identifier" | "mut_pattern")
+            let projection = if context.alternatives.is_empty() {
+                place.to_owned()
+            } else {
+                let selected = context.alternatives.iter().rev().map(String::as_str).collect::<Vec<_>>().join(" within ");
+                format!("Selected alternative {selected} · {place}")
+            };
+            parts.push(ReadingPart {
+                projection,
+                span: self.src.span(leaf),
+                binding,
+                condition,
+                access,
+                type_info,
+                borrow_sources: None,
+            });
+        };
+        let inner = std::iter::successors(Some(pattern), |&item| rust_grouped_pattern(item))
+            .last().unwrap_or(pattern);
+        let borrows = !matches!(inner.kind(), "identifier" | "mut_pattern")
             && ty.is_some_and(|ty| matches!(ty.shape, TypeShape::Indirect { pointer: false, .. }));
-        walk_pattern(pattern, "", None, borrows, &mut collect, self.src);
+        let context = PatternContext {
+            projection: "",
+            alternatives: &[],
+            mode: None,
+            borrows,
+            checks_covered: false,
+        };
+        walk_pattern(pattern, context, &mut collect, self.src);
         parts
     }
 }
 
-fn walk_pattern(
-    node: Node<'_>,
-    projection: &str,
+enum PatternItem {
+    Bind(Option<String>),
+    Check(String),
+    Ignore,
+}
+
+#[derive(Clone, Copy)]
+struct PatternContext<'a> {
+    projection: &'a str,
+    alternatives: &'a [String],
     mode: Option<Access>,
     borrows: bool,
-    emit: &mut impl FnMut(Node<'_>, String, Option<Access>, bool),
+    checks_covered: bool,
+}
+
+fn pattern_place(parent: &str, part: &str) -> String {
+    if parent.is_empty() {
+        part.to_owned()
+    } else {
+        format!("{parent} · {part}")
+    }
+}
+
+fn rest_pattern(node: Node<'_>) -> bool {
+    match node.kind() {
+        "remaining_field_pattern" => true,
+        "captured_pattern" | "ref_pattern" | "mut_pattern" => patterns(node)
+            .last()
+            .is_some_and(|child| rest_pattern(*child)),
+        _ => false,
+    }
+}
+
+fn pattern_alternatives<'t>(node: Node<'t>, alternatives: &mut Vec<Node<'t>>) {
+    if node.kind() == "or_pattern" {
+        for alternative in patterns(node) {
+            pattern_alternatives(alternative, alternatives);
+        }
+    } else {
+        alternatives.push(node);
+    }
+}
+
+fn walk_pattern<'t>(
+    node: Node<'t>,
+    context: PatternContext<'_>,
+    emit: &mut impl FnMut(Node<'t>, PatternContext<'_>, PatternItem),
     src: Src<'_>,
 ) {
+    let projection = context.projection;
     match node.kind() {
-        "identifier" | "shorthand_field_identifier" | "_" | "remaining_field_pattern" => {
-            emit(node, projection.into(), mode, borrows)
+        "identifier" | "shorthand_field_identifier" => emit(node, context, PatternItem::Bind(None)),
+        "_" | "remaining_field_pattern" => emit(node, context, PatternItem::Ignore),
+        "string_literal" | "raw_string_literal" | "char_literal" | "boolean_literal"
+        | "integer_literal" | "float_literal" | "negative_literal" | "range_pattern"
+        | "scoped_identifier" | "const_block" => {
+            if !context.checks_covered {
+                emit(node, context, PatternItem::Check(src.text(node).trim().into()));
+            }
         }
         "tuple_pattern" | "tuple_struct_pattern" | "slice_pattern" => {
+            if let Some(item) = rust_grouped_pattern(node) {
+                walk_pattern(item, context, emit, src);
+                return;
+            }
             let variant = node.child_by_field_name("type");
             let prefix = variant.map_or_else(
                 || projection.to_owned(),
-                |ty| {
-                    if projection.is_empty() {
-                        src.norm(ty)
-                    } else {
-                        format!("{projection} · {}", src.norm(ty))
-                    }
-                },
+                |ty| pattern_place(projection, &src.norm(ty)),
             );
-            let mut remaining = false;
-            for (i, child) in patterns(node)
+            let items: Vec<_> = patterns(node)
                 .into_iter()
                 .filter(|child| Some(*child) != variant)
-                .enumerate()
-            {
-                let item = if child.kind() == "remaining_field_pattern" {
-                    remaining = true;
-                    format!("{prefix}…")
-                } else if remaining {
-                    format!("{prefix} · trailing item")
+                .collect();
+            let mut after_rest = false;
+            for (i, &child) in items.iter().enumerate() {
+                let item = if rest_pattern(child) {
+                    after_rest = true;
+                    pattern_place(&prefix, "Remaining items")
+                } else if after_rest {
+                    let from_end = items.len() - i;
+                    let name = if from_end == 1 {
+                        "Last item".into()
+                    } else {
+                        format!("Item {from_end} from the end")
+                    };
+                    pattern_place(&prefix, &name)
+                } else if node.kind() == "slice_pattern" {
+                    format!("{prefix}[{i}]")
                 } else {
                     format!("{prefix}.{i}")
                 };
-                walk_pattern(child, &item, mode, borrows, emit, src);
+                walk_pattern(
+                    child,
+                    PatternContext {
+                        projection: &item,
+                        ..context
+                    },
+                    emit,
+                    src,
+                );
             }
         }
         "struct_pattern" => {
             let owner = node.child_by_field_name("type");
             let prefix = owner.map_or_else(
                 || projection.to_owned(),
-                |ty| {
-                    if projection.is_empty() {
-                        src.norm(ty)
-                    } else {
-                        format!("{projection} · {}", src.norm(ty))
-                    }
-                },
+                |ty| pattern_place(projection, &src.norm(ty)),
             );
             for field in patterns(node)
                 .into_iter()
                 .filter(|child| Some(*child) != owner)
             {
-                walk_pattern(field, &prefix, mode, borrows, emit, src);
+                let place = if field.kind() == "remaining_field_pattern" {
+                    pattern_place(&prefix, "Remaining fields")
+                } else {
+                    prefix.clone()
+                };
+                walk_pattern(
+                    field,
+                    PatternContext {
+                        projection: &place,
+                        ..context
+                    },
+                    emit,
+                    src,
+                );
             }
         }
         "field_pattern" => {
             if let Some(name) = node.child_by_field_name("name") {
                 let field = format!("{projection}.{}", src.norm(name));
-                let field_mode = if children(node).iter().any(|child| child.kind() == "ref") {
+                let tokens = children(node);
+                let mode = if tokens.iter().any(|child| child.kind() == "ref") {
                     Some(
-                        if children(node)
+                        if tokens
                             .iter()
                             .any(|child| child.kind() == "mutable_specifier")
                         {
@@ -2035,38 +2129,102 @@ fn walk_pattern(
                         },
                     )
                 } else {
-                    mode
+                    context.mode
                 };
                 walk_pattern(
                     node.child_by_field_name("pattern").unwrap_or(name),
-                    &field,
-                    field_mode,
-                    borrows,
+                    PatternContext {
+                        projection: &field,
+                        mode,
+                        ..context
+                    },
                     emit,
                     src,
                 );
             }
         }
         "ref_pattern" => {
-            let access = if src.text(node).split_whitespace().nth(1) == Some("mut") {
+            let items = patterns(node);
+            let access = if items.iter().any(|child| child.kind() == "mut_pattern") {
                 Access::BorrowMut
             } else {
                 Access::Borrow
             };
-            for child in patterns(node) {
-                walk_pattern(child, projection, Some(access), borrows, emit, src);
-            }
-        }
-        "reference_pattern" | "mut_pattern" | "captured_pattern" | "or_pattern" => {
-            for child in patterns(node) {
+            for child in items {
                 walk_pattern(
                     child,
-                    projection,
-                    mode,
-                    borrows && node.kind() != "reference_pattern",
+                    PatternContext {
+                        mode: Some(access),
+                        ..context
+                    },
                     emit,
                     src,
                 );
+            }
+        }
+        "reference_pattern" | "mut_pattern" => {
+            let context = PatternContext {
+                borrows: context.borrows && node.kind() != "reference_pattern",
+                ..context
+            };
+            for child in patterns(node) {
+                walk_pattern(child, context, emit, src);
+            }
+        }
+        "captured_pattern" => {
+            if let [binding, checked] = patterns(node).as_slice() {
+                let (binding, checked) = (*binding, *checked);
+                if rest_pattern(checked) || checked.kind() == "_" {
+                    emit(binding, context, PatternItem::Bind(None));
+                    return;
+                }
+                let inner = std::iter::successors(Some(checked), |&item| rust_grouped_pattern(item))
+                    .last()
+                    .unwrap_or(checked);
+                // An explicit ref on the name to the left of @ applies only to that binding.
+                let checked_context = PatternContext { mode: None, ..context };
+                if inner.kind() == "or_pattern" {
+                    walk_pattern(checked, checked_context, emit, src);
+                    emit(binding, context, PatternItem::Bind(None));
+                } else {
+                    let check = (!context.checks_covered).then(|| src.text(checked).trim().to_owned());
+                    emit(binding, context, PatternItem::Bind(check));
+                    walk_pattern(
+                        checked,
+                        PatternContext {
+                            checks_covered: true,
+                            ..checked_context
+                        },
+                        emit,
+                        src,
+                    );
+                }
+            }
+        }
+        "or_pattern" => {
+            let mut branches = Vec::new();
+            pattern_alternatives(node, &mut branches);
+            if let [only] = branches.as_slice() {
+                walk_pattern(*only, context, emit, src);
+                return;
+            }
+            if !context.checks_covered && !branches.is_empty() {
+                let check = branches
+                    .iter()
+                    .map(|&branch| src.text(branch).trim())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                emit(node, context, PatternItem::Check(check));
+            }
+            for branch in branches {
+                let mut alternatives = context.alternatives.to_vec();
+                alternatives.push(truncate(src.text(branch).trim(), 80));
+                let next = PatternContext {
+                    alternatives: &alternatives,
+                    checks_covered: true,
+                    ..context
+                };
+                walk_pattern(branch, next, emit, src);
             }
         }
         _ => {}

@@ -548,6 +548,18 @@ pub fn immediate_script_writes<'a>(src: Src<'a>, function: Node<'_>) -> Vec<&'a 
     writes
 }
 
+/// A Rust pattern in parentheses keeps the same value unless a comma makes it a tuple.
+pub fn rust_grouped_pattern(pattern: Node<'_>) -> Option<Node<'_>> {
+    if pattern.kind() != "tuple_pattern" {
+        return None;
+    }
+    let mut items = crate::syntax::children(pattern).into_iter().filter(|child| {
+        !child.is_extra() && !child.is_missing() && !matches!(child.kind(), "(" | ")")
+    });
+    let item = items.next()?;
+    (items.next().is_none() && item.kind() != "remaining_field_pattern").then_some(item)
+}
+
 /// Find the written element or property received by one binding in a pattern.
 pub fn project_pattern<'t>(
     src: Src<'_>,
@@ -558,6 +570,9 @@ pub fn project_pattern<'t>(
     let value = value_operand(value);
     if pattern.id() == leaf.id() {
         return Some(value);
+    }
+    if let Some(grouped) = rust_grouped_pattern(pattern) {
+        return project_pattern(src, grouped, value, leaf);
     }
     let contains_leaf =
         |node: Node| node.start_byte() <= leaf.start_byte() && leaf.end_byte() <= node.end_byte();

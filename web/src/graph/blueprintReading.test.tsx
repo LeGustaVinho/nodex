@@ -256,6 +256,28 @@ it("keeps the labeled arm and constant comparison on an embedded match", () => {
   expect((opened.nodes.find((entry) => entry.id === `${node}/e/0`)!.data as ExprData).reading).toEqual(graph.reading);
 });
 
+it("shows both the condition and the name in an @ pattern", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const binding = span(60, 64);
+  const site: ReadingSite = { node, span: span(55, 78), basis: "Syntax", content: {
+    kind: "Pattern", input: "slot_value", parts: [
+      { projection: "Some.0", span: binding, binding: "slot", condition: "Value::Array(_)", access: "BorrowMut" },
+    ],
+  } };
+  let inspected: Span | undefined;
+  try {
+    await act(async () => root.render(<BlueprintReading full sites={[site]} inspect={(_, span) => { inspected = span; }} />));
+    const row = host.querySelector<HTMLButtonElement>(".reading-outcome button")!;
+    expect(row.textContent).toBe("Some.0 → Match Value::Array(_) · bind slot");
+    expect(host.querySelector(".reading-action")?.textContent).toBe("Borrow to change");
+    await act(async () => row.click());
+    expect(inspected).toEqual(binding);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
 it("distinguishes a single matching pattern from a chain of conditions", () => {
   const loop = { ...flow.nodes[0], flavors: ["while-let"] };
   expect(routeName(loop, "body")).toBe("Loop body · when the conditions pass");

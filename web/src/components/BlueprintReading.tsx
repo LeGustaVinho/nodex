@@ -87,9 +87,12 @@ export function BlueprintReading({ sites, inspect, route, choose, preview, full 
               return (
                 <li key={`${part.span.start_byte}:${index}`}>
                   <div className="reading-outcome">
-                    <button type="button" className="nodrag" onClick={open(part.span)} title={part.condition ? "Show the comparison in source" : "Show the pattern in source"}>
-                      <code>{part.projection}</code><span aria-hidden="true"> → </span>
-                      {part.condition ? <>Match <code>{part.condition}</code></> : part.binding ? <code>{part.binding}</code> : "Ignore"}
+                    <button type="button" className="nodrag" onClick={open(part.span)}
+                      title={part.binding ? "Show the binding in source" : part.condition ? "Show the comparison in source" : "Show the pattern in source"}>
+                      <code className="reading-pattern-code">{part.projection}</code><span aria-hidden="true"> → </span>
+                      {part.condition && <>Match <code className="reading-pattern-code">{part.condition}</code></>}
+                      {part.binding && <>{part.condition && " · bind "}<code>{part.binding}</code></>}
+                      {!part.condition && !part.binding && "Ignore"}
                     </button>
                     {type && <code title={type}>{type}</code>}
                   </div>
