@@ -5,12 +5,13 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { Symbol } from "../gen/Symbol";
 import { StructureIndex } from "../graph/structureGraph";
+import { useNavigation } from "../navigation";
 import { useUi } from "../store";
 import { SymbolInspector } from "./SymbolInspector";
 
 vi.mock("../views/Views", () => ({ useStructure: () => ({}) }));
 
-it("keeps the Rust contract and associated type explanation visible across Inspector tabs", async () => {
+it("keeps the Rust contract and associated type navigation visible across Inspector tabs", async () => {
   const span = { file: "source.rs", start_byte: 5, end_byte: 16, start_line: 1, end_line: 1, start_col: 6, end_col: 17 };
   const trait: Symbol = {
     id: "Source", name: "Source", qualified_name: "Source", kind: "Trait", language: "rust", parent: null,
@@ -23,8 +24,11 @@ it("keeps the Rust contract and associated type explanation visible across Inspe
   };
   const owner: Symbol = { ...trait, id: "Stream", name: "Stream", kind: "Struct" };
   const implementation = { ...member, id: "Stream::Item", parent: owner.id };
+  const otherTrait = { ...trait, id: "Sink", name: "Sink", qualified_name: "Sink" };
+  const otherMember = { ...member, id: "Sink::Item", parent: otherTrait.id, qualified_name: "Sink::Item" };
   const index = new StructureIndex({
-    symbols: [trait, member, owner, implementation], edges: [], source_revisions: { [span.file]: "source-revision" },
+    symbols: [trait, member, otherTrait, otherMember, owner, implementation],
+    edges: [], source_revisions: { [span.file]: "source-revision" },
   });
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
   client.setQueryData(["project"], { root: "", flavors: [] });
@@ -33,9 +37,11 @@ it("keeps the Rust contract and associated type explanation visible across Inspe
   const host = document.createElement("div");
   const root = createRoot(host);
   const previous = useUi.getState();
+  const previousRequest = useNavigation.getState().request;
   const tabPreference = window.localStorage.getItem("nodex.inspectorTab");
   const reading = () => host.querySelector('section[aria-label="Read this Rust declaration"]');
   const button = (name: string) => [...host.querySelectorAll("button")].find((entry) => entry.textContent === name);
+  const findImplementations = () => button("Find type definitions in implementations");
   const render = (symbol: Symbol) => root.render(
     <QueryClientProvider client={client}><SymbolInspector symbol={symbol} index={index} /></QueryClientProvider>,
   );
@@ -54,12 +60,19 @@ it("keeps the Rust contract and associated type explanation visible across Inspe
     ] }));
     expect(reading()?.textContent).toContain("Each implementation chooses a type for Item.");
     expect(reading()?.textContent).not.toContain("Each implementation of the trait");
+    await act(async () => findImplementations()!.click());
+    expect(useNavigation.getState().request).toMatchObject({ symbol: { id: "Source::Item" }, kind: "implementations" });
+    await act(async () => render(otherMember));
+    await act(async () => findImplementations()!.click());
+    expect(useNavigation.getState().request).toMatchObject({ symbol: { id: "Sink::Item" }, kind: "implementations" });
     await act(async () => button("Overview")!.click());
     expect(host.querySelectorAll('[aria-label="Rust contract"]')).toHaveLength(1);
     await act(async () => render(implementation));
     expect(reading()?.textContent).not.toContain("Each implementation of the trait");
+    expect(findImplementations()).toBeUndefined();
   } finally {
     await act(async () => root.unmount());
+    useNavigation.setState({ request: previousRequest });
     useUi.setState(previous);
     client.clear();
     if (tabPreference === null) window.localStorage.removeItem("nodex.inspectorTab");

@@ -11,7 +11,7 @@ The release workflow publishes the section of the version it builds as the relea
 - Rust Blueprints explain the paths through `let` conditions and short-circuit operators, which bounds a range includes, and where borrowed values come from. The Guide shows the full explanations, and the Inspector highlights the Rust syntax each explanation describes.
 - The Inspector keeps Rust declaration explanations visible across its tabs. Select a row to jump to the signature or type it describes.
 - When Rust skips the rest of an iteration with `continue`, the Blueprint Guide can take you back to the right loop, including a labeled outer loop.
-- Rust declarations explain which types a trait implementation chooses and when a returned reference shares a lifetime with an input.
+- Rust declarations explain which types a trait implementation chooses and when a returned reference shares a lifetime with an input. Open an associated type on a trait to find the definitions in its implementations.
 - The Inspector highlights Rust `match` guards in assignments and other expressions. A guard runs after its pattern matches and can send execution on to the next alternative.
 - The Rust Guide shows the generic arguments written in `collect::<...>()` and explains placeholders such as `Vec<_>` and `[u8; _]`.
 - Rust Blueprints distinguish the type of a captured reference from how a closure or async block uses it. The Guide, Inspector and wires show when the access mode is uncertain.

@@ -33,6 +33,10 @@ export const useNavigation = create<{ request: NavigationRequest | null; close: 
   close: () => set({ request: null }),
 }));
 
+function requestNavigation(symbol: Symbol, kind: NavigationKind) {
+  useNavigation.setState({ request: { symbol, kind, codeIntent: useUi.getState().codeIntent } });
+}
+
 function canHaveImplementations(symbol: Symbol, owner?: Symbol): boolean {
   if (symbol.kind === "TypeAlias") {
     return symbol.flavors.includes("object-contract") ||
@@ -49,18 +53,21 @@ function canHaveImplementations(symbol: Symbol, owner?: Symbol): boolean {
     !symbol.flavors.some((f) => ["private", "private-field"].includes(f));
 }
 
+export function implementationAction(symbol: Symbol, owner?: Symbol) {
+  if (symbol.external || !symbol.origins.length || !canHaveImplementations(symbol, owner)) return;
+  return () => requestNavigation(symbol, "implementations");
+}
+
 export function navigationMenuItems(symbol: Symbol | null | undefined, owner?: Symbol | StructureIndex): MenuItem[] {
   if (!symbol || symbol.external || !symbol.origins.length) return [];
   const fileItems = symbolFileMenuItems(symbol);
   if (["Namespace", "Module", "Package"].includes(symbol.kind)) return fileItems;
   const ownerSymbol = owner && "byId" in owner ? owner.byId.get(symbol.parent ?? "") : owner;
-  const item = (label: string, kind: NavigationKind): MenuItem => ({
-    label, run: () => useNavigation.setState({ request: { symbol, kind, codeIntent: useUi.getState().codeIntent } }),
-  });
+  const implementations = implementationAction(symbol, ownerSymbol);
   return [
-    item("Find usages", "usages"),
-    item("Go to declaration", "declaration"),
-    ...(canHaveImplementations(symbol, ownerSymbol) ? [item("Go to implementation", "implementations")] : []),
+    { label: "Find usages", run: () => requestNavigation(symbol, "usages") },
+    { label: "Go to declaration", run: () => requestNavigation(symbol, "declaration") },
+    ...(implementations ? [{ label: "Go to implementation", run: implementations }] : []),
     ...fileItems,
   ];
 }

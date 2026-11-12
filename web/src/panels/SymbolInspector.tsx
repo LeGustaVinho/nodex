@@ -41,6 +41,7 @@ import {
 } from "../graph/explore";
 import { RELATION_LABEL } from "../graph/hierarchy";
 import { type StructureIndex, isTypeKind } from "../graph/structureGraph";
+import { implementationAction } from "../navigation";
 import { useUi } from "../store";
 import { useToasts } from "../toast";
 import { umlMenuItems } from "../uml/menu";
@@ -141,6 +142,7 @@ export function SymbolInspector({ symbol, index, syntax, embedded }: { symbol: S
   const associatedType = symbol.language === "rust" && symbol.kind === "TypeAlias"
     && parent?.kind === "Trait" && symbol.flavors.includes("associated-type");
   const showAssociatedTypeFallback = associatedType && !symbol.rust_contract?.some((item) => item.group === "Associated type");
+  const showImplementations = associatedType ? implementationAction(symbol, parent) : undefined;
 
   return (
     <div className={embedded ? undefined : "inspector"}>
@@ -217,6 +219,7 @@ export function SymbolInspector({ symbol, index, syntax, embedded }: { symbol: S
           const expected = revision(span.file);
           if (expected) ui.focusCode(span, expected);
         }} />}
+        {showImplementations && <button type="button" onClick={showImplementations}>Find type definitions in implementations</button>}
       </section>}
       {details.length > 0 && <div className="insp-section">
         <div className="section-title">Language details</div>
