@@ -455,6 +455,64 @@ fn collect_reading_explains_the_written_generic_arguments() {
 }
 
 #[test]
+fn closure_reading_explains_the_borrow_in_the_result_expression() {
+    let mut project = project();
+    for (function, operator, label, explanation) in [
+        ("reading_closure_shared_result", "&", "Borrow the result for reading", "borrows values[row][column] and creates a shared reference for reading"),
+        ("reading_closure_mutable_result", "&mut", "Borrow the result for modification", "borrows values[0] with permission to modify it through the reference"),
+    ] {
+        let graph = flow(&mut project, function);
+        let mut cards = sites(&graph).iter().filter_map(|site| match &site.content {
+            ReadingContent::Detail { label, text, .. } if label.starts_with("Borrow the result") => Some((site, label, text)),
+            _ => None,
+        });
+        let (site, actual_label, text) = cards.next().unwrap();
+        assert!(cards.next().is_none());
+        assert_eq!(site.basis, ValueBasis::Syntax);
+        assert_eq!(actual_label, label);
+        assert!(text.contains(explanation));
+        assert_eq!(&FIXTURE_SOURCE[site.span.start_byte as usize..site.span.end_byte as usize], operator);
+        let node = graph.node(&site.node).unwrap();
+        let mut expression = node.expr.as_ref().unwrap();
+        for child in site.path.as_deref().unwrap().split('.').skip(1) {
+            expression = &expression.children[child.parse::<usize>().unwrap()];
+        }
+        assert_eq!(expression.concept, Concept::Lambda);
+    }
+
+    let structure = project.structure();
+    let caller = structure.symbols.iter().find(|symbol| symbol.name == "reading_closure_shared_result").unwrap();
+    let input = contract_item(caller, "May change");
+    assert!(contract_source(input).starts_with("values: &mut"));
+
+    let source = r#"
+        fn f(value: &'static i32) {
+            let borrowed = || (&*value);
+            let raw = || &raw const *value;
+            let later = async move || &*value;
+        }
+        fn moved(value: &'static i32) {
+            let callback = move || &*value;
+        }
+    "#;
+    let ir = nodex_lang_rust::lower_source("src/closure.rs", source);
+    let graph = ir.flows.iter().find(|graph| graph.name == "f").unwrap();
+    let result_borrows: Vec<_> = sites(graph).iter().filter(|site| matches!(&site.content,
+        ReadingContent::Detail { label, .. } if label.starts_with("Borrow the result"))).collect();
+    let [site] = result_borrows.as_slice() else { panic!("{result_borrows:?}") };
+    assert_eq!(site.span.start_byte as usize, source.find("&*value").unwrap());
+
+    let moved = ir.flows.iter().find(|graph| graph.name == "moved").unwrap();
+    let cards: Vec<_> = sites(moved).iter().filter_map(|site| match &site.content {
+        ReadingContent::Detail { label, text, .. } => Some((label.as_str(), text.as_str())),
+        _ => None,
+    }).collect();
+    assert_eq!(cards.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
+        ["Create function callback()", "Borrow the result for reading"]);
+    assert!(cards[0].1.contains("Captured values are taken by value"));
+}
+
+#[test]
 #[ignore = "needs rust-analyzer"]
 fn scip_reading_connects_lookup_paths_patterns_and_origins() {
     let mut project = project();

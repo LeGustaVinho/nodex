@@ -1403,6 +1403,9 @@ impl Reader<'_, '_> {
         let tokens = children(node);
         let moves = tokens.iter().any(|token| token.kind() == "move");
         let async_ = tokens.iter().any(|token| token.kind() == "async");
+        if !async_ && !moves {
+            self.closure_result_borrow(node);
+        }
         let mut text = if async_ {
             "Calling this function value creates a future.".to_owned()
         } else {
@@ -1435,6 +1438,9 @@ impl Reader<'_, '_> {
             !captures.is_empty(),
             detail(&label, text),
         );
+        if !async_ && moves {
+            self.closure_result_borrow(node);
+        }
 
         let lookup = self.callback_lookup(node);
         for (i, pattern) in patterns(parameters).into_iter().enumerate() {
@@ -1458,6 +1464,33 @@ impl Reader<'_, '_> {
             };
             self.pattern(self.src.span(node), pattern, None, input, ty, source, None);
         }
+    }
+
+    fn closure_result_borrow(&mut self, closure: Node<'_>) {
+        let Some(body) = closure.child_by_field_name("body").map(unparen)
+            .filter(|body| body.kind() == "reference_expression") else { return };
+        let tokens = children(body);
+        if tokens.iter().any(|token| token.kind() == "raw") {
+            return;
+        }
+        let Some(ampersand) = tokens.iter().find(|token| token.kind() == "&") else { return };
+        let Some(value) = body.child_by_field_name("value").filter(|value| !value.is_missing()) else { return };
+        let place = self.short(value);
+        let mutable = tokens.iter().find(|token| token.kind() == "mutable_specifier");
+        let (label, text) = if mutable.is_some() {
+            (
+                "Borrow the result for modification",
+                format!("This result expression borrows {place} with permission to modify it through the reference."),
+            )
+        } else {
+            (
+                "Borrow the result for reading",
+                format!("This result expression borrows {place} and creates a shared reference for reading."),
+            )
+        };
+        let end = mutable.unwrap_or(ampersand).end_byte();
+        let operator = self.src.index.span(self.src.file, ampersand.start_byte(), end);
+        self.push(self.src.span(closure), operator, false, detail(label, text));
     }
 
     fn captures(&self, node: Node<'_>) -> Vec<Capture> {

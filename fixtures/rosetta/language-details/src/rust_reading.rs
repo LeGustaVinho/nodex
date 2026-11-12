@@ -495,6 +495,14 @@ pub mod local_option {
     }
 }
 
+pub fn reading_closure_shared_result(values: &mut [[i32; 2]], position: &(usize, usize)) -> i32 {
+    Some(position).map(|&(row, column)| &values[row][column]).copied().unwrap_or_default()
+}
+
+pub fn reading_closure_mutable_result(values: &mut [i32]) -> &mut i32 {
+    Some(values).map(|values| &mut values[0]).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

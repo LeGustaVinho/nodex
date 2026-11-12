@@ -16,6 +16,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Rust Guide shows the generic arguments written in `collect::<...>()` and explains placeholders such as `Vec<_>` and `[u8; _]`.
 - When Rust Analyzer confirms the standard iterator and types, the Guide explains how collecting optional items into `Option<Vec<_>>` stops at the first `None`.
 - Rust Blueprints distinguish the type of a captured reference from how a closure or async block uses it. The Guide, Inspector and wires show when the access mode is uncertain.
+- When a Rust closure's result expression uses `&` or `&mut`, its Blueprint explains that borrow and highlights the operator in the source.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
