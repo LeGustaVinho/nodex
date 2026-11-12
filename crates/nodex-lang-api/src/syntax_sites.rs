@@ -50,6 +50,7 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
                 | "try_expression"
                 | "unary_expression" => crate::syntax::named_children(owner).into_iter().next(),
                 "reference_expression" => owner.child_by_field_name("value"),
+                "match_expression" if key == "match-guard" => token.parent().and_then(|pattern| pattern.parent()),
                 _ => None,
             }
             .map(|n| src.span(n));
@@ -154,10 +155,12 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
             }
         }
         for (o, target) in sites.iter().zip(&mut targets) {
-            if o.site.key == "match-guard" {
-                *target = flow.nodes.iter().position(|n| {
+            if o.site.key == "match-guard"
+                && let Some(match_node) = flow.nodes.iter().position(|n| {
                     n.concept == Concept::Match && n.span.start_byte == o.owner.start_byte
-                });
+                })
+            {
+                *target = Some(match_node);
             }
         }
         for (o, i) in sites
@@ -169,19 +172,18 @@ pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
             if o.declaration && !matches!(node.concept, Concept::Entry | Concept::EventEntry) {
                 continue;
             }
-            if !o.statement
-                && o.site.pin.is_none()
-                && node.expr.as_mut().is_some_and(|e| attach_expr(e, o))
+            let guard_in_expression = o.site.key == "match-guard"
+                && (node.concept != Concept::Match || node.span.start_byte != o.owner.start_byte);
+            let mut site = o.site.clone();
+            site.pin = site.pin.filter(|pin| {
+                !guard_in_expression
+                    && node.inputs.iter().chain(&node.outputs).any(|p| &p.id == pin)
+            });
+            if (guard_in_expression || !o.statement && o.site.pin.is_none())
+                && node.expr.as_mut().is_some_and(|e| attach_expr(e, o, &site))
             {
                 continue;
             }
-            let mut site = o.site.clone();
-            site.pin = site.pin.filter(|pin| {
-                node.inputs
-                    .iter()
-                    .chain(&node.outputs)
-                    .any(|p| &p.id == pin)
-            });
             node.syntax_sites.get_or_insert_with(Vec::new).push(site);
         }
         for node in &mut flow.nodes {
@@ -256,15 +258,15 @@ fn in_span<'a>(sites: &'a [Occurrence], span: &Span) -> impl Iterator<Item = &'a
         .filter(|o| o.site.span.end_byte <= span.end_byte)
 }
 
-fn attach_expr(expr: &mut Expr, occurrence: &Occurrence) -> bool {
-    if expr.children.iter_mut().any(|e| attach_expr(e, occurrence)) {
+fn attach_expr(expr: &mut Expr, occurrence: &Occurrence, site: &SyntaxSite) -> bool {
+    if expr.children.iter_mut().any(|e| attach_expr(e, occurrence, site)) {
         return true;
     }
     let same = |s: &Span| s.start_byte == expr.span.start_byte && s.end_byte == expr.span.end_byte;
     if same(&occurrence.owner) || occurrence.operand.as_ref().is_some_and(same) {
         expr.syntax_sites
             .get_or_insert_with(Vec::new)
-            .push(occurrence.site.clone());
+            .push(site.clone());
         return true;
     }
     false

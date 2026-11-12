@@ -246,6 +246,40 @@ fn rust_syntax_anchors_cover_operators_even_when_lowering_unwraps_them() {
     }
 }
 
+#[test]
+fn rust_match_guards_stay_on_expression_arms_or_statement_pins() {
+    use nodex_ir::Concept;
+
+    let source = r#"
+        fn f(pair: (i32, i32)) -> i32 {
+            let next = match pair {
+                (n, _) | (_, n) if n > 0 => n,
+                (n, _) if n < 0 => -n,
+                _ => 0,
+            };
+            match next { n if n > 0 => n, _ => 0 }
+        }
+    "#;
+    let ir = nodex_lang_rust::lower_source("src/lib.rs", source);
+    let graph = ir.flows.iter().find(|graph| graph.name == "f").unwrap();
+    let expression = statement(graph, "let next").expr.as_ref().unwrap();
+    assert_eq!(expression.concept, Concept::Match);
+    for (index, code) in [(1, "if n > 0"), (2, "if n < 0")] {
+        let arm = &expression.children[index];
+        let sites = arm.syntax_sites.as_deref().unwrap();
+        let guard = sites.iter().find(|site| site.key == "match-guard").unwrap();
+        assert_eq!(guard.pin, None);
+        assert_eq!(guard.span.start_byte as usize, source.find(code).unwrap());
+        assert_eq!(&source[guard.span.start_byte as usize..guard.span.end_byte as usize], "if");
+    }
+    let statement = statement(graph, "match next");
+    let guard = statement.syntax_sites.iter().flatten().find(|site| site.key == "match-guard").unwrap();
+    assert_eq!(guard.pin.as_deref(), Some("case:0"));
+    assert_eq!(guard.span.start_byte as usize, source.rfind("if n > 0").unwrap());
+    assert!(statement.outputs.iter().any(|pin| pin.id == "case:0"));
+    assert_eq!(syntax(&ir).iter().filter(|site| site.key == "match-guard").count(), 3);
+}
+
 
 #[test]
 fn syntax_only_value_shape_is_independent_of_reference_passing() {

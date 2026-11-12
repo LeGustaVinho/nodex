@@ -329,7 +329,7 @@ export function pinSyntaxDetails(node: FlowNode, id: string): LanguageDetail[] {
     details.push({ label: "Exception filter", explain: "This handler runs only if the exception matches and the when condition is true. Otherwise the search continues." });
   }
   if (id.startsWith("case:") && node.flavors.includes(`match-guard:${id.slice(5)}`)) {
-    details.push({ label: "Match guard", explain: "Check the guard after the pattern matches. If the guard fails, continue trying the following arms." });
+    details.push({ label: "Match guard", explain: "Check the guard after a pattern matches. If it fails, try the next pattern, including any remaining alternatives in the same arm." });
   }
   return details;
 }

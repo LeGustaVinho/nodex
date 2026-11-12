@@ -300,10 +300,10 @@ effects = [["&raw const x", "Produce a raw pointer to x"]]
 
 [match-guard]
 label = "Match guard"
-explain = "Check the guard after the arm pattern matches."
+explain = "Check the guard after a pattern matches. If it fails, try the next pattern, including any remaining alternatives in the same arm."
 cue = "if"
 phase = "Runtime"
-effects = [["Pattern matches and guard passes", "Take the arm"], ["Guard fails", "Continue checking later arms"]]
+effects = [["Pattern matches and guard passes", "Take the arm"], ["Guard fails", "Try the next pattern or alternative"]]
 
 [tail-expression]
 label = "Tail expression"
