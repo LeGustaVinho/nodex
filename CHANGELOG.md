@@ -11,6 +11,7 @@ The release workflow publishes the section of the version it builds as the relea
 - Rust Blueprints explain the paths through `let` conditions and short-circuit operators, which bounds a range includes, and where borrowed values come from. The Guide shows the full explanations, and the Inspector highlights the Rust syntax each explanation describes.
 - The Inspector keeps Rust declaration explanations visible across its tabs. Select a row to jump to the signature or type it describes.
 - When Rust skips the rest of an iteration with `continue`, the Blueprint Guide can take you back to the right loop, including a labeled outer loop.
+- Rust declarations explain which types a trait implementation chooses and when a returned reference shares a lifetime with an input.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

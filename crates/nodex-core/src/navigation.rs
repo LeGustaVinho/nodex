@@ -148,9 +148,13 @@ impl NavigationIndex {
         // the destination is the owner's declaration instead of the exact reference.
         let graph = index.graph.clone();
         let mut children: HashMap<&str, Vec<&Symbol>> = HashMap::new();
+        let mut rust_trait_names = HashMap::new();
         for symbol in &graph.symbols {
             if let Some(parent) = symbol.parent.as_deref() {
                 children.entry(parent).or_default().push(symbol);
+            }
+            if symbol.language == Language::Rust && symbol.kind == SymbolKind::Trait {
+                *rust_trait_names.entry(symbol.name.as_str()).or_insert(0) += 1;
             }
         }
         let mut trait_names = HashMap::new();
@@ -195,6 +199,11 @@ impl NavigationIndex {
                         .flatten()
                         .filter(|s| s.flavors.contains(&marker))
                     {
+                        if member.kind == SymbolKind::TypeAlias && to.language == Language::Rust
+                            && !associated_trait_matches(member, to, rust_trait_names.get(to.name.as_str()) == Some(&1))
+                        {
+                            continue;
+                        }
                         let Some(site) = member.origins.first() else { continue };
                         let matches = children
                             .get(to.id.as_str())
@@ -288,6 +297,21 @@ impl NavigationIndex {
                 self.graph.symbols.iter().any(|child| child.has_flow && child.parent.as_deref() == Some(symbol.id.as_str())))
         ))
     }
+}
+
+fn associated_trait_matches(member: &Symbol, target: &Symbol, unique_name: bool) -> bool {
+    let Some(path) = member.flavors.iter().find_map(|flavor| flavor.strip_prefix("associated-trait-path:")) else {
+        return unique_name;
+    };
+    if !path.contains("::") {
+        return unique_name;
+    }
+    if let Some(path) = path.strip_prefix("crate::") {
+        let owner_crate = member.id.split("::").next();
+        return target.qualified_name.split_once("::")
+            .is_some_and(|(target_crate, target_path)| Some(target_crate) == owner_crate && target_path == path);
+    }
+    target.qualified_name == path
 }
 
 pub struct NavigationQuery {

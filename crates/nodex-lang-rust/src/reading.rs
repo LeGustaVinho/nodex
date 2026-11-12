@@ -20,7 +20,8 @@ type Range = (usize, usize);
 
 pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let function = matches!(node.kind(), "function_item" | "function_signature_item");
-    let owner = node.parent().and_then(|body| body.parent()).filter(|owner| owner.kind() == "impl_item");
+    let member_owner = node.parent().and_then(|body| body.parent());
+    let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
     let mut add = |at, group: &str, text: String, ty: Option<Node>| {
         let type_info = ty.map(|ty| {
@@ -29,9 +30,35 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
         });
         items.push(ContractItem { group: group.into(), text, span: src.span(at), type_info });
     };
+    if let Some(name) = node.child_by_field_name("name") {
+        let name = || {
+            let mut written = src.norm(name);
+            if let Some(parameters) = node.child_by_field_name("type_parameters") {
+                written.push_str(&src.norm(parameters));
+            }
+            written
+        };
+        match node.kind() {
+            "associated_type" if member_owner.is_some_and(|owner| owner.kind() == "trait_item") => {
+                add(node, "Associated type", format!("Each implementation chooses a type for {}.", name()), None);
+                if let Some(bounds) = node.child_by_field_name("bounds") {
+                    let bounds_text = src.norm(bounds);
+                    let requirements = bounds_text.trim_start_matches(':').trim();
+                    add(bounds, "Requires", format!("The chosen type must meet {requirements}."), None);
+                }
+            }
+            "type_item" if owner.and_then(|owner| owner.child_by_field_name("trait")).is_some() => {
+                if let Some(ty) = node.child_by_field_name("type") {
+                    add(node, "Associated type", format!("This implementation sets {} to {}.", name(), src.norm(ty)), Some(ty));
+                }
+            }
+            _ => {}
+        }
+    }
     if function {
         let name = node.child_by_field_name("name").unwrap_or(node);
-        let params = node.child_by_field_name("parameters").map(named_children).unwrap_or_default();
+        let params: Vec<_> = node.child_by_field_name("parameters").map(named_children).unwrap_or_default()
+            .into_iter().filter(|param| !param.is_extra() && param.kind() != "attribute_item").collect();
         for param in &params {
             if param.kind() == "self_parameter" {
                 let native = src.norm(*param);
@@ -68,30 +95,8 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
                 _ => "Value returned to the caller",
             };
             add(result, "Returns", description.into(), Some(result));
-            if result.kind() == "reference_type" {
-                let explicit = children(result).into_iter().find(|child| child.kind() == "lifetime");
-                let refs: Vec<_> = params.iter().filter(|param| {
-                    param.kind() == "self_parameter" && src.text(**param).starts_with('&')
-                        || param.child_by_field_name("type").is_some_and(|ty| ty.kind() == "reference_type")
-                }).collect();
-                if let Some(lifetime) = explicit {
-                    let written = src.text(lifetime);
-                    let inputs: Vec<_> = refs.iter().filter_map(|parameter| {
-                        let ty = parameter.child_by_field_name("type").unwrap_or(**parameter);
-                        children(ty).into_iter().any(|child| child.kind() == "lifetime" && src.text(child) == written)
-                            .then(|| src.norm(parameter.child_by_field_name("pattern").unwrap_or(**parameter)))
-                    }).collect();
-                    let relation = if inputs.is_empty() {
-                        format!("The returned reference uses the lifetime {written}.")
-                    } else {
-                        format!("The returned reference is tied to lifetime {written} in {}.", inputs.join(", "))
-                    };
-                    add(lifetime, "Lifetime", relation, None);
-                } else if let Some(input) = refs.iter().find(|param| param.kind() == "self_parameter").copied()
-                    .or_else(|| (refs.len() == 1 && params.len() == 1).then(|| refs[0]))
-                {
-                    add(result, "Lifetime", format!("The returned reference is tied to the borrow in {}.", src.norm(*input)), None);
-                }
+            if let Some((at, text)) = reference_lifetime(src, result, &params) {
+                add(at, "Lifetime", text, None);
             }
         } else {
             add(name, "Returns", "No explicit result (Unit)".into(), None);
@@ -118,6 +123,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
                 _ => {}
             }
         }
+        for (binding, trait_name, associated, ty) in associated_type_bindings(declaration) {
+            let mut name = src.norm(associated);
+            if let Some(arguments) = binding.child_by_field_name("type_arguments") {
+                name.push_str(&src.norm(arguments));
+            }
+            add(binding, "Requires", format!("The {} trait's {name} type must be {}.", src.norm(trait_name), src.norm(ty)), Some(ty));
+        }
         let mut previous = declaration.prev_named_sibling();
         while let Some(attribute) = previous.filter(|part| part.kind() == "attribute_item" || part.is_extra()) {
             let written = src.norm(attribute);
@@ -136,6 +148,90 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
         }
     }
     (!items.is_empty()).then_some(items)
+}
+
+fn associated_type_bindings(declaration: Node<'_>) -> Vec<(Node<'_>, Node<'_>, Node<'_>, Node<'_>)> {
+    if declaration.kind() == "source_file" {
+        return Vec::new();
+    }
+    let mut bindings = Vec::new();
+    let body = declaration.child_by_field_name("body");
+    let mut pending: Vec<_> = named_children(declaration).into_iter().rev().filter(|part| Some(*part) != body).collect();
+    while let Some(part) = pending.pop() {
+        if matches!(part.kind(), "block" | "declaration_list" | "token_tree") || part.is_extra() {
+            continue;
+        }
+        if part.kind() == "type_binding"
+            && let Some(trait_name) = part.parent().and_then(|arguments| arguments.parent())
+                .filter(|generic| generic.kind() == "generic_type")
+                .and_then(|generic| generic.child_by_field_name("type"))
+            && let Some(associated) = part.child_by_field_name("name")
+            && let Some(ty) = part.child_by_field_name("type")
+        {
+            bindings.push((part, trait_name, associated, ty));
+        }
+        pending.extend(named_children(part).into_iter().rev());
+    }
+    bindings
+}
+
+fn reference_lifetime<'tree>(src: Src, result: Node<'tree>, params: &[Node<'tree>]) -> Option<(Node<'tree>, String)> {
+    use crate::syntax::unparen_type;
+
+    let result = unparen_type(result);
+    if result.kind() != "reference_type" {
+        return None;
+    }
+    let explicit = children(result).into_iter().find(|child| child.kind() == "lifetime");
+    if let Some(lifetime) = explicit.filter(|lifetime| src.text(*lifetime) == "'static") {
+        return Some((lifetime, "The data behind this reference must remain valid for the rest of the program.".into()));
+    }
+    let references: Vec<_> = params.iter().filter_map(|param| {
+        if param.kind() == "self_parameter" {
+            return children(*param).iter().any(|token| token.kind() == "&").then_some((*param, *param));
+        }
+        param.child_by_field_name("type").map(unparen_type)
+            .filter(|ty| ty.kind() == "reference_type").map(|ty| (*param, ty))
+    }).collect();
+    let parameter_name = |parameter: Node| src.norm(parameter.child_by_field_name("pattern").unwrap_or(parameter));
+    if let Some(lifetime) = explicit.filter(|lifetime| src.text(*lifetime) != "'_") {
+        let written = src.text(lifetime);
+        let inputs: Vec<_> = references.iter().filter(|(_, ty)| {
+            children(*ty).into_iter().any(|child| child.kind() == "lifetime" && src.text(child) == written)
+        }).map(|(parameter, _)| parameter_name(*parameter)).collect();
+        let text = if inputs.is_empty() {
+            format!("The returned reference uses lifetime {written}.")
+        } else {
+            format!("The returned reference uses lifetime {written}, which also appears in {}.", inputs.join(", "))
+        };
+        return Some((lifetime, text));
+    }
+
+    // A borrowed receiver supplies the output lifetime even if other inputs also contain borrows.
+    let receiver = references.iter().find(|(param, ty)| {
+        param.kind() == "self_parameter"
+            || param.child_by_field_name("pattern").is_some_and(|pattern| pattern.kind() == "self")
+                && ty.child_by_field_name("type").is_some_and(|target| src.text(unparen_type(target)) == "Self")
+    });
+    let (parameter, _) = receiver.or_else(|| {
+        let [reference @ (parameter, ty)] = references.as_slice() else { return None };
+        let inner = ty.child_by_field_name("type")?;
+        let other_types_are_lifetime_free = params.iter().filter(|other| *other != parameter)
+            .all(|param| param.child_by_field_name("type").is_some_and(lifetime_free_type));
+        (lifetime_free_type(inner) && other_types_are_lifetime_free).then_some(reference)
+    })?;
+    Some((explicit.unwrap_or(result), format!("The returned reference uses the same lifetime as the reference in {}.", parameter_name(*parameter))))
+}
+
+/// Recognize only written types whose structure proves they contain no lifetime parameters.
+fn lifetime_free_type(ty: Node<'_>) -> bool {
+    match ty.kind() {
+        "primitive_type" | "unit_type" | "never_type" => true,
+        "tuple_type" => named_children(ty).into_iter().filter(|part| !part.is_extra()).all(lifetime_free_type),
+        "array_type" => ty.child_by_field_name("element").is_some_and(lifetime_free_type),
+        "pointer_type" => ty.child_by_field_name("type").is_some_and(lifetime_free_type),
+        _ => false,
+    }
 }
 
 fn range(node: Node) -> Range {

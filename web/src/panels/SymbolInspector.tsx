@@ -140,6 +140,7 @@ export function SymbolInspector({ symbol, index, syntax, embedded }: { symbol: S
   const parent = symbol.parent ? index.byId.get(symbol.parent) : undefined;
   const associatedType = symbol.language === "rust" && symbol.kind === "TypeAlias"
     && parent?.kind === "Trait" && symbol.flavors.includes("associated-type");
+  const showAssociatedTypeFallback = associatedType && !symbol.rust_contract?.some((item) => item.group === "Associated type");
 
   return (
     <div className={embedded ? undefined : "inspector"}>
@@ -211,7 +212,7 @@ export function SymbolInspector({ symbol, index, syntax, embedded }: { symbol: S
         revision={revision} active={syntax} />}
       {(!!symbol.rust_contract?.length || associatedType) && <section className="insp-section" aria-label="Read this Rust declaration">
         <div className="section-title">Read this Rust declaration</div>
-        {associatedType && <p className="explain">Each implementation of the trait specifies which type <code>{symbol.name}</code> refers to.</p>}
+        {showAssociatedTypeFallback && <p className="explain">Each implementation of the trait specifies which type <code>{symbol.name}</code> refers to.</p>}
         {!!symbol.rust_contract?.length && <RustContract items={symbol.rust_contract} inspect={(span) => {
           const expected = revision(span.file);
           if (expected) ui.focusCode(span, expected);

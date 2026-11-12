@@ -48,6 +48,12 @@ it("keeps the Rust contract and associated type explanation visible across Inspe
     await act(async () => button("Item must meet Debug")!.click());
     expect(useUi.getState().codeFocus).toEqual(span);
     expect(useUi.getState().codeFocusRevision).toBe("source-revision");
+    await act(async () => render({ ...member, rust_contract: [
+      { group: "Associated type", text: "Each implementation chooses a type for Item.", span },
+      ...member.rust_contract!,
+    ] }));
+    expect(reading()?.textContent).toContain("Each implementation chooses a type for Item.");
+    expect(reading()?.textContent).not.toContain("Each implementation of the trait");
     await act(async () => button("Overview")!.click());
     expect(host.querySelectorAll('[aria-label="Rust contract"]')).toHaveLength(1);
     await act(async () => render(implementation));

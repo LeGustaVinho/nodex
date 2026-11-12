@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::rust_reading_index::Encounter;
+use crate::rust_reading_index::{Encounter, ReadingCrossFile};
 
 pub fn prepare_crew(encounter: &Encounter, crew: &str) -> Option<usize> {
     let host = |crew: &str| encounter.crew_index.get(crew).map(|&(host, _)| host);
@@ -357,6 +357,79 @@ pub fn reading_let_else_closure(input: Option<i32>) -> i32 {
         value
     };
     convert_with_default(input)
+}
+
+pub trait ReadingItemSource<Tag> {
+    type Item: Clone;
+}
+
+pub trait ReadingOtherSource {
+    type Item;
+}
+
+pub struct ReadingSource;
+
+impl ReadingItemSource<u16> for ReadingSource {
+    type Item = String;
+}
+
+impl ReadingOtherSource for ReadingSource {
+    type Item = bool;
+}
+
+impl ReadingOtherSource for ReadingCrossFile {
+    type Item = usize;
+}
+
+impl ReadingItemSource<u8> for ReadingSource {
+    type Item = i32;
+}
+
+pub mod reading_left {
+    pub trait QualifiedSource { type Item; }
+}
+
+pub mod reading_right {
+    pub trait QualifiedSource { type Item; }
+}
+
+impl reading_left::QualifiedSource for ReadingSource {
+    type Item = u32;
+}
+
+impl reading_right::QualifiedSource for ReadingSource {
+    type Item = u64;
+}
+
+pub fn reading_associated_requirement<I>(source: I) -> I
+where
+    I: ReadingItemSource<u8, Item = i32>,
+{
+    let _ = std::mem::size_of::<Box<dyn Iterator<Item = usize>>>();
+    source
+}
+
+pub fn reading_static_lifetime(_: &'static str) -> &'static str {
+    "fixed"
+}
+
+pub fn reading_elided_lifetime(text: &str, until: usize) -> &str {
+    &text[..until]
+}
+
+pub fn reading_placeholder_lifetime(text: &str, until: usize) -> &'_ str {
+    &text[..until]
+}
+
+pub fn reading_named_lifetime<'text>(text: &'text str) -> &'text str {
+    text
+}
+
+impl ReadingSource {
+    pub fn reading_receiver_lifetime(&self, other: &str) -> &str {
+        let _ = other;
+        "fixed"
+    }
 }
 
 #[cfg(test)]

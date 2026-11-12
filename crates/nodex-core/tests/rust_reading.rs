@@ -9,6 +9,8 @@ use nodex_ir::{
 use nodex_lang_api::LanguageFrontend;
 use nodex_lang_rust::RustFrontend;
 
+const FIXTURE_SOURCE: &str = include_str!("../../../fixtures/rosetta/language-details/src/rust_reading.rs");
+
 fn project() -> Project {
     let root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rosetta/language-details");
@@ -190,7 +192,7 @@ fn syntax_reading_explains_patterns_and_the_boundary_of_propagation() {
 fn range_reading_uses_the_written_bounds_and_links_to_the_operator() {
     let mut project = project();
     let graph = flow(&mut project, "reading_ranges");
-    let source = include_str!("../../../fixtures/rosetta/language-details/src/rust_reading.rs");
+    let source = FIXTURE_SOURCE;
     let cards: Vec<_> = sites(&graph).iter().filter_map(|site| match &site.content {
         ReadingContent::Detail { label, text, .. } if label.starts_with("Range") => {
             assert_eq!(site.basis, ValueBasis::Syntax);
@@ -234,7 +236,7 @@ fn range_reading_uses_the_written_bounds_and_links_to_the_operator() {
 fn boolean_reading_explains_when_checks_run_and_routes_while_let_to_the_body() {
     let mut project = project();
     let checks = flow(&mut project, "reading_boolean_checks");
-    let source = include_str!("../../../fixtures/rosetta/language-details/src/rust_reading.rs");
+    let source = FIXTURE_SOURCE;
     let paths: Vec<_> = sites(&checks).iter().filter_map(|site| match &site.content {
         ReadingContent::Paths { input, branches, .. } => {
             assert_eq!(site.basis, ValueBasis::Syntax);
@@ -333,6 +335,98 @@ fn let_else_reading_follows_pattern_match_and_mismatch_routes() {
     for pin in ["out", "else"] {
         assert!(closure.edges.iter().any(|edge| edge.kind == FlowEdgeKind::Exec
             && edge.from == statement.id && edge.from_pin == pin));
+    }
+}
+
+fn contract_item<'a>(symbol: &'a nodex_ir::Symbol, group: &str) -> &'a nodex_ir::reading::ContractItem {
+    symbol.rust_contract.iter().flatten().find(|item| item.group == group).unwrap()
+}
+
+fn contract_source(item: &nodex_ir::reading::ContractItem) -> &str {
+    assert_eq!(item.span.file, "src/rust_reading.rs");
+    &FIXTURE_SOURCE[item.span.start_byte as usize..item.span.end_byte as usize]
+}
+
+#[test]
+fn associated_type_contracts_keep_each_implementation_and_its_source() {
+    use nodex_core::navigation::NavigationKind;
+
+    let mut project = project();
+    let graph = project.structure();
+    let symbol = |name: &str| graph.symbols.iter().find(|symbol| symbol.name == name).unwrap();
+    assert!(symbol("rust_reading").rust_contract.is_none());
+    let members = |parent: &nodex_ir::Symbol| {
+        graph.symbols.iter().filter(|symbol| symbol.parent.as_deref() == Some(parent.id.as_str()) && symbol.name == "Item").collect::<Vec<_>>()
+    };
+    let [declared] = members(symbol("ReadingItemSource")).try_into().unwrap();
+    assert_eq!(contract_source(contract_item(declared, "Associated type")), "type Item: Clone;");
+    assert_eq!(contract_item(declared, "Associated type").text, "Each implementation chooses a type for Item.");
+    assert_eq!(contract_item(declared, "Requires").text, "The chosen type must meet Clone.");
+    let other = members(symbol("ReadingOtherSource"))[0];
+
+    let impls = members(symbol("ReadingSource"));
+    assert_eq!(impls.len(), 5);
+    assert_eq!(impls.iter().map(|symbol| &symbol.id).collect::<std::collections::HashSet<_>>().len(), impls.len());
+    for effective_type in ["String", "bool", "i32", "u32", "u64"] {
+        let signature = format!("type Item = {effective_type}");
+        let implementation = impls.iter().find(|symbol| symbol.signature.as_deref() == Some(signature.as_str())).unwrap();
+        let item = contract_item(implementation, "Associated type");
+        assert_eq!(item.text, format!("This implementation sets Item to {effective_type}."));
+        assert_eq!(contract_source(item), format!("{signature};"));
+        assert_eq!(item.type_info.as_ref().unwrap().native.as_deref(), Some(effective_type));
+    }
+    let cross_file = symbol("ReadingCrossFile");
+    assert_eq!(cross_file.origins[0].file, "src/rust_reading_index.rs");
+    let cross_file_members = members(cross_file);
+    let [implementation] = cross_file_members.as_slice() else { panic!("{cross_file_members:?}") };
+    assert_eq!(contract_source(contract_item(implementation, "Associated type")), "type Item = usize;");
+
+    let constrained = symbol("reading_associated_requirement");
+    let requirements = constrained.rust_contract.iter().flatten().filter(|item| item.text.contains("trait's Item")).collect::<Vec<_>>();
+    let [requirement] = requirements.as_slice() else { panic!("{requirements:?}") };
+    assert_eq!(requirement.text, "The ReadingItemSource trait's Item type must be i32.");
+    assert_eq!(contract_source(requirement), "Item = i32");
+
+    let implementation_snippets = |declared: &nodex_ir::Symbol| {
+        let navigation = project.navigation(&declared.id, NavigationKind::Implementations).unwrap().resolve();
+        serde_json::to_value(navigation).unwrap()["locations"].as_array().unwrap().iter()
+            .map(|location| location["snippet"].as_str().unwrap().trim().to_owned()).collect::<Vec<_>>()
+    };
+    let mut generic_locations = implementation_snippets(declared);
+    generic_locations.sort();
+    assert_eq!(generic_locations, ["type Item = String;", "type Item = i32;"]);
+    let mut other_locations = implementation_snippets(other);
+    other_locations.sort();
+    assert_eq!(other_locations, ["type Item = bool;", "type Item = usize;"]);
+    for trait_ in graph.symbols.iter().filter(|symbol| symbol.name == "QualifiedSource") {
+        assert!(implementation_snippets(members(trait_)[0]).is_empty());
+    }
+}
+
+#[test]
+fn reference_contract_explains_static_named_and_elided_lifetimes() {
+    let mut project = project();
+    let graph = project.structure();
+    for (name, source, expected) in [
+        ("reading_static_lifetime", "'static", "The data behind this reference must remain valid for the rest of the program."),
+        ("reading_elided_lifetime", "&str", "The returned reference uses the same lifetime as the reference in text."),
+        ("reading_placeholder_lifetime", "'_", "The returned reference uses the same lifetime as the reference in text."),
+        ("reading_named_lifetime", "'text", "The returned reference uses lifetime 'text, which also appears in text."),
+        ("reading_receiver_lifetime", "&str", "The returned reference uses the same lifetime as the reference in &self."),
+    ] {
+        let symbol = graph.symbols.iter().find(|symbol| symbol.name == name).unwrap();
+        let item = contract_item(symbol, "Lifetime");
+        assert_eq!(item.text, expected);
+        assert_eq!(contract_source(item), source);
+    }
+
+    let incomplete = nodex_lang_rust::lower_source("src/lifetimes.rs", r#"
+        struct Hidden<'a>(&'a str);
+        fn hidden(text: &str, _: Hidden<'_>) -> &str { text }
+        fn nested(text: &&str) -> &str { *text }
+    "#);
+    for symbol in incomplete.symbols.iter().filter(|symbol| matches!(symbol.name.as_str(), "hidden" | "nested")) {
+        assert!(symbol.rust_contract.iter().flatten().all(|item| item.group != "Lifetime"));
     }
 }
 

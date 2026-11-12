@@ -535,7 +535,25 @@ impl<'a, 't> Collector<'a, 't> {
                 "type_item" | "associated_type" => {
                     let Some(name) = m.child_by_field_name("name").map(|n| src.norm(n)) else { continue };
                     flavors.push("associated-type".into());
-                    let mut s = self.sym(&format!("{owner}::{name}"), SymbolKind::TypeAlias, &name, Some(owner), m, flavors);
+                    let implementation = body.parent().filter(|node| node.kind() == "impl_item");
+                    let trait_type = implementation.and_then(|node| node.child_by_field_name("trait"));
+                    let id = if let (Some(trait_type), Some(concrete)) = (
+                        trait_type,
+                        implementation.and_then(|node| node.child_by_field_name("type")),
+                    ) {
+                        let path = if trait_type.kind() == "generic_type" {
+                            trait_type.child_by_field_name("type").unwrap_or(trait_type)
+                        } else {
+                            trait_type
+                        };
+                        let path: String = src.text(path).chars().filter(|ch| !ch.is_whitespace()).collect();
+                        flavors.push(format!("associated-trait-path:{path}"));
+                        format!("{owner}::<{} as {}>::{name}", src.norm(concrete), src.norm(trait_type))
+                    } else {
+                        format!("{owner}::{name}")
+                    };
+                    let id = self.unique(id);
+                    let mut s = self.sym(&id, SymbolKind::TypeAlias, &name, Some(owner), m, flavors);
                     s.signature = Some(src.norm(m).trim_end_matches(';').to_owned());
                     self.push(s);
                 }
