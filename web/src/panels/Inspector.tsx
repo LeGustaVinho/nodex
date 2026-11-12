@@ -17,7 +17,7 @@ import { ContainerInspector, SymbolInspector } from "./SymbolInspector";
 import { bindingDetails } from "../graph/bindingDetails";
 import { expressionDetailFlavors, expressionExplanations, isExplanationFlavor, pinSyntaxDetails, statementDetailFlavors, withoutExpressionFacts } from "../graph/blueprintExplanation";
 import { pointerBadge } from "../graph/pointers";
-import { rustOwnershipRows } from "../graph/rustOwnership";
+import { displayedInputAccess, hasCaptureExpression, rustOwnershipRows } from "../graph/rustOwnership";
 import { ACCESS_LABEL, ACCESS_TEXT } from "../components/OwnershipEdge";
 import { ExecutionTypes, TypeDetails } from "./TypeInspector";
 
@@ -226,6 +226,7 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
     const closureBody = selection.pin === undefined && closure?.has_flow ? closure : undefined;
     const calls = closureBody ? node.calls.filter((call) => call.symbol !== closureBody.id) : node.calls;
     const pins = [...node.inputs, ...node.outputs];
+    const hasCapture = flow.data.language === "rust" && hasCaptureExpression(node.expr);
     const ownership = selection.pin === undefined ? undefined
       : rustOwnershipRows(flow.data, explanations && !stale).get(node.id)?.find((row) => row.pin === selection.pin);
     const borrowPath = flow.data.language === "rust" && !stale && selection.syntax
@@ -236,9 +237,14 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
       const details = [...pinSyntaxDetails(node, pin.id), ...(pin.binding ? bindingDetails(pin.binding, flow.data!.language) : [])];
       const pointer = pointerBadge(pin.ty);
       if (pointer) details.push(pointer);
-      const accesses = new Set(flow.data!.edges.filter((e) => e.to === node.id && e.to_pin === pin.id).flatMap((e) => e.access ? [e.access] : []));
-      for (const access of accesses) details.push({ label: ACCESS_LABEL[access], explain: ACCESS_TEXT[access] });
-      return details.length || pin.kind === "Data" ? [{ pin, details }] : [];
+      const accesses = new Set(flow.data!.edges.filter((edge) => edge.kind === "Data" && edge.to === node.id && edge.to_pin === pin.id)
+        .map((edge) => edge.access));
+      const inputAccess = accesses.size === 1 ? displayedInputAccess(accesses.values().next().value, pin.id, hasCapture) : undefined;
+      for (const access of accesses) {
+        const displayed = displayedInputAccess(access, pin.id, hasCapture);
+        if (displayed) details.push({ label: ACCESS_LABEL[displayed], explain: ACCESS_TEXT[displayed] });
+      }
+      return details.length || pin.kind === "Data" ? [{ pin, details, inputAccess }] : [];
     });
     return (
       <>
@@ -247,7 +253,7 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
           sites={selection.pin !== undefined ? statementSites(node, false, false, selection.pin) : [...statementSites(node), ...pins.flatMap((p) => statementSites(node, false, false, p.id))]}
           language={flow.data.language} revision={() => flow.data?.source_revision} active={selection.syntax} />
         {borrowPath && <BorrowInspector key={node.id + ":" + borrowPath} flow={selection.flow} node={node.id} path={borrowPath} />}
-        {pinDetails.map(({ pin, details }) => {
+        {pinDetails.map(({ pin, details, inputAccess }) => {
           const shadows = pin.binding?.shadows;
           const previous = shadows && flow.data!.nodes.find((n) => n.id === shadows.node);
           return (
@@ -255,7 +261,7 @@ function InspectorContent({ index }: { index?: StructureIndex }) {
               <div className="section-title">
                 {pin.kind === "Data" && (node.outputs.includes(pin)
                   ? (pin.id.startsWith("write:") ? "Updates" : "Defines")
-                  : usesVerb(flow.data!.edges.find((e) => e.to === node.id && e.to_pin === pin.id)?.access)) || "Pin"} · {pin.label}
+                  : usesVerb(inputAccess)) || "Pin"} · {pin.label}
               </div>
               {pin.kind === "Data" && <TypeDetails info={stale ? undefined : pin.type_info} native={pin.ty} revision={flow.data?.source_revision ?? undefined} />}
               {ownership && <div className="value-row"><strong>Rust ownership</strong><span className="badge">{ownership.role}</span></div>}

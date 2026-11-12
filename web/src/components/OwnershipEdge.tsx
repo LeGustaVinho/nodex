@@ -7,7 +7,8 @@ import type { TypeShape } from "../gen/TypeShape";
 export interface OwnershipData {
   ty: string | null;
   shape?: TypeShape;
-  access: Access;
+  access: Access | null;
+  deferredBorrow?: boolean;
 }
 
 /** What each wire style means (tooltips and the legend). */
@@ -32,10 +33,16 @@ export const ACCESS_LABEL: Record<Access, string> = {
  * (outline only), a mutable borrow a double wire, a copy a thin wire.
  */
 function OwnershipEdgeImpl({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
-  const { ty, shape, access } = data as unknown as OwnershipData;
+  const { ty, shape, access, deferredBorrow } = data as unknown as OwnershipData;
   const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const color = blueprintTypeColor(shape, ty);
   const bg = "var(--bg)";
+  if (deferredBorrow || !access) return (
+    <g className="edge-own">
+      {deferredBorrow && <title>Uses this value. The exact access mode is uncertain in this statement.</title>}
+      <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.6, opacity: 0.75 }} />
+    </g>
+  );
   const title = <title>{ACCESS_TEXT[access]}</title>;
   switch (access) {
     case "Move":

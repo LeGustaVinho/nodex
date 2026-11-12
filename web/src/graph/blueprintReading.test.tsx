@@ -6,16 +6,20 @@ import { expect, it } from "vitest";
 import type { BorrowOrigins } from "../gen/BorrowOrigins";
 import type { Expr } from "../gen/Expr";
 import type { FlowGraph } from "../gen/FlowGraph";
+import type { Pin } from "../gen/Pin";
 import type { ReadingSite } from "../gen/ReadingSite";
 import type { Span } from "../gen/Span";
 import type { TypeInfo } from "../gen/TypeInfo";
 import { BlueprintReading } from "../components/BlueprintReading";
+import { Inspector } from "../panels/Inspector";
 import { ReadingInspector, readingOrigin } from "../panels/ReadingInspector";
 import { useUi } from "../store";
+import { edgeStyle } from "../views/GraphCanvas";
 import { executionPinLabel } from "./blueprintExplanation";
 import { executionReading, routeName } from "./blueprintReading";
 import { prefixGraph } from "./classBlueprint";
 import { expansionKey, flowToGraph, type BlueprintData, type ExprData } from "./flowGraph";
+import { rustOwnershipRows } from "./rustOwnership";
 
 const span = (start: number, end: number): Span => ({
   file: "step.rs", start_byte: start, end_byte: end, start_line: 1, end_line: 1, start_col: start + 1, end_col: end + 1,
@@ -122,6 +126,119 @@ it("shows ownership, named origins and caller boundaries with or without stateme
   }
   const stale = flowToGraph(rust, {}, true, { source: { revision: "edited", bytes: new Uint8Array() } });
   expect((stale.nodes[0].data as BlueprintData).ownership).toEqual([]);
+});
+
+function rustAccessFlow(): FlowGraph {
+  const reference: Pin = {
+    id: "use:encounter", kind: "Data", label: "encounter", ty: "&mut Encounter",
+    value_info: { kind: "Reference", basis: "Syntax", qualifier: "ExclusiveBorrow" },
+  };
+  const source: FlowGraph["nodes"][number] = { ...flow.nodes[0], id: "entry", concept: "Entry", expr: null,
+    outputs: [{ ...reference, id: "var:encounter" }] };
+  const read = expression("Var", "encounter", span(12, 21));
+  const capture = expression("Lambda", "|at| …", span(11, 78), [read]);
+  const callback = expression("Call", "map", span(8, 78), [capture]);
+  const future = expression("Compose", "async block", span(11, 78), [read], { flavors: ["block", "async"] });
+  const nestedFuture = expression("Call", "spawn", span(8, 78), [future]);
+  const index: Pin = { id: "use:index", kind: "Data", label: "index", ty: "usize" };
+  const nodes = [
+    { ...flow.nodes[0], id: "read", expr: read, inputs: [reference] },
+    { ...flow.nodes[0], id: "write", expr: read, inputs: [reference] },
+    { ...flow.nodes[0], id: "closure", expr: capture, inputs: [reference] },
+    { ...flow.nodes[0], id: "callback", expr: callback, inputs: [reference] },
+    { ...flow.nodes[0], id: "future", expr: future, inputs: [reference] },
+    { ...flow.nodes[0], id: "nested-future", expr: nestedFuture, inputs: [reference, index] },
+    { ...flow.nodes[0], id: "ambiguous", expr: read, inputs: [reference] },
+  ];
+  const edge = (to: string, access: FlowGraph["edges"][number]["access"]): FlowGraph["edges"][number] => ({
+    from: source.id, from_pin: "var:encounter", to, to_pin: reference.id, kind: "Data", access,
+  });
+  source.outputs.push({ ...index, id: "var:index" });
+  return {
+    ...flow, nodes: [source, ...nodes], reading: [],
+    edges: [edge("read", "Borrow"), edge("write", "BorrowMut"), edge("closure", "Borrow"), edge("callback", "Borrow"),
+      edge("future", "BorrowMut"), edge("nested-future", "Borrow"),
+      { ...edge("nested-future", "Copy"), from_pin: "var:index", to_pin: index.id },
+      edge("ambiguous", "Borrow"), edge("ambiguous", "BorrowMut")],
+    borrows: nodes.map(({ id }) => ({
+      node: id, pin: reference.id, sources: [{ kind: "Caller", owner: null, place: "encounter" }],
+    })),
+  };
+}
+
+it("keeps Rust borrow access at a use separate from the reference type and capture", () => {
+  const rust = rustAccessFlow();
+  const ownership = rustOwnershipRows(rust, true);
+  const expectInput = (id: string, role: string) => expect(ownership.get(id)).toEqual([
+    { pin: "use:encounter", name: "encounter", role, origin: "From caller · encounter" },
+  ]);
+  expectInput("read", "Shared borrow here");
+  expectInput("write", "Mutable borrow here");
+  expectInput("closure", "Captured binding · mutable reference");
+  expectInput("callback", "Type · mutable reference");
+  expectInput("future", "Captured binding · mutable reference");
+  expectInput("nested-future", "Type · mutable reference");
+  expectInput("ambiguous", "Type · mutable reference");
+  expect(rustOwnershipRows({ ...rust, edges: [...rust.edges].reverse() }, true)).toEqual(ownership);
+  expect(ownership.get("entry")?.[0].role).toBe("Mutable borrow");
+  expect(rust.nodes.find(({ id }) => id === "closure")?.inputs[0].ty).toBe("&mut Encounter");
+});
+
+it("keeps deferred input wires connected without a definite borrow style, including redirected inputs", () => {
+  const rust = rustAccessFlow();
+  const closed = flowToGraph(rust, {}, true);
+  const expanded = flowToGraph(rust, {}, true, { level: "everything" });
+  for (const [graph, target] of [[closed, "nested-future"], [expanded, "nested-future/e/0.0"]] as const) {
+    const wire = graph.edges.find((edge) => edge.target === target && edge.sourceHandle === "var:encounter");
+    expect(wire).toMatchObject({ source: "entry", kind: "data", data: { access: null, deferredBorrow: true } });
+    expect(edgeStyle(wire!)).toMatchObject({ type: "ownership", data: { access: null, deferredBorrow: true } });
+  }
+  expect(closed.edges.find((edge) => edge.target === "read")?.data).toMatchObject({ access: "Borrow" });
+  expect(closed.edges.find((edge) => edge.targetHandle === "use:index")?.data).toMatchObject({ access: "Copy" });
+});
+
+it("keeps capture-edge borrow modes out of the pin Inspector while preserving its type and origin", async () => {
+  const rust = rustAccessFlow();
+  const previous = useUi.getState();
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+  client.setQueryData(["catalog"], { concepts: {}, categories: {}, families: {}, operations: {}, flavors: {} });
+  client.setQueryData(["structure"], { symbols: [], edges: [] });
+  client.setQueryData(["flow", rust.symbol], rust);
+  for (const id of ["closure", "callback", "future", "nested-future", "read"]) {
+    client.setQueryData<BorrowOrigins>(["borrow-origin", previous.projectSession, rust.symbol, id, "use:encounter", undefined, 0], {
+      origins: [{ kind: "Caller", owner: null, borrowed: "encounter", through: [], call: null }],
+      partial: false, next_offset: null,
+    });
+  }
+  const select = (id: string, pin = "use:encounter") => useUi.getState().select({ kind: "flow-node", flow: rust.symbol, id, pin });
+  try {
+    await act(async () => {
+      useUi.setState({ blueprintExplanations: true });
+      select("closure");
+      root.render(<QueryClientProvider client={client}><Inspector /></QueryClientProvider>);
+    });
+    for (const id of ["closure", "callback", "future", "nested-future"]) {
+      await act(async () => select(id));
+      expect(host.textContent).toContain("uses · encounter");
+      expect(host.textContent).toContain("mutable reference");
+      expect(host.textContent).toContain("&mut Encounter");
+      expect(host.querySelector('[aria-label="Borrow origin"]')?.textContent).toContain("From caller");
+      expect(host.textContent).not.toContain("reads the value");
+      expect(host.textContent).not.toContain("borrows to change");
+    }
+    await act(async () => select("nested-future", "use:index"));
+    expect(host.textContent).toContain("copies · index");
+    expect(host.textContent).toContain("Copy value");
+    await act(async () => select("read"));
+    expect(host.textContent).toContain("borrows · encounter");
+    expect(host.textContent).toContain("reads the value");
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(previous);
+    client.clear();
+  }
 });
 
 it("keeps the labeled arm and constant comparison on an embedded match", () => {

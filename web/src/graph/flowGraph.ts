@@ -17,7 +17,7 @@ import type { GEdge, GGraph, GNode, GPort } from "./model";
 import { argumentDetails, expressionDetailFlavors, expressionExplanations, isExplanationFlavor, sequenceArgumentRoles, sequenceCallbackRoles, sequencePreview, spreadOutput, statementExplanations, statementDetailFlavors, withoutExpressionFacts, type CallbackRoles, type ExpressionPinDetails, type SequencePreview } from "./blueprintExplanation";
 import { compactReading, executionReading, readingHeight, readingsByNode } from "./blueprintReading";
 import type { ContractItem } from "../gen/ContractItem";
-import { rustOwnershipHeight, rustOwnershipRows, type RustOwnershipRow } from "./rustOwnership";
+import { displayedInputAccess, hasCaptureExpression, rustOwnershipHeight, rustOwnershipRows, type RustOwnershipRow } from "./rustOwnership";
 
 export const BLUEPRINT_WIDTH = 300;
 
@@ -224,6 +224,7 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
   const edges: GEdge[] = [];
   /** `nodeId use:x` data edges replaced by wires into the node's expression tree. */
   const redirected = new Set<string>();
+  const captures = new Set<string>();
   const accessByNode = new Map<string, Record<string, Access | undefined>>();
   for (const edge of flow.edges) {
     if (edge.kind !== "Data" || !edge.access) continue;
@@ -243,6 +244,8 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
       ...original, expr: original.expr && withoutExpressionFacts(original.expr),
       inputs: syntaxPins(original.inputs), outputs: syntaxPins(original.outputs),
     } : original;
+    const hasCapture = flow.language === "rust" && hasCaptureExpression(node.expr);
+    if (hasCapture) captures.add(node.id);
     const reading = readingNodes.get(node.id) ?? [];
     const contract = !stale && opts.explanations !== false && node.concept === "Entry"
       ? opts.structure?.byId.get(flow.symbol)?.rust_contract?.filter((item) => item.span.file === flow.span.file).slice(0, 5)
@@ -282,7 +285,7 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
       source,
       stale,
       operations: opts.operations ?? {},
-      locals: compact ? localsOf(flow, node.id) : new Map(),
+      locals: compact ? localsOf(flow, node.id, hasCapture) : new Map(),
       nodes,
       edges,
       redirected,
@@ -356,7 +359,7 @@ export function flowToGraph(flow: FlowGraph, expanded: Record<string, boolean>, 
       targetHandle: e.to_pin,
       kind: isExec ? "exec" : "data",
       layout: isExec,
-      data: { ty, access, shape },
+      data: { ty, shape, ...wireAccess(access, e.to_pin, captures.has(e.to)) },
     });
   }
   return { nodes, edges, direction: "RIGHT" };
@@ -367,7 +370,13 @@ const TREE_COL = EXPR_WIDTH + 44;
 const TREE_ROW = 78;
 const TREE_ROW_GAP = 8;
 
-type LocalWire = { from: string; pin: string; ty: string | null; access: string | null; valueInfo?: ValueInfo };
+function wireAccess(access: Access | null, pin: string, hasCapture: boolean) {
+  return access && !displayedInputAccess(access, pin, hasCapture) ? { access: null, deferredBorrow: true } : { access };
+}
+
+type LocalWire = {
+  from: string; pin: string; ty: string | null; ownership: ReturnType<typeof wireAccess>; valueInfo?: ValueInfo;
+};
 
 interface TreeCtx {
   flow: FlowGraph;
@@ -388,12 +397,14 @@ interface TreeCtx {
 }
 
 /** Locals a statement reads, from its `use:x` data edges. */
-function localsOf(flow: FlowGraph, nodeId: string): Map<string, LocalWire> {
+function localsOf(flow: FlowGraph, nodeId: string, hasCapture: boolean): Map<string, LocalWire> {
   const out = new Map<string, LocalWire>();
   for (const e of flow.edges) {
     if (e.kind !== "Data" || e.to !== nodeId || !e.to_pin.startsWith("use:")) continue;
     const pin = flow.nodes.find((n) => n.id === e.from)?.outputs.find((p) => p.id === e.from_pin);
-    out.set(e.to_pin.slice(4), { from: e.from, pin: e.from_pin, ty: pin?.ty ?? null, access: e.access ?? null, valueInfo: pin?.value_info });
+    out.set(e.to_pin.slice(4), {
+      from: e.from, pin: e.from_pin, ty: pin?.ty ?? null, ownership: wireAccess(e.access ?? null, e.to_pin, hasCapture), valueInfo: pin?.value_info,
+    });
   }
   return out;
 }
@@ -538,7 +549,7 @@ function pinsOf(expr: Expr, id: string, ctx: TreeCtx, prefix = "c", path = "0"):
             targetHandle: pinId,
             kind: "data",
             layout: false,
-            data: { ty: local.ty, access: local.access, shape: pin.typeInfo?.shape },
+            data: { ty: local.ty, shape: pin.typeInfo?.shape, ...local.ownership },
           });
           coverExpression(layout.covered, child);
           if (!writeTarget) return;

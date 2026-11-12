@@ -19,12 +19,11 @@ import { toPng } from "html-to-image";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Positions as SavedPositions } from "../api";
 import { blueprintTypeColor } from "../graph/blueprintTypes";
-import type { TypeShape } from "../gen/TypeShape";
 import { BlueprintNode } from "../components/BlueprintNode";
 import { CallNode } from "../components/CallNode";
 import { ClassBox, FieldCard, MethodNode } from "../components/ClassNodes";
 import { ExprNode } from "../components/ExprNode";
-import { OwnershipEdge } from "../components/OwnershipEdge";
+import { OwnershipEdge, type OwnershipData } from "../components/OwnershipEdge";
 import { HierarchyGroup, HierarchyNode } from "../components/HierarchyNodes";
 import { NamespaceNode, TypeCard } from "../components/StructureNodes";
 import { edgeFocus } from "../graph/explore";
@@ -102,13 +101,13 @@ export function edgeStyle(e: GEdge): Partial<Edge> {
 }
 
 function kindStyle(e: GEdge): Partial<Edge> {
-  const { ty, shape, access } = (e.data as { ty?: string | null; shape?: TypeShape; access?: string | null } | undefined) ?? {};
+  const { ty, shape, access, deferredBorrow } = (e.data as Partial<OwnershipData> | undefined) ?? {};
   switch (e.kind) {
     case "exec":
       return { style: { stroke: "#e8e8e8", strokeWidth: 2.4 }, className: "edge-exec" };
     case "data": {
       // Rust: how the value travels (move, copy, borrow) shapes the wire.
-      if (access) return { type: "ownership", data: { ty: ty ?? null, shape, access }, className: "edge-data" };
+      if (access || deferredBorrow) return { type: "ownership", data: { ty: ty ?? null, shape, access, deferredBorrow }, className: "edge-data" };
       return { style: { stroke: blueprintTypeColor(shape, ty), strokeWidth: 1.6, opacity: 0.75 }, className: "edge-data" };
     }
     case "expr":
@@ -267,15 +266,14 @@ function Canvas(props: Props) {
           }),
         );
         setEdges(
-          graph.edges.map((e) => ({
-            id: e.id,
-            source: e.source,
-            target: e.target,
-            sourceHandle: e.sourceHandle,
-            targetHandle: e.targetHandle,
-            ...edgeStyle(e),
-            data: { g: e },
-          })),
+          graph.edges.map((e) => {
+            const presentation = edgeStyle(e);
+            return {
+              id: e.id, source: e.source, target: e.target,
+              sourceHandle: e.sourceHandle, targetHandle: e.targetHandle,
+              ...presentation, data: { ...presentation.data, g: e },
+            };
+          }),
         );
         const anchorNew = anchorScreen && anchorId ? absolutePosition(graph, positions, anchorId) : null;
         if (anchorScreen && anchorNew && fittedKey.current === layoutKey) {

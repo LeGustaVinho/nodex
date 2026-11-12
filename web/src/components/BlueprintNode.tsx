@@ -20,6 +20,7 @@ import { LanguageBadges } from "./LanguageBadges";
 import { TypeLabel } from "./TypeLabel";
 import { blueprintTypeColor } from "../graph/blueprintTypes";
 import { routeName } from "../graph/blueprintReading";
+import { displayedInputAccess, hasCaptureExpression } from "../graph/rustOwnership";
 import { BlueprintReading } from "./BlueprintReading";
 import { RustContract } from "./RustContract";
 
@@ -79,9 +80,10 @@ function BlueprintNodeImpl({ id, data, selected }: NodeProps) {
   const toggle = useUi((s) => s.toggleExpanded);
   const select = useUi((s) => s.select);
   const inspect = (pin: Pin, syntax?: string) => select({ kind: "flow-node", flow, id: node.id, pin: pin.id, syntax });
+  const hasCapture = language === "rust" && hasCaptureExpression(node.expr);
   const detailsFor = (pin: Pin, incoming: boolean): LanguageDetail[] => {
     if (!explain) return [];
-    const access = incoming ? inputAccess?.[pin.id] : undefined;
+    const access = incoming ? displayedInputAccess(inputAccess?.[pin.id], pin.id, hasCapture) : undefined;
     if (access) return [{ label: ACCESS_LABEL[access], explain: ACCESS_TEXT[access] }];
     return syntaxBadges(statementSites(node, false, false, pin.id), (key) => flavorInfo(catalog, key, language),
       [...pinSyntaxDetails(node, pin.id), ...(pin.binding ? bindingDetails(pin.binding, language) : [])]);
