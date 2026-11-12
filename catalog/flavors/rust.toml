@@ -327,8 +327,8 @@ phase = "Runtime"
 effects = [["1..=3", "1, 2, 3"]]
 
 [explicit-type-args]
-label = "Explicit type args"
-explain = "Supply type arguments at the use site."
+label = "Explicit generic arguments"
+explain = "Supply generic arguments such as types, lifetimes, or constants. An underscore asks Rust to infer that part from context."
 cue = "::<T>"
 phase = "Compile time"
 effects = [["parse::<i32>()", "Use i32 as the explicit result type argument"]]

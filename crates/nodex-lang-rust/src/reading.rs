@@ -898,6 +898,7 @@ impl Reader<'_, '_> {
     }
 
     fn call(&mut self, node: Node<'_>) {
+        self.collect_type_arguments(node);
         let Some(op) = self.op(node) else { return };
         let family = op.family;
         let name = op.name.clone();
@@ -943,6 +944,45 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn collect_type_arguments(&mut self, node: Node<'_>) {
+        let Some(generic) = node.child_by_field_name("function").filter(|callee| callee.kind() == "generic_function") else {
+            return;
+        };
+        if !method_call(node).is_some_and(|(_, name)| matches!(self.src.text(name), "collect" | "r#collect")) {
+            return;
+        }
+        let Some(args) = generic.child_by_field_name("type_arguments").filter(|args| !args.has_error()) else {
+            return;
+        };
+        let Some(separator) = children(generic).into_iter().find(|part| part.kind() == "::") else {
+            return;
+        };
+        let written = self.src.norm(args);
+        let Some(written) = written.strip_prefix('<').and_then(|text| text.strip_suffix('>')) else {
+            return;
+        };
+        if written.trim().is_empty() {
+            return;
+        }
+        let mut text = format!("This call supplies {} in the generic argument list ::<...>.", truncate(written.trim(), 80));
+        let mut pending = named_children(args);
+        while let Some(part) = pending.pop() {
+            if self.src.text(part) == "_"
+                && (part.kind() == "type_identifier" || part.parent().is_some_and(|parent| {
+                    parent.kind() == "array_type" && parent.child_by_field_name("length") == Some(part)
+                }))
+            {
+                text.push_str(" The _ asks Rust to infer that part from the surrounding code.");
+                break;
+            }
+            if !matches!(part.kind(), "block" | "token_tree") {
+                pending.extend(named_children(part));
+            }
+        }
+        let span = self.src.index.span(self.src.file, separator.start_byte(), args.end_byte());
+        self.push(self.src.span(node), span, false, detail("Supply generic arguments to collect", text));
     }
 
     fn sequence(&mut self, node: Node, consumer: &str) {

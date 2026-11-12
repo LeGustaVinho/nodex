@@ -432,6 +432,38 @@ impl ReadingSource {
     }
 }
 
+pub fn reading_collect_arguments(values: &[Option<i32>]) -> Option<Vec<i32>> {
+    values.iter().copied().collect::<Option<Vec<_>>>()
+}
+
+struct ReadingCustomCollector;
+
+impl ReadingCustomCollector {
+    fn collect<const SIZE: usize>(&self) -> [(); SIZE] {
+        [(); SIZE]
+    }
+}
+
+pub fn reading_collect_const_argument() -> [(); 2] {
+    ReadingCustomCollector.collect::<_>()
+}
+
+pub fn reading_collect_const_block() -> [(); 2] {
+    ReadingCustomCollector.collect::<{ let _ = 1; 2 }>()
+}
+
+struct ReadingCustomTypeCollector;
+
+impl ReadingCustomTypeCollector {
+    fn collect<T: Default>(&self) -> T {
+        T::default()
+    }
+}
+
+pub fn reading_collect_array_length() -> [u8; 2] {
+    ReadingCustomTypeCollector.collect::<[u8; _]>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -431,6 +431,30 @@ fn reference_contract_explains_static_named_and_elided_lifetimes() {
 }
 
 #[test]
+fn collect_reading_explains_the_written_generic_arguments() {
+    let mut project = project();
+    for (function, token, argument, inferred) in [
+        ("reading_collect_arguments", "::<Option<Vec<_>>>", "Option<Vec<_>>", true),
+        ("reading_collect_const_argument", "::<_>", "_", true),
+        ("reading_collect_const_block", "::<{ let _ = 1; 2 }>", "{ let _ = 1; 2 }", false),
+        ("reading_collect_array_length", "::<[u8; _]>", "[u8; _]", true),
+    ] {
+        let graph = flow(&mut project, function);
+        let mut cards = sites(&graph).iter().filter_map(|site| match &site.content {
+            ReadingContent::Detail { label, text, .. } if label == "Supply generic arguments to collect" => Some((site, text)),
+            _ => None,
+        });
+        let (site, text) = cards.next().unwrap();
+        assert!(cards.next().is_none());
+        assert_eq!(site.basis, ValueBasis::Syntax);
+        assert!(site.path.is_some());
+        assert_eq!(&FIXTURE_SOURCE[site.span.start_byte as usize..site.span.end_byte as usize], token);
+        assert!(text.starts_with(&format!("This call supplies {argument} in the generic argument list")));
+        assert_eq!(text.contains("infer that part"), inferred);
+    }
+}
+
+#[test]
 #[ignore = "needs rust-analyzer"]
 fn scip_reading_connects_lookup_paths_patterns_and_origins() {
     let mut project = project();

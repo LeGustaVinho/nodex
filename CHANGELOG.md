@@ -13,6 +13,7 @@ The release workflow publishes the section of the version it builds as the relea
 - When Rust skips the rest of an iteration with `continue`, the Blueprint Guide can take you back to the right loop, including a labeled outer loop.
 - Rust declarations explain which types a trait implementation chooses and when a returned reference shares a lifetime with an input.
 - The Inspector highlights Rust `match` guards in assignments and other expressions. A guard runs after its pattern matches and can send execution on to the next alternative.
+- The Rust Guide shows the generic arguments written in `collect::<...>()` and explains placeholders such as `Vec<_>` and `[u8; _]`.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
