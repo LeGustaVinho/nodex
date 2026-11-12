@@ -9,7 +9,7 @@
 //! [`prebuild`] starts that work as soon as a project is opened or changes, so the UI's first
 //! requests usually find everything ready.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use axum::body::Bytes;
 use nodex_ir::{StructEdgeKind, StructureGraph};
@@ -63,13 +63,19 @@ pub async fn structure_json(state: &Arc<AppState>) -> Result<Bytes, String> {
 /// The JSON `/api/structure` sends for `graph`.
 pub fn structure_wire(graph: &StructureGraph) -> serde_json::Result<Vec<u8>> {
     let edges = graph.edges.iter().filter(|e| e.kind != StructEdgeKind::Contains).collect();
-    serde_json::to_vec(&WireGraph { symbols: &graph.symbols, edges })
+    serde_json::to_vec(&WireGraph {
+        symbols: &graph.symbols,
+        edges,
+        source_revisions: graph.source_revisions.as_ref(),
+    })
 }
 
 #[derive(Serialize)]
 struct WireGraph<'a> {
     symbols: &'a [nodex_ir::Symbol],
     edges: Vec<&'a nodex_ir::StructEdge>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_revisions: Option<&'a BTreeMap<String, String>>,
 }
 
 /// `/api/knowledge` as JSON bytes.

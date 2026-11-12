@@ -136,6 +136,10 @@ export function SymbolInspector({ symbol, index, syntax, embedded }: { symbol: S
   const vendor = !symbol.external && isVendorSymbol(symbol, unity);
   const url = editorUrl(project.data?.root ?? "", symbol);
   const coords = coordsOf(symbol);
+  const revision = (file: string) => index.graph.source_revisions?.[file];
+  const parent = symbol.parent ? index.byId.get(symbol.parent) : undefined;
+  const associatedType = symbol.language === "rust" && symbol.kind === "TypeAlias"
+    && parent?.kind === "Trait" && symbol.flavors.includes("associated-type");
 
   return (
     <div className={embedded ? undefined : "inspector"}>
@@ -204,7 +208,15 @@ export function SymbolInspector({ symbol, index, syntax, embedded }: { symbol: S
         <ValueExplanation info={symbol.value_info} language={symbol.language} />
       </div>}
       {!!symbol.syntax_sites?.length && <SyntaxInspector key={syntax ?? symbol.id} sites={symbol.syntax_sites} language={symbol.language}
-        revision={(file) => index.graph.source_revisions?.[file]} active={syntax} />}
+        revision={revision} active={syntax} />}
+      {(!!symbol.rust_contract?.length || associatedType) && <section className="insp-section" aria-label="Read this Rust declaration">
+        <div className="section-title">Read this Rust declaration</div>
+        {associatedType && <p className="explain">Each implementation of the trait specifies which type <code>{symbol.name}</code> refers to.</p>}
+        {!!symbol.rust_contract?.length && <RustContract items={symbol.rust_contract} inspect={(span) => {
+          const expected = revision(span.file);
+          if (expected) ui.focusCode(span, expected);
+        }} />}
+      </section>}
       {details.length > 0 && <div className="insp-section">
         <div className="section-title">Language details</div>
         {details.map((detail) => <div className="flavor" key={detail.label}>
@@ -246,10 +258,6 @@ function OverviewTab({ symbol, index, edges }: { symbol: Symbol; index: Structur
   return (
     <div className="insp-pane">
       {symbol.signature && <pre className="code-snippet">{symbol.signature}</pre>}
-      {symbol.rust_contract && <RustContract items={symbol.rust_contract} inspect={(span) => {
-        const revision = index.graph.source_revisions?.[span.file];
-        if (revision) focusCode(span, revision);
-      }} />}
       {symbol.doc && <p className="doc">{symbol.doc}</p>}
       <div className="props">
         {lines && (

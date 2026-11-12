@@ -74,7 +74,9 @@ async fn starts_without_a_project_then_opens_one_and_shuts_down() {
     let source_query = form_urlencoded::Serializer::new(String::new()).append_pair("file", file).finish();
     let (status, source) = http(port, &token, "GET", &format!("/api/source?{source_query}"), None).await;
     assert_eq!(status, 200);
-    assert_eq!(data["locations"][0]["source_revision"], nodex_core::navigation::source_revision(&source));
+    let revision = nodex_core::navigation::source_revision(&source);
+    assert_eq!(data["locations"][0]["source_revision"], revision);
+    assert_eq!(graph["source_revisions"][file], revision);
     let (status, body) = http(port, &token, "GET", &query("usages"), None).await;
     assert_eq!(status, 200);
     assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["coverage"], "partial");

@@ -1,5 +1,21 @@
 use nodex_ir::{Access, BindingForm, FlowEdgeKind, FlowGraph, FlowNode, Pin};
 
+#[test]
+fn rust_contract_links_to_source_even_without_syntax_sites() {
+    let source = "fn identity(value: i32) -> i32 { value }";
+    let mut file = nodex_lang_rust::lower_source("identity.rs", source);
+    assert!(file.symbols.iter().all(|symbol| symbol.syntax_sites.is_none()));
+    let revision = nodex_core::navigation::source_revision(source);
+    file.source_revision = Some(revision.clone());
+
+    let graph = nodex_core::link::link(&[&file], &[]);
+    let symbol = graph.symbols.iter().find(|symbol| symbol.name == "identity").unwrap();
+    let contract = symbol.rust_contract.as_ref().unwrap();
+    let revisions = graph.source_revisions.as_ref().unwrap();
+    assert!(!contract.is_empty());
+    assert!(contract.iter().all(|item| revisions.get(&item.span.file) == Some(&revision)));
+}
+
 fn statement<'a>(graph: &'a FlowGraph, code: &str) -> &'a FlowNode {
     graph.nodes.iter().find(|n| n.code.starts_with(code)).unwrap_or_else(|| panic!("no statement starting with {code}"))
 }
