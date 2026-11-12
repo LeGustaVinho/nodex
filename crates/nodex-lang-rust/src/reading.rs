@@ -400,6 +400,65 @@ fn argument(call: Node<'_>, index: usize) -> Option<Node<'_>> {
         .map(unparen)
 }
 
+fn direct_argument_call(mut value: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = value.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+        value = parent;
+    }
+    let arguments = value.parent().filter(|parent| parent.kind() == "arguments")?;
+    let call = arguments.parent().filter(|parent| parent.kind() == "call_expression")?;
+    (call.child_by_field_name("arguments") == Some(arguments)).then_some(call)
+}
+
+#[derive(Clone, Copy)]
+enum IteratorCallback {
+    FindMap,
+    FilterMap,
+    TryFold,
+}
+
+impl IteratorCallback {
+    fn operation(operation: &Resolved) -> Option<Self> {
+        if operation.family != Family::Iter {
+            return None;
+        }
+        match operation.name.as_str() {
+            "find_map" => Some(Self::FindMap),
+            "filter_map" => Some(Self::FilterMap),
+            "try_fold" => Some(Self::TryFold),
+            _ => None,
+        }
+    }
+
+    fn is_callback(self, call: Node, closure: Node) -> bool {
+        let Some((_, receiver_argument)) = receiver(call) else { return false };
+        let index = usize::from(receiver_argument.is_some()) + usize::from(matches!(self, Self::TryFold));
+        argument(call, index) == Some(closure)
+    }
+
+    fn timing(self) -> &'static str {
+        match self {
+            Self::FindMap => "While find_map searches",
+            Self::FilterMap => "When the iterator requests an item",
+            Self::TryFold => "While try_fold processes items",
+        }
+    }
+
+    fn propagation(self, operand: Option<Family>) -> Option<(&'static str, &'static str)> {
+        match (self, operand) {
+            (Self::FindMap, Some(Family::Option)) => Some((
+                "Return None from this callback. find_map tries the next item.", "None",
+            )),
+            (Self::FilterMap, Some(Family::Option)) => Some((
+                "Return None from this callback. filter_map skips this item and looks for another value.", "None",
+            )),
+            (Self::TryFold, Some(Family::Option | Family::Result)) => Some((
+                "Finish this callback early. try_fold stops and returns the callback's early result.", "Early callback result",
+            )),
+            _ => None,
+        }
+    }
+}
+
 fn single_type_argument(node: Node<'_>) -> Option<Node<'_>> {
     let args = node.child_by_field_name("type_arguments")?;
     let mut written = named_children(args).into_iter().filter(|argument| !argument.is_extra());
@@ -637,15 +696,17 @@ impl Reader<'_, '_> {
         let timing = boundary(node).and_then(|scope| match scope.kind() {
             "async_block" => Some("When the future runs".into()),
             "closure_expression" => {
-                let iterator = scope.parent().and_then(|args| args.parent())
-                    .and_then(|call| self.op(call))
-                    .is_some_and(|op| matches!(op.family, Family::Iter | Family::ParIter));
-                if iterator {
-                    Some("When the iterator requests an item".into())
-                } else if children(scope).iter().any(|token| token.kind() == "async") {
+                if children(scope).iter().any(|token| token.kind() == "async") {
                     Some("When the future runs".into())
                 } else {
-                    None
+                    let call = direct_argument_call(scope)?;
+                    let operation = self.op(call)?;
+                    if let Some(callback) = IteratorCallback::operation(operation) {
+                        callback.is_callback(call, scope).then(|| callback.timing().into())
+                    } else {
+                        matches!(operation.family, Family::Iter | Family::ParIter)
+                            .then(|| "When the iterator requests an item".into())
+                    }
                 }
             }
             _ => None,
@@ -977,26 +1038,39 @@ impl Reader<'_, '_> {
         let Some(token) = children(node).into_iter().find(|token| token.kind() == "?") else {
             return;
         };
-        let exit = match boundary(node) {
-            Some(boundary) if boundary.kind() == "closure_expression"
-                && crate::structure::closure_binding(self.src, boundary).is_some() =>
-            {
-                "Return from this closure".into()
-            }
-            Some(boundary) if boundary.kind() == "closure_expression" => {
-                "Return from this callback".into()
-            }
-            Some(boundary) if boundary.kind() == "async_block" => "Finish this async block".into(),
-            Some(boundary) if boundary.kind() == "try_block" => "Finish this try block".into(),
-            Some(boundary) => format!(
-                "Return from {}",
-                boundary
-                    .child_by_field_name("name")
-                    .map_or("this function", |name| self.src.text(name))
-            ),
-            None => "Leave this scope".into(),
-        };
+        let scope = boundary(node);
         let kind = self.op(node).map(|op| op.family);
+        let iterator_exit = scope.filter(|scope| scope.kind() == "closure_expression")
+            .and_then(|closure| {
+                let call = direct_argument_call(closure)?;
+                let callback = IteratorCallback::operation(self.op(call)?)?;
+                if !callback.is_callback(call, closure) || children(closure).iter().any(|token| token.kind() == "async") {
+                    return None;
+                }
+                callback.propagation(kind)
+            });
+        let exit = iterator_exit.map_or_else(
+            || match scope {
+                Some(boundary) if boundary.kind() == "closure_expression"
+                    && crate::structure::closure_binding(self.src, boundary).is_some() =>
+                {
+                    "Return from this closure".into()
+                }
+                Some(boundary) if boundary.kind() == "closure_expression" => {
+                    "Return from this callback".into()
+                }
+                Some(boundary) if boundary.kind() == "async_block" => "Finish this async block".into(),
+                Some(boundary) if boundary.kind() == "try_block" => "Finish this try block".into(),
+                Some(boundary) => format!(
+                    "Return from {}",
+                    boundary
+                        .child_by_field_name("name")
+                        .map_or("this function", |name| self.src.text(name))
+                ),
+                None => "Leave this scope".into(),
+            },
+            |(action, _)| action.into(),
+        );
         let mut branches = match kind {
             Some(Family::Option) => vec![
                 branch("Found", "Unwrap Some", "Continue with the value"),
@@ -1011,8 +1085,13 @@ impl Reader<'_, '_> {
                 branch("Propagate", exit, "Propagate early"),
             ],
         };
-        branches[0].pin = Some("out".into());
-        branches[1].pin = Some("error".into());
+        if let Some((_, output)) = iterator_exit {
+            branches[0].output = "Continue this callback with the value".into();
+            branches[1].output = output.into();
+        } else {
+            branches[0].pin = Some("out".into());
+            branches[1].pin = Some("error".into());
+        }
         self.paths(
             unparen(operand),
             self.src.span(token),
@@ -2555,6 +2634,18 @@ fn operation_detail(family: Family, name: &str) -> Option<(&'static str, &'stati
         (Family::Iter, "into_iter") => (
             "Take the source by value",
             "An owned collection is consumed. Passing a reference iterates over borrowed items.",
+        ),
+        (Family::Iter, "find_map") => (
+            "Find the first value produced by the callback",
+            "Try the callback on items in order. Return the first Some result, or None if the iterator runs out of items first.",
+        ),
+        (Family::Iter, "filter_map") => (
+            "Yield values produced by the callback",
+            "When an item is requested, run the callback on candidate items. Yield the value inside Some and skip items that produce None.",
+        ),
+        (Family::Iter, "try_fold") => (
+            "Accumulate until the callback stops",
+            "Start with the initial accumulator. Each successful callback result supplies the next accumulator. A result that signals a stop, such as None or Err, stops the fold and becomes its result.",
         ),
         (Family::Iter | Family::ParIter, "map" | "filter" | "filter_map" | "zip" | "chain") => (
             "Prepare an iterator step",

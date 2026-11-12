@@ -23,6 +23,7 @@ The release workflow publishes the section of the version it builds as the relea
 - Rust pattern cards show what `name @ pattern` tests and binds, which alternative supplies each name, and where a slice pattern takes its remaining items.
 - The Rust Guide previews the value produced by each branch of an embedded `if` or `match`, including branches that transfer control before supplying a value.
 - When rust-analyzer identifies the standard `matches!` macro, Rust Blueprints explain its boolean result and optional guard and offer to show the generated Rust.
+- Rust Blueprints explain what happens when `?` exits a standard iterator callback. A missing value can send `find_map` to the next item or make `filter_map` skip the current one. A failure in `try_fold` stops the accumulation.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

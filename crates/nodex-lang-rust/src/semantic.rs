@@ -293,6 +293,9 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         } else if path.starts_with("core::iter::traits::iterator::Iterator::")
             || path.starts_with("core::iter::traits::collect::IntoIterator::")
             || name == "into_iter" && descriptor.contains("][IntoIterator]into_iter().")
+            || descriptor.rsplit_once("][Iterator]").is_some_and(|(_, method)| {
+                matches!(method, "find_map()." | "filter_map()." | "try_fold().")
+            })
             || matches!(name, "iter" | "iter_mut") && matches!(sym.package, "alloc" | "std") && descriptor.starts_with("collections/")
         {
             Family::Iter
@@ -1238,5 +1241,19 @@ mod tests {
         let symbol = parse_symbol("rust-analyzer cargo tokio 1.47.1 macros/select/select!").unwrap();
         assert_eq!(reading_operation(&symbol, &display(&symbol), true), Some((Family::Macro, "select".into())));
         assert!(reading_operation(&symbol, &display(&symbol), false).is_none());
+    }
+
+    #[test]
+    fn recognizes_only_the_standard_iterator_callback_overrides() {
+        let standard = "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core";
+        let override_ = "slice/iter/impl#[`Iter<'a, T>`][Iterator]find_map().";
+        let resolved = |symbol: &str| {
+            let parsed = parse_symbol(symbol).unwrap();
+            reading_operation(&parsed, &display(&parsed), true)
+        };
+        assert_eq!(resolved(&format!("{standard} {override_}")), Some((Family::Iter, "find_map".into())));
+        assert_eq!(resolved(&format!("rust-analyzer cargo local 0.1.0 {override_}")), None);
+        assert_eq!(resolved(&format!("{standard} {}", override_.replace("[Iterator]", "[Other]"))), None);
+        assert_eq!(resolved(&format!("{standard} {}", override_.replace("find_map", "map"))), None);
     }
 }
