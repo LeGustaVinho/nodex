@@ -262,6 +262,7 @@ pub(crate) enum Family {
     NonZero,
     StringInsert,
     InclusiveRange,
+    VecDrain,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -1707,7 +1708,7 @@ impl Reader<'_, '_> {
                 branch("Propagate", exit, "Propagate early"),
             ],
         };
-        let discarded = question_mark_result_is_discarded(node);
+        let discarded = expression_result_is_discarded(node);
         if discarded {
             branches[0].action.push_str(" and ignore the returned value");
             branches[0].output = "Continue after this statement".into();
@@ -1788,6 +1789,7 @@ impl Reader<'_, '_> {
             Family::OnceLock => self.once_lock_call(node, &name),
             Family::StringInsert => self.string_insert(node),
             Family::InclusiveRange => self.inclusive_range_contains(node),
+            Family::VecDrain => self.vec_drain(node),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
             }
@@ -1831,6 +1833,31 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn vec_drain(&mut self, node: Node<'_>) {
+        let Some((vector, receiver_argument)) = receiver(node) else { return };
+        let Some(range) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let vector = self.written(vector, 80);
+        let whole = range.kind() == "range_expression" && self.src.text(range) == "..";
+        let mut text = if whole {
+            format!("Remove every element from {vector}.")
+        } else if range.kind() == "range_expression" && self.src.text(range).starts_with("..")
+            && let Some(end) = named_children(range).into_iter().find(|bound| !bound.is_extra())
+            && children(range).iter().any(|token| token.kind() == "..")
+        {
+            format!("Remove elements from the start of {vector} up to, but not including, index {}.", self.written(end, 80))
+        } else {
+            format!("Remove the elements in {} from {vector}.", self.written(range, 80))
+        };
+        text.push_str(" The Drain iterator holds a mutable borrow of the vector and yields removed elements by value. Dropping it also drops any removed elements that it has not yielded.");
+        if expression_result_is_discarded(node) {
+            text.push_str(" This statement drops the iterator without using it, so it discards all selected elements.");
+        }
+        if !whole {
+            text.push_str(" An invalid index range, such as one extending past the vector's length, causes a panic.");
+        }
+        self.at(node, true, detail("Remove elements with Vec::drain", text));
     }
 
     fn inclusive_range_contains(&mut self, node: Node<'_>) {
@@ -3251,7 +3278,7 @@ fn while_let_header(mut node: Node<'_>) -> Option<Node<'_>> {
     node.parent().filter(|parent| parent.kind() == "while_expression" && parent.child_by_field_name("condition") == Some(node))
 }
 
-fn question_mark_result_is_discarded(mut node: Node<'_>) -> bool {
+fn expression_result_is_discarded(mut node: Node<'_>) -> bool {
     while let Some(parent) = node.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
         node = parent;
     }

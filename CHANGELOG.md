@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide explains what `Vec::drain` removes, what the iterator yields by value, and what happens when the iterator is dropped.
 - The Rust Blueprint Guide names the argument, method, field, or operator that will use the value extracted by `?`.
 - Rust Blueprints show how `RangeInclusive::contains` checks both included endpoints and the current bounds of a partially consumed range.
 - The Rust Blueprint Guide distinguishes evaluating the default in `Option::map_or` from calling the fallback function in `map_or_else`.
