@@ -399,8 +399,11 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             || path.starts_with("std::collections::hash::map::Entry::") || path.starts_with("alloc::collections::btree::map::entry::Entry::")
         {
             Family::Map
-        } else if path.starts_with("core::iter::traits::iterator::Iterator::")
+        } else if sym.package == "core" && descriptor == "iter/traits/iterator/Iterator#fold()."
+            || matches!(sym.package, "core" | "alloc") && descriptor.ends_with("][Iterator]fold().")
+            || path.starts_with("core::iter::traits::iterator::Iterator::")
                 && (name != "zip" || sym.package == "core" && descriptor == "iter/traits/iterator/Iterator#zip().")
+                && name != "fold"
             || path.starts_with("core::iter::traits::collect::IntoIterator::")
             || name == "into_iter" && descriptor.contains("][IntoIterator]into_iter().")
             || descriptor.rsplit_once("][Iterator]").is_some_and(|(_, method)| {

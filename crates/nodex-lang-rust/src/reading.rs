@@ -716,6 +716,7 @@ enum IteratorCallback {
     All,
     FindMap,
     FilterMap,
+    Fold,
     TryFold,
 }
 
@@ -731,6 +732,7 @@ impl IteratorCallback {
             "all" => Some(Self::All),
             "find_map" => Some(Self::FindMap),
             "filter_map" => Some(Self::FilterMap),
+            "fold" => Some(Self::Fold),
             "try_fold" => Some(Self::TryFold),
             _ => None,
         }
@@ -738,7 +740,7 @@ impl IteratorCallback {
 
     fn is_callback(self, call: Node, closure: Node) -> bool {
         let Some((_, receiver_argument)) = receiver(call) else { return false };
-        let index = usize::from(receiver_argument.is_some()) + usize::from(matches!(self, Self::TryFold));
+        let index = usize::from(receiver_argument.is_some()) + usize::from(matches!(self, Self::Fold | Self::TryFold));
         argument(call, index) == Some(closure)
     }
 
@@ -750,6 +752,7 @@ impl IteratorCallback {
             Self::All => "While all checks each item",
             Self::FindMap => "While find_map searches",
             Self::FilterMap => "When the iterator requests an item",
+            Self::Fold => "While fold processes items",
             Self::TryFold => "While try_fold processes items",
         }
     }
@@ -1866,6 +1869,7 @@ impl Reader<'_, '_> {
             Family::Arc if matches!(name.as_str(), "make_mut" | "unwrap_or_clone") => self.arc_value(node, &name),
             Family::Peekable => self.peekable(node, &name),
             Family::Iter if name == "zip" => self.iterator_zip(node),
+            Family::Iter if name == "fold" => self.iterator_fold(node),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
@@ -2450,6 +2454,28 @@ impl Reader<'_, '_> {
         }
         let span = self.src.index.span(self.src.file, separator.start_byte(), args.end_byte());
         self.push(self.src.span(node), span, false, detail("Supply generic arguments to collect", text));
+    }
+
+    fn iterator_fold(&mut self, node: Node<'_>) {
+        let Some((_, receiver_argument)) = receiver(node) else { return };
+        let first = usize::from(receiver_argument.is_some());
+        let (Some(seed), Some(callback)) = (argument(node, first), argument(node, first + 1)) else { return };
+        let Some(callee) = node.child_by_field_name("function") else { return };
+        let callee = if callee.kind() == "generic_function" {
+            let Some(callee) = callee.child_by_field_name("function") else { return };
+            callee
+        } else {
+            callee
+        };
+        let member = callee.child_by_field_name("field").or_else(|| callee.child_by_field_name("name")).unwrap_or(callee);
+        let steps = vec![
+            self.step(seed, "Starting value", "Use this argument as the accumulator, the value carried from one item to the next."),
+            self.step(callback, "For each item during this call", "Process items in the order this iterator supplies them. Call this function with the current accumulator first and the item second. Its return value becomes the next accumulator."),
+            self.step(node, "When iteration finishes", "Return the final accumulator. If there are no items, return the starting value without calling the function."),
+        ];
+        self.push(self.src.span(node), self.src.span(member), true, ReadingContent::Steps {
+            label: "Accumulate a value across iterator items".into(), steps,
+        });
     }
 
     fn iterator_zip(&mut self, node: Node<'_>) {
@@ -3205,6 +3231,9 @@ impl Reader<'_, '_> {
             detail(&label, text),
         );
         self.map_callback_entry(node, parameters, async_);
+        if !async_ {
+            self.fold_callback_entry(node, parameters);
+        }
         if !async_ && moves {
             self.closure_result_borrow(node);
         }
@@ -3264,6 +3293,22 @@ impl Reader<'_, '_> {
             span: self.src.span(parameters),
             basis: ValueBasis::TypeAnalysis,
             content: detail(label, text),
+            expression_target: Some(Concept::Entry),
+        });
+    }
+
+    fn fold_callback_entry(&mut self, closure: Node<'_>, parameters: Node<'_>) {
+        let Some(call) = direct_argument_call(closure) else { return };
+        if !matches!(self.op(call).and_then(IteratorCallback::operation), Some(IteratorCallback::Fold))
+            || !IteratorCallback::Fold.is_callback(call, closure)
+        {
+            return;
+        }
+        self.readings.push(ReadingFact {
+            anchor: self.src.header_span(closure, closure.child_by_field_name("body")),
+            span: self.src.span(parameters),
+            basis: ValueBasis::TypeAnalysis,
+            content: detail("Update the accumulator for one item", "During fold, this function receives the accumulator as its first parameter and the current item as its second parameter. Its return value is used for the next item or returned by fold if this is the last item."),
             expression_target: Some(Concept::Entry),
         });
     }
