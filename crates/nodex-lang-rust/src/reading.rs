@@ -2814,8 +2814,12 @@ impl Reader<'_, '_> {
         let resolved = self.op(node).filter(|op| op.family == Family::Macro);
         let is_select = resolved.is_some_and(|op| op.name == "select");
         let is_vec = resolved.is_some_and(|op| op.name == "vec");
+        let is_matches = resolved.is_some_and(|op| op.name == "matches");
         if is_select {
             self.select_branches(node);
+        }
+        if is_matches {
+            self.matches_propagation(node);
         }
         let repeated_vec = is_vec && self.vec_repeat(node);
         let resolved = self.op(node).filter(|op| op.family == Family::Macro);
@@ -2858,6 +2862,62 @@ impl Reader<'_, '_> {
                 borrow: false,
             },
         );
+    }
+
+    fn matches_propagation(&mut self, node: Node<'_>) {
+        let Some(tokens) = named_children(node).into_iter().find(|child| child.kind() == "token_tree") else { return };
+        if tokens.has_error() || !self.src.text(tokens).contains('?') {
+            return;
+        }
+        let Some(start) = tokens.child(0).map(|open| open.end_byte()) else { return };
+        let Some(parsed) = children(tokens).into_iter().filter(|token| token.kind() == ",")
+            .find_map(|comma| parse_macro_operand(&self.src.text[start..comma.start_byte()]))
+        else { return };
+        let Some(mut value) = macro_operand(&parsed) else { return };
+        while value.kind() == "parenthesized_expression" {
+            let Some(inner) = value.named_children(&mut value.walk()).find(|child| !child.is_extra()) else { return };
+            value = inner;
+        }
+        let exit = match boundary(node) {
+            Some(scope) if scope.kind() == "async_block" => "Finish this async block early".into(),
+            Some(scope) if scope.kind() == "try_block" => "Finish this try block early".into(),
+            Some(scope) if scope.kind() == "closure_expression" => "Return early from this closure".into(),
+            Some(scope) => match scope.child_by_field_name("name") {
+                Some(name) => format!("Return early from {}", self.src.text(name)),
+                None => "Return early from this function".into(),
+            },
+            None => "Leave this scope early".into(),
+        };
+        let mut pending = vec![value];
+        while let Some(part) = pending.pop() {
+            if matches!(part.kind(), "closure_expression" | "async_block" | "try_block" | "gen_block" | "const_block" | "macro_invocation")
+                || part.kind().ends_with("_item")
+            {
+                continue;
+            }
+            if part.kind() == "try_expression"
+                && let Some(token) = children(part).into_iter().find(|token| token.kind() == "?" && !token.is_missing())
+            {
+                let start = start + token.start_byte() - MACRO_OPERAND_PREFIX.len();
+                let end = start + token.byte_range().len();
+                if self.src.text.get(start..end) != Some("?") {
+                    continue;
+                }
+                let span = self.src.index.span(self.src.file, start, end);
+                let kind = self.evidence.operations.get(&(start, end)).and_then(Option::as_ref).map(|op| op.family);
+                let (keep, take, stop, propagate) = match kind {
+                    Some(Family::Result) => ("Success", "Take the value inside Ok", "Error", format!("{exit} with the error before testing the pattern")),
+                    Some(Family::Option) => ("Present", "Take the value inside Some", "Missing", format!("{exit} with None before testing the pattern")),
+                    _ => ("Continue", "Take the value produced by ?", "Propagate", format!("{exit} before testing the pattern")),
+                };
+                let next = if part == value { "Test the pattern with this value" } else { "Continue with the value" };
+                self.paths(node, span, true, "Evaluate the first argument of matches!".into(), vec![
+                    branch(keep, take, next),
+                    branch(stop, propagate, "This pattern test produces no bool"),
+                ], None);
+            }
+            pending.extend(named_children(part).into_iter().rev());
+        }
     }
 
     fn vec_repeat(&mut self, node: Node<'_>) -> bool {
@@ -3688,6 +3748,27 @@ fn vec_repeat_operand<'a>(src: Src<'a>, tokens: &[Node<'_>]) -> Option<(&'a str,
     Some((text, src.index.span(src.file, start, end)))
 }
 
+const MACRO_OPERAND_PREFIX: &str = "fn operand() { let _ = ";
+
+fn parse_macro_operand(text: &str) -> Option<tree_sitter::Tree> {
+    // The let wrapper accepts exactly one expression and provides a fixed byte offset.
+    let wrapped = format!("{MACRO_OPERAND_PREFIX}{text}\n; }}");
+    let parsed = crate::parse(&wrapped).filter(|tree| !tree.root_node().has_error())?;
+    let value = macro_operand(&parsed)?;
+    let body = value.parent()?.parent()?;
+    if body.named_children(&mut body.walk()).filter(|child| !child.is_extra()).count() != 1
+        || value.start_byte() < MACRO_OPERAND_PREFIX.len() || value.end_byte() > MACRO_OPERAND_PREFIX.len() + text.len()
+    {
+        return None;
+    }
+    Some(parsed)
+}
+
+fn macro_operand(tree: &tree_sitter::Tree) -> Option<Node<'_>> {
+    tree.root_node().named_child(0)?.child_by_field_name("body")?
+        .named_child(0)?.child_by_field_name("value")
+}
+
 fn select_loop_body(mut node: Node<'_>) -> Option<&'static str> {
     while let Some(parent) = node.parent() {
         match parent.kind() {
@@ -4407,6 +4488,32 @@ fn operation_detail(family: Family, name: &str) -> Option<(&'static str, &'stati
 mod tests {
     use super::*;
     use nodex_lang_api::kit::LineIndex;
+
+    #[test]
+    fn matches_propagation_uses_syntax_when_the_operator_has_no_type_evidence() {
+        let text = "fn run() { let test = || matches!(load()?, Some(value) if guard(value)?); }";
+        let tree = crate::parse(text).unwrap();
+        let root = tree.root_node();
+        let offset = text.find("matches!").unwrap();
+        let call = root.descendant_for_byte_range(offset, offset + "matches".len()).unwrap().parent().unwrap();
+        assert_eq!(call.kind(), "macro_invocation");
+        let index = LineIndex::new(text);
+        let src = Src { text, file: "matches.rs", index: &index };
+        let evidence = Evidence {
+            operations: [(range(call), Some(Resolved { family: Family::Macro, name: "matches".into(), definition: None }))].into(),
+            ..Default::default()
+        };
+        let (readings, _, _) = collect(src, root, &evidence);
+        let paths: Vec<_> = readings.iter().filter_map(|fact| match &fact.content {
+            ReadingContent::Paths { branches, .. } => Some((fact, branches)),
+            _ => None,
+        }).collect();
+        let [(fact, branches)] = paths.as_slice() else { panic!("Expected only the first argument's question mark: {paths:?}") };
+        assert_eq!(fact.span.start_byte as usize, text.find('?').unwrap());
+        assert_eq!(branches[0].action, "Take the value produced by ?");
+        assert_eq!(branches[1].action, "Return early from this closure before testing the pattern");
+        assert!(branches.iter().all(|branch| branch.pin.is_none()));
+    }
 
     #[test]
     fn vec_repeat_requires_two_complete_expressions() {

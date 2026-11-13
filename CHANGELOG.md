@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide explains how `?` in the first argument of `matches!` can return early before the macro produces a boolean.
 - A Rust `map` callback explains at the start of its Blueprint when it runs and how the caller uses its return value.
 - The Rust Inspector presents proven boolean `|=` and `&=` as assignments, without the numeric bitwise signature.
 - Rust Blueprints show that boolean `|=` and `&=` still evaluate the right-hand expression when the destination already determines the result.

@@ -1432,7 +1432,12 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             }
             if let Some((family, operation)) = reading_operation(&sym, &target.display, external) {
                 let at = if name.kind() == "?" && operation == "branch" && sym.descriptors.ends_with("][Try]branch().") {
-                    name.parent().filter(|node| node.kind() == "try_expression")
+                    name.parent().and_then(|parent| match parent.kind() {
+                        "try_expression" => Some(parent),
+                        // Known macros may reparse their operands. Retain evidence at the original token.
+                        "token_tree" if name.start_byte() == s && name.end_byte() == e => Some(name),
+                        _ => None,
+                    })
                 } else { enclosing_call(name) };
                 if let Some(at) = at {
                     record_operation(&mut operations, at, Resolved { family, name: operation, definition: None });
