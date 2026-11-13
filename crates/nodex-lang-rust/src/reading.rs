@@ -1628,8 +1628,8 @@ impl Reader<'_, '_> {
             branches[0].output = "Continue this callback with the value".into();
             branches[1].output = output.into();
         } else {
-            if while_let_condition(node).is_some() {
-                branches[0].output = "Continue checking the loop condition".into();
+            if let Some(resume) = question_mark_condition(node) {
+                branches[0].output = resume.into();
             } else {
                 branches[0].pin = Some("out".into());
             }
@@ -2984,16 +2984,28 @@ fn while_let_header(mut node: Node<'_>) -> Option<Node<'_>> {
     node.parent().filter(|parent| parent.kind() == "while_expression" && parent.child_by_field_name("condition") == Some(node))
 }
 
-fn while_let_condition(mut node: Node<'_>) -> Option<Node<'_>> {
+fn question_mark_condition(mut node: Node<'_>) -> Option<&'static str> {
+    let mut transfer = None;
     while let Some(parent) = node.parent() {
-        match parent.kind() {
-            "while_expression" => return parent.child_by_field_name("condition").filter(|condition| {
-                *condition == node && matches!(unparen(*condition).kind(), "let_condition" | "let_chain")
-            }),
-            // These expressions have their own control context or are not part of the loop header.
+        let field_is = |name| parent.child_by_field_name(name) == Some(node);
+        let continuation = match parent.kind() {
+            "while_expression" if field_is("condition") => Some("Continue checking the loop condition"),
+            "for_expression" if field_is("value") => Some("Continue evaluating what the loop iterates over"),
+            "if_expression" if field_is("condition") => Some("Continue checking the if condition"),
+            "match_expression" if field_is("value") => Some("Continue evaluating the value to match"),
+            "match_pattern" if field_is("condition") => Some("Continue checking the match guard"),
+            "return_expression" | "break_expression" | "yield_expression" => {
+                transfer = Some("Continue with the value");
+                None
+            }
+            // These bodies have an independent destination for propagation.
             "closure_expression" | "async_block" | "try_block" | "const_block" | "gen_block" | "function_item" => return None,
-            _ => node = parent,
+            _ => None,
+        };
+        if continuation.is_some() {
+            return transfer.or(continuation);
         }
+        node = parent;
     }
     None
 }
