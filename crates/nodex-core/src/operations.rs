@@ -240,7 +240,8 @@ fn match_expr(e: &Expr, language: Language) -> Option<String> {
     // Calls resolved to a project method are the project's, whatever their name.
     let project_symbol = e.symbol.is_some();
     for (pattern, key) in candidates {
-        if pattern.call != call {
+        if pattern.call != call || (language == Language::Rust && key == "list.flatten"
+            && e.target.as_deref() == Some("core::option::Option::flatten()")) {
             continue;
         }
         let ok = match (&pattern.receiver, &receiver) {

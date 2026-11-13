@@ -2321,6 +2321,11 @@ impl Reader<'_, '_> {
                 format!("If {} produces an Option, evaluate the error argument {} before checking whether the option is Some or None.",
                     self.written(recv, 120), self.written(error, 120))
             }
+            (Family::Option, "zip") => {
+                let Some(other) = argument(node, callback_arg) else { return };
+                format!("Pair the values from {} and {} when both options contain a value.",
+                    self.written(recv, 120), self.written(other, 120))
+            }
             (Family::Option, "replace") => format!("Replace the contents of {}", self.short(recv)),
             (Family::Option, "get_or_insert") => format!("Keep or fill {}", self.short(recv)),
             (Family::Option, "take_if") => format!("Take the contents of {} if the test passes", self.short(recv)),
@@ -3597,6 +3602,19 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
                 ),
                 branch("Present · error", "Carry the error through", "Err(error)"),
                 branch("Missing", "Succeed with no value", "Ok(None)"),
+            ];
+        }
+        "flatten" => {
+            return vec![
+                branch("Some(Some(value))", "Remove one layer of Option and keep the value", "Some(value)"),
+                branch("Some(None)", "Remove the outer Some and keep the inner absence", "None"),
+                branch("None", "Keep the absence", "None"),
+            ];
+        }
+        "zip" => {
+            return vec![
+                branch("Both are Some", "Pair the two values, with the receiver's value first", "Some((first, second))"),
+                branch("Either is None", "There is no pair", "None"),
             ];
         }
         "take" => ("Move the contents out and leave None", "Some(previous value)", "Leave the slot empty", "None"),

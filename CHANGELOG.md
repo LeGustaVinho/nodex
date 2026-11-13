@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide explains how `Option::flatten` removes one layer of optionality and how `Option::zip` pairs two present values.
 - The Rust Blueprint Guide shows how `Option::ok_or` evaluates its error argument and turns `Some` into `Ok` or `None` into `Err`.
 - The Rust Blueprint Guide keeps a successful `?` in the current node while its value is still needed by a call or another expression.
 - The Rust Blueprint Guide explains when `Option::is_some_and` and `Option::is_none_or` call the test function and what each method returns for `None`.
