@@ -301,6 +301,13 @@ pub(crate) struct DefaultCollection {
     mutable_reference: bool,
 }
 
+pub(crate) fn written_result_type(ty: Node<'_>, identities: &HashMap<Range, DefaultType>) -> bool {
+    let ty = crate::syntax::unparen_type(ty);
+    ty.kind() == "generic_type" && ty.child_by_field_name("type").is_some_and(|head| {
+        identities.get(&range(head)) == Some(&DefaultType::Result)
+    })
+}
+
 pub(crate) fn written_default_collection(
     ty: Node<'_>,
     identities: &HashMap<Range, DefaultType>,
@@ -353,6 +360,7 @@ pub(crate) struct Evidence<'a> {
     pub cast_aliases: HashMap<Range, NumericAlias>,
     pub default_types: Option<&'a HashMap<Range, DefaultType>>,
     pub default_collections: HashMap<Range, DefaultCollection>,
+    pub result_calls: HashSet<Range>,
     pub definitions: Option<&'a HashMap<&'a str, Range>>,
     pub uses: &'a [(usize, usize, &'a str)],
     pub precise_captures: Option<bool>,
@@ -2388,6 +2396,7 @@ impl Reader<'_, '_> {
     fn sequence(&mut self, node: Node, consumer: &str) {
         let Some((mut source, _)) = receiver(node) else { return };
         let option_list = consumer == "collect" && self.collects_option_list(node, unparen(source));
+        let result_vec = consumer == "collect" && self.collects_result_vec(node, unparen(source));
         let mut steps = Vec::new();
         while let Some(operation) = self.op(unparen(source)).filter(|op| matches!(op.family, Family::Iter | Family::ParIter)) {
             let action = match operation.name.as_str() {
@@ -2410,18 +2419,21 @@ impl Reader<'_, '_> {
             let Some((previous, _)) = receiver(unparen(source)) else { break };
             source = previous;
         }
-        if steps.is_empty() {
+        if steps.is_empty() && !result_vec {
             self.at(node, true, detail("Consume the iterator", "Drive the iterator to produce a result."));
             return;
         }
         steps.reverse();
         let final_step = if option_list {
             self.step(node, "When collecting", "If an item is None, stop asking for items and return None. If the iterator reaches the end, return Some(list) containing the unwrapped values. The list can be empty.")
+        } else if result_vec {
+            self.step(node, "When collecting", "Read the results in iterator order and put each Ok value into a vector. Stop at the first Err, discard the partial vector, and return Err(error) without asking for more items. Effects that already happened remain. If the iterator reaches the end without an error, return Ok with the vector, which can be empty.")
         } else {
             self.step(node, "Now", format!("Drive the sequence with {consumer}."))
         };
+        let label = if steps.is_empty() { "Collect successes or return the first error" } else { "Follow an item through the iterator" };
         steps.push(final_step);
-        self.steps(node, "Follow an item through the iterator", steps);
+        self.steps(node, label, steps);
     }
 
     fn collects_option_list(&self, collect: Node, mapped: Node) -> bool {
@@ -2452,6 +2464,50 @@ impl Reader<'_, '_> {
         exact_name(option) == Some("core::option::Option")
             && matches!(exact_name(list), Some("alloc::vec::Vec" | "std::vec::Vec"))
             && single_type_argument(list).is_some()
+    }
+
+    fn collects_result_vec(&self, collect: Node<'_>, mapped: Node<'_>) -> bool {
+        if !self.op(collect).is_some_and(|op| op.family == Family::Iter && op.name == "collect") {
+            return false;
+        }
+        if !self.maps_to_standard_result(mapped) {
+            return false;
+        }
+        let Some(callee) = collect.child_by_field_name("function") else { return false };
+        let target = if callee.kind() == "generic_function" {
+            single_type_argument(callee)
+        } else {
+            let mut value = collect;
+            while let Some(parent) = value.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+                value = parent;
+            }
+            value.parent().filter(|parent| {
+                parent.kind() == "let_declaration" && parent.child_by_field_name("value") == Some(value)
+            }).and_then(|declaration| declaration.child_by_field_name("type"))
+        };
+        let Some(identities) = self.evidence.default_types else { return false };
+        matches!(target.and_then(|ty| written_default_collection(ty, identities)), Some(DefaultCollection {
+            name: "Vec", container: Some(DefaultType::Result), mutable_reference: false,
+        }))
+    }
+
+    fn maps_to_standard_result(&self, mapped: Node<'_>) -> bool {
+        if !self.op(mapped).is_some_and(|op| op.family == Family::Iter && op.name == "map") {
+            return false;
+        }
+        let Some((_, position)) = receiver(mapped) else { return false };
+        let Some(closure) = argument(mapped, usize::from(position.is_some())) else { return false };
+        if closure.kind() != "closure_expression" || children(closure).iter().any(|token| token.kind() == "async") {
+            return false;
+        }
+        if let Some(ty) = closure.child_by_field_name("return_type") {
+            return self.evidence.default_types.is_some_and(|types| written_result_type(ty, types));
+        }
+        let Some(value) = closure_result(closure).map(unparen) else { return false };
+        self.evidence.result_calls.contains(&range(value)) || self.op(value).is_some_and(|op| {
+            matches!((op.family, op.name.as_str()),
+                (Family::Result, "Ok") | (Family::Option, "ok_or" | "ok_or_else"))
+        })
     }
 
     fn receiver_is_reference(&self, receiver: Node) -> bool {

@@ -26,7 +26,7 @@ use tree_sitter::Node;
 
 use crate::reading::{
     DefaultCollection, DefaultType, Evidence, Family, NumericAlias, Operations, Resolved,
-    TypeIdentities, may_shadow_cast_type, written_default_collection,
+    TypeIdentities, may_shadow_cast_type, written_default_collection, written_result_type,
 };
 
 /// Semantic facts from `rust-analyzer scip`.
@@ -612,6 +612,7 @@ struct ReturnType {
     info: TypeInfo,
     cast_alias: Option<NumericAlias>,
     default_collection: Option<DefaultCollection>,
+    std_result: bool,
     generics: Vec<Option<String>>,
     parameters: Vec<Option<TypeShape>>,
     receiver: bool,
@@ -1267,11 +1268,13 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             param.child_by_field_name("type").map(|ty| written_shape(ty, text, identities))
         }).collect();
         let cast_alias = cast_alias_at(&definition.file, ty);
-        let default_collection = (function.kind() == "function_item"
+        let synchronous = function.kind() == "function_item"
             && !named_children(function).iter().any(|part| part.kind() == "function_modifiers"
-                && nodex_lang_api::syntax::children(*part).iter().any(|token| token.kind() == "async")))
-            .then(|| written_default_collection(ty, default_types.get(&definition.file)?)).flatten();
-        Some((symbol, (definition, ReturnType { info, cast_alias, default_collection, generics, parameters, receiver, owner, owner_generics })))
+                && nodex_lang_api::syntax::children(*part).iter().any(|token| token.kind() == "async"));
+        let identities = default_types.get(&definition.file).filter(|_| synchronous);
+        let default_collection = identities.and_then(|types| written_default_collection(ty, types));
+        let std_result = identities.is_some_and(|types| written_result_type(ty, types));
+        Some((symbol, (definition, ReturnType { info, cast_alias, default_collection, std_result, generics, parameters, receiver, owner, owner_generics })))
     }).collect();
     for (definition, result) in return_types.values() {
         facts.types.push(TypeFact { site: (*definition).clone(), target: ValueFactTarget::Member, info: result.info.clone() });
@@ -1307,6 +1310,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let mut field_uses = Vec::new();
         let mut alias_values = HashMap::new();
         let mut default_values = HashMap::new();
+        let mut result_calls = HashMap::new();
         let vec_macros: HashSet<_> = doc.occurrences.iter().filter_map(|occurrence| {
             let symbol = parse_symbol(&occurrence.symbol)?;
             (symbol.standard() && matches!(display(&symbol).as_str(), "alloc::macros::vec!" | "alloc::vec!" | "std::vec!"))
@@ -1571,6 +1575,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                         returns.and_then(|result| result.cast_alias.as_ref()));
                     record_unambiguous(&mut default_values, (at.start_byte(), at.end_byte()),
                         returns.and_then(|result| result.default_collection));
+                    record_unambiguous(&mut result_calls, (at.start_byte(), at.end_byte()),
+                        returns.is_some_and(|result| result.std_result));
                 }
                 if ref_kind == RefKind::Call && let Some((_, result)) = return_types.get(o.symbol.as_str()) {
                     let range = (at.start_byte(), at.end_byte());
@@ -1633,6 +1639,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             default_types: default_types.get(&rel),
             default_collections: default_values.into_iter()
                 .filter_map(|(range, proof)| Some((range, proof.flatten()?))).collect(),
+            result_calls: result_calls.into_iter()
+                .filter_map(|(range, proof)| (proof == Some(true)).then_some(range)).collect(),
             definitions: Some(&local_definitions),
             uses: &local_uses,
             precise_captures: match edition {
