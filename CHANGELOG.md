@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide explains when `Option::is_some_and` and `Option::is_none_or` call the test function and what each method returns for `None`.
 - The Rust Blueprint Guide names the empty `Vec` or `IndexMap` installed by `mem::take` or returned by `unwrap_or_default` when Rust Analyzer confirms the collection type.
 - Rust Blueprints explain the paths through `let` conditions and short-circuit operators, which bounds a range includes, and where borrowed values come from. The Guide shows the full explanations, and the Inspector highlights the Rust syntax each explanation describes.
 - The Inspector keeps Rust declaration explanations visible across its tabs. Select a row to jump to the signature or type it describes.

@@ -3499,6 +3499,12 @@ fn patterns(node: Node<'_>) -> Vec<Node<'_>> {
 
 fn option_paths(name: &str) -> Vec<ReadingBranch> {
     let (found, output, missing, absent) = match name {
+        "is_some_and" | "is_none_or" => (
+            "Call the predicate with the value inside Some",
+            "The predicate's bool result",
+            "Skip calling the predicate",
+            if name == "is_some_and" { "false" } else { "true" },
+        ),
         "map" => (
             "Run the callback with the value",
             "Some(callback result)",
