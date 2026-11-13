@@ -2036,7 +2036,8 @@ impl Reader<'_, '_> {
         let callback_arg = usize::from(position.is_some());
         let callback =
             argument(node, callback_arg).filter(|node| node.kind() == "closure_expression");
-        if family == Family::Option && name == "get_or_insert_with" {
+        let eager_insert = family == Family::Option && name == "get_or_insert";
+        if family == Family::Option && matches!(name, "get_or_insert" | "get_or_insert_with") {
             self.fact(node, BorrowRule::Lookup {
                 input: BorrowInput { argument: position, value: self.receiver_is_reference(recv) },
                 projection: " (present contents)".into(),
@@ -2070,7 +2071,28 @@ impl Reader<'_, '_> {
                 },
             );
         }
-        let mut input = self.short(recv);
+        let mut input = match (family, name) {
+            (Family::Option, "replace") => format!("Replace the contents of {}", self.short(recv)),
+            (Family::Option, "get_or_insert") => format!("Keep or fill {}", self.short(recv)),
+            (Family::Option | Family::Result, "unwrap_or_default") => format!("Read {} or use its default", self.short(recv)),
+            _ => self.short(recv),
+        };
+        let mut span = self.src.span(node);
+        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
+            let member = method_call(node).map(|(_, member)| member).or_else(|| {
+                let callee = node.child_by_field_name("function")?;
+                let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
+                callee.child_by_field_name("name")
+            });
+            if let Some(member) = member {
+                span = self.src.span(member);
+            }
+        }
+        if eager_insert && let Some(value) = argument(node, callback_arg) {
+            self.steps(node, "Evaluate the candidate before checking the option", vec![
+                self.step(value, "Before the method runs", format!("Evaluate {} even if the option already contains a value.", self.written(value, 80))),
+            ]);
+        }
         if family == Family::Option && name == "unwrap_or_else"
             && self.op(unparen(recv)).is_some_and(|op| op.family == Family::Option && op.name == "take")
             && let Some((place, _)) = receiver(unparen(recv))
@@ -2152,7 +2174,7 @@ impl Reader<'_, '_> {
         if let Some(info) = &result {
             self.inferred(node, info);
         }
-        self.paths(node, self.src.span(node), true, input, paths, result);
+        self.paths(node, span, true, input, paths, result);
     }
 
     fn macro_call(&mut self, node: Node<'_>) {
@@ -3247,6 +3269,18 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
             ];
         }
         "take" => ("Move the contents out and leave None", "Some(previous value)", "Leave the slot empty", "None"),
+        "replace" => (
+            "Store the new value as Some and give back the previous value",
+            "Some(previous value)",
+            "Store the new value as Some in the empty option",
+            "None",
+        ),
+        "get_or_insert" => (
+            "Keep the existing contents and discard the evaluated candidate",
+            "Mutable reference to the existing value",
+            "Store the evaluated candidate as Some",
+            "Mutable reference to the inserted value",
+        ),
         "get_or_insert_with" => ("Borrow the existing contents for writing", "Mutable reference", "Call the initializer and store its result", "Mutable reference"),
         "unwrap_or" => (
             "Evaluate the default and keep the present value",
@@ -3259,6 +3293,12 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
             "value",
             "Run the fallback callback",
             "callback result",
+        ),
+        "unwrap_or_default" => (
+            "Use the value inside Some",
+            "value",
+            "Call Default::default() for the value type",
+            "default value",
         ),
         "unwrap" | "expect" => (
             "Take the present value",
@@ -3317,6 +3357,12 @@ fn result_paths(name: &str) -> Vec<ReadingBranch> {
             "None",
             "Keep the error inside Err",
             "Some(error)",
+        ),
+        "unwrap_or_default" => (
+            "Use the value inside Ok",
+            "value",
+            "Discard the error and call Default::default() for the success type",
+            "default value",
         ),
         "map" => (
             "Run the callback with the value",
