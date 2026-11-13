@@ -1691,7 +1691,7 @@ impl Reader<'_, '_> {
             branches[0].output = "Continue this callback with the value".into();
             branches[1].output = output.into();
         } else {
-            if let Some(resume) = question_mark_condition(node) {
+            if let Some(resume) = question_mark_condition(node).or_else(|| question_mark_consumer(node)) {
                 branches[0].output = resume.into();
             } else {
                 branches[0].pin = Some("out".into());
@@ -3136,6 +3136,39 @@ fn question_mark_condition(mut node: Node<'_>) -> Option<&'static str> {
         node = parent;
     }
     None
+}
+
+fn question_mark_consumer(mut node: Node<'_>) -> Option<&'static str> {
+    while let Some(parent) = node.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+        node = parent;
+    }
+    let parent = node.parent()?;
+    match parent.kind() {
+        "arguments" if parent.parent().is_some_and(|call| call.kind() == "call_expression") =>
+            Some("Use the value to continue evaluating the call"),
+        "call_expression" if parent.child_by_field_name("function") == Some(node) =>
+            Some("Use the value to continue evaluating the call"),
+        "field_expression" if parent.child_by_field_name("value") == Some(node) => {
+            let mut callee = parent;
+            if let Some(generic) = parent.parent().filter(|generic| generic.kind() == "generic_function"
+                && generic.child_by_field_name("function") == Some(parent)) {
+                callee = generic;
+            }
+            let receiver_of_call = callee.parent().and_then(method_call)
+                .is_some_and(|(receiver, _)| receiver == node);
+            Some(if receiver_of_call {
+                "Use the value to continue evaluating the call"
+            } else {
+                "Use the value to continue evaluating the field access"
+            })
+        }
+        "unary_expression" | "binary_expression" | "type_cast_expression" | "index_expression"
+        | "reference_expression" | "await_expression" | "try_expression" | "tuple_expression"
+        | "array_expression" | "field_initializer" | "base_field_initializer"
+        | "assignment_expression" | "compound_assignment_expr" | "range_expression" =>
+            Some("Use the value to continue evaluating this expression"),
+        _ => None,
+    }
 }
 
 fn vec_repeat_operand<'a>(src: Src<'a>, tokens: &[Node<'_>]) -> Option<(&'a str, Span)> {

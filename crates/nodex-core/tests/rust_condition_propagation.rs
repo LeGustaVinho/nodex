@@ -82,7 +82,8 @@ fn successful_propagation_in_a_decision_keeps_evaluating_that_decision() {
     let callback = ir.flows.iter().find(|graph| graph.name == "callback closure").unwrap();
     let (_, site) = question_marks(callback, source).next().unwrap();
     assert!(matches!(&site.content, ReadingContent::Paths { branches, .. }
-        if branches[0].pin.as_deref() == Some("out") && branches[1].action == "Return from this closure"));
+        if branches[0].pin.is_none() && branches[0].output == "Use the value to continue evaluating the call"
+            && branches[1].action == "Return from this closure"));
 }
 
 #[test]
@@ -129,5 +130,60 @@ fn let_else_tests_the_pattern_after_successful_propagation() {
     let (node, question) = question_marks(alternate, source).next().unwrap();
     assert_eq!(node.concept, Concept::Return);
     assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
-        if branches[0].pin.as_deref() == Some("out") && branches[1].pin.as_deref() == Some("error")));
+        if branches[0].pin.is_none() && branches[0].output == "Use the value to continue evaluating the call"
+            && branches[1].pin.as_deref() == Some("error")));
+}
+
+#[test]
+fn question_mark_success_finishes_the_surrounding_expression_before_advancing() {
+    let source = r#"
+        fn catalog(input: Option<Result<Vec<u8>, String>>) -> Result<Vec<u8>, String> {
+            let result = (input.transpose()?).unwrap_or_default();
+            Ok(result)
+        }
+        fn plain(input: Option<Result<Vec<u8>, String>>) -> Result<Option<Vec<u8>>, String> {
+            let result = (input.transpose()?);
+            Ok(result)
+        }
+        fn standalone(input: Option<Result<Vec<u8>, String>>) -> Result<(), String> {
+            input.transpose()?;
+            Ok(())
+        }
+        fn field(input: Result<(u8, u8), String>) -> Result<u8, String> {
+            let result = input?.0;
+            Ok(result)
+        }
+        fn cast(input: Result<i32, String>) -> Result<i64, String> {
+            let result = input? as i64;
+            Ok(result)
+        }
+        fn chain(input: Result<Option<u8>, String>) -> Result<u8, String> {
+            let result = input?.ok_or(String::new())?;
+            Ok(result)
+        }
+    "#;
+    let ir = lower_source("src/lib.rs", source);
+    for (name, output, pin) in [
+        ("catalog", "Use the value to continue evaluating the call", None),
+        ("plain", "Continue", Some("out")),
+        ("standalone", "Continue", Some("out")),
+        ("field", "Use the value to continue evaluating the field access", None),
+        ("cast", "Use the value to continue evaluating this expression", None),
+    ] {
+        let graph = ir.flows.iter().find(|flow| flow.name == name).unwrap();
+        let (node, site) = question_marks(graph, source).next().unwrap();
+        assert!(matches!(&site.content, ReadingContent::Paths { branches, .. }
+            if branches[0].pin.as_deref() == pin && branches[0].output == output
+                && branches[1].pin.as_deref() == Some("error")), "{name}: {site:?}");
+        assert!(graph.edges.iter().any(|edge| edge.kind == FlowEdgeKind::Exec
+            && edge.from == node.id && edge.from_pin == "out"));
+    }
+    let graph = ir.flows.iter().find(|flow| flow.name == "chain").unwrap();
+    let mut sites = question_marks(graph, source).map(|(_, site)| site).collect::<Vec<_>>();
+    sites.sort_by_key(|site| site.span.start_byte);
+    let [first, last] = sites.as_slice() else { panic!("{sites:?}") };
+    assert!(matches!(&first.content, ReadingContent::Paths { branches, .. }
+        if branches[0].pin.is_none() && branches[0].output == "Use the value to continue evaluating the call"));
+    assert!(matches!(&last.content, ReadingContent::Paths { branches, .. }
+        if branches[0].pin.as_deref() == Some("out")));
 }
