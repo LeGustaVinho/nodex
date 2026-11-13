@@ -2083,7 +2083,7 @@ impl Reader<'_, '_> {
             ),
             Some("select") => (
                 "Wait for one eligible branch",
-                "Poll the eligible futures in the current task. Run the first completed branch whose pattern matches, and stop polling the other futures in this selection.",
+                "Poll the eligible futures in the current task. When a future completes and its pattern matches, stop polling the other futures and run that branch's handler. A handler that finishes normally supplies the result of select!.",
             ),
             _ => (
                 "Macro invocation",
@@ -2106,37 +2106,54 @@ impl Reader<'_, '_> {
 
     fn select_branches(&mut self, node: Node) {
         let Some(tree) = named_children(node).into_iter().find(|child| child.kind() == "token_tree") else { return };
+        if tree.has_error() {
+            return;
+        }
         let tokens: Vec<_> = children(tree).into_iter().filter(|token| !token.is_extra()).collect();
-        let mut start = 1;
+        let loop_body = select_loop_body(node);
+        let mut start = if let [_, bias, separator, ..] = tokens.as_slice()
+            && self.src.text(*bias) == "biased" && separator.kind() == ";"
+        {
+            3
+        } else {
+            1
+        };
         let mut steps = Vec::new();
         for (arrow, token) in tokens.iter().enumerate().filter(|(_, token)| self.src.text(**token) == "=>") {
             if arrow < start {
                 continue;
             }
             let before = &tokens[start..arrow];
+            let body = &tokens[arrow + 1..];
+            let exit = loop_body.and_then(|kind| select_loop_exit(body, kind));
             if let Some(equal) = before.iter().position(|token| self.src.text(*token) == "=")
                 && let Some(first) = before.get(equal + 1)
                 && let Some(last) = before.last()
+                && select_branch_pattern(self.src, &before[..equal])
             {
                 let wait = self.src.text.get(first.start_byte()..last.end_byte()).unwrap_or("");
-                steps.push(self.step(*token, "When ready and the pattern matches", format!("{wait} → run this branch")));
-            } else if before.last().is_some_and(|last| self.src.text(*last) == "else") {
-                steps.push(self.step(*token, "If all branches are disabled", "Run the else branch"));
+                let (at, action) = exit.unwrap_or((*token, "run this branch"));
+                steps.push(self.step(at, "When ready and the pattern matches", format!("{wait} → {action}")));
+            } else if let [otherwise] = before && self.src.text(*otherwise) == "else" {
+                let (at, action) = exit.unwrap_or((*token, "Run the else branch"));
+                steps.push(self.step(at, "If all branches are disabled", action));
+            } else {
+                break;
             }
-            let body = &tokens[arrow + 1..];
             start = if body.first().is_some_and(|token| {
                 token.kind() == "token_tree" && self.src.text(*token).starts_with('{')
             }) {
+                // A bare block handler can omit its comma. The next prefix must still
+                // look like a branch before we attribute a handler to it.
                 arrow + 2 + usize::from(body.get(1).is_some_and(|token| token.kind() == ","))
             } else {
-                body.iter().position(|token| token.kind() == ",").map_or(tokens.len(), |comma| arrow + 2 + comma)
+                select_handler_comma(self.src, body).map_or(tokens.len(), |comma| arrow + 2 + comma)
             };
             if start >= tokens.len() {
                 break;
             }
         }
         if !steps.is_empty() {
-            steps.push(self.step(node, "After a branch is chosen", "Stop polling the other futures in this selection."));
             self.steps(node, "Wait for one eligible branch", steps);
         }
     }
@@ -2682,6 +2699,60 @@ impl Reader<'_, '_> {
         walk_pattern(pattern, context, &mut collect, self.src);
         parts
     }
+}
+
+fn select_loop_body(mut node: Node<'_>) -> Option<&'static str> {
+    while let Some(parent) = node.parent() {
+        match parent.kind() {
+            "loop_expression" | "while_expression" => {
+                return (parent.child_by_field_name("body") == Some(node)).then(|| parent.kind());
+            }
+            // The iterator expression is outside the scope of this `for`.
+            "for_expression" if parent.child_by_field_name("body") == Some(node) => return Some(parent.kind()),
+            "block" if named_children(parent).iter().any(|child| child.kind() == "label") => return None,
+            "function_item" | "closure_expression" | "async_block" | "gen_block" | "const_block" | "const_item" | "static_item"
+            | "macro_invocation" | "token_tree" => return None,
+            _ => {}
+        }
+        node = parent;
+    }
+    None
+}
+
+fn select_loop_exit<'tree>(body: &[Node<'tree>], loop_kind: &str) -> Option<(Node<'tree>, &'static str)> {
+    let [handler, next, ..] = body else { return None };
+    if next.kind() != "," && !(body.len() == 2 && matches!(next.kind(), "}" | ")" | "]") && !next.is_missing()) {
+        return None;
+    }
+    let action = match handler.kind() {
+        "break" => "Leave the enclosing loop. This select! supplies no value on this path.",
+        "continue" => match loop_kind {
+            "for_expression" => "Skip the rest of this iteration and ask the enclosing loop for the next item. This select! supplies no value on this path.",
+            "while_expression" => "Skip the rest of this iteration and check the enclosing loop's condition again. This select! supplies no value on this path.",
+            _ => "Skip the rest of this iteration and start the next one. This select! supplies no value on this path.",
+        },
+        _ => return None,
+    };
+    Some((*handler, action))
+}
+
+fn select_handler_comma(src: Src, body: &[Node<'_>]) -> Option<usize> {
+    let first = body.first()?;
+    body.iter().enumerate().take_while(|(_, token)| token.kind() != "=>")
+        .filter(|(_, token)| token.kind() == ",")
+        .find_map(|(index, comma)| {
+            let handler = &src.text[first.start_byte()..comma.start_byte()];
+            // Top-level token trees also expose commas in closure parameters and generic arguments.
+            let wrapped = format!("fn handler() {{ let _ = {handler}; }}");
+            crate::parse(&wrapped).filter(|tree| !tree.root_node().has_error()).map(|_| index)
+        })
+}
+
+fn select_branch_pattern(src: Src, tokens: &[Node<'_>]) -> bool {
+    let (Some(first), Some(last)) = (tokens.first(), tokens.last()) else { return false };
+    let pattern = &src.text[first.start_byte()..last.end_byte()];
+    let wrapped = format!("fn check() {{ match () {{ {pattern} => () }} }}");
+    crate::parse(&wrapped).is_some_and(|tree| !tree.root_node().has_error())
 }
 
 enum PatternItem {
@@ -3239,6 +3310,44 @@ mod tests {
     use nodex_lang_api::kit::LineIndex;
 
     #[test]
+    fn select_direct_handler_uses_its_own_future_and_keyword_span() {
+        let text = r#"async fn run() {
+            loop {
+                let mut selected = tokio::select! {
+                    _ = ready(()) => |_: (), _: ()| x = y,
+                    _ = ready(()) => break,
+                    _ = ready(()) => continue
+                };
+                selected((), ());
+            }
+        }"#;
+        let tree = crate::parse(text).unwrap();
+        let root = tree.root_node();
+        let offset = text.find("select!").unwrap();
+        let name = root.descendant_for_byte_range(offset, offset + "select".len()).unwrap();
+        let call = std::iter::successors(Some(name), Node::parent).find(|node| node.kind() == "macro_invocation").unwrap();
+        let index = LineIndex::new(text);
+        let src = Src { text, file: "select.rs", index: &index };
+        let evidence = Evidence {
+            operations: [(range(call), Some(Resolved { family: Family::Macro, name: "select".into(), definition: None }))].into(),
+            ..Default::default()
+        };
+        let (reading, _, _) = collect(src, root, &evidence);
+        let steps = reading.iter().find_map(|fact| match &fact.content {
+            ReadingContent::Steps { steps, .. } => Some(steps),
+            _ => None,
+        }).unwrap();
+        assert_eq!(steps.len(), 3, "{steps:?}");
+        for (step, keyword, action) in [
+            (&steps[1], "break", "Leave the enclosing loop"),
+            (&steps[2], "continue", "Skip the rest of this iteration"),
+        ] {
+            assert_eq!(&text[step.span.start_byte as usize..step.span.end_byte as usize], keyword);
+            assert!(step.action.starts_with(&format!("ready(()) → {action}")), "{step:?}");
+        }
+    }
+
+    #[test]
     fn select_keeps_block_arms_with_or_without_commas() {
         let text = r#"fn run() {
             tokio::select! {
@@ -3265,7 +3374,7 @@ mod tests {
             ReadingContent::Steps { steps, .. } => Some(steps),
             _ => None,
         }).unwrap();
-        assert_eq!(steps.len(), 4, "{steps:?}");
+        assert_eq!(steps.len(), 3, "{steps:?}");
         assert!(steps[0].action.contains("rx.recv(), if ready"));
         assert!(steps[1].action.contains("wait()"));
         assert_eq!(steps[2].action, "Run the else branch");

@@ -34,6 +34,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Rust Guide highlights the semicolon in `[value; length]` and explains how Rust determines the array length and evaluates the repeated value.
 - The Rust Guide highlights `..base` in a struct expression and explains when Rust evaluates the base and how it fills the omitted fields.
 - The Rust Guide shows when `array::from_fn` calls a function for each index and when `iter::from_fn` waits for a request for the next item.
+- In a recognized `tokio::select!` inside a loop, the Rust Guide explains when a branch's direct `break` leaves the loop or `continue` starts the next iteration.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
