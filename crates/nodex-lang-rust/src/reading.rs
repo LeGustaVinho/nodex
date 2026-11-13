@@ -258,6 +258,7 @@ pub(crate) enum Family {
     ArrayFromFn,
     IterFromFn,
     MemReplace,
+    OnceLock,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -986,6 +987,10 @@ impl Reader<'_, '_> {
                     let operation = self.op(call)?;
                     if let Some(callback) = IteratorCallback::operation(operation) {
                         callback.is_callback(call, scope).then(|| callback.timing().into())
+                    } else if operation.family == Family::OnceLock && operation.name == "get_or_init" {
+                        let (_, receiver_argument) = receiver(call)?;
+                        (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
+                            .then(|| "If this call runs the initializer".into())
                     } else if operation.family == Family::Option && operation.name == "take_if" {
                         let (_, receiver_argument) = receiver(call)?;
                         (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
@@ -1756,6 +1761,7 @@ impl Reader<'_, '_> {
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
+            Family::OnceLock => self.once_lock_call(node, &name),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
             }
@@ -1896,6 +1902,44 @@ impl Reader<'_, '_> {
             true,
             ReadingContent::Steps { label: label.into(), steps },
         );
+    }
+
+    fn once_lock_call(&mut self, node: Node<'_>, name: &str) {
+        let Some((receiver, _)) = receiver(node) else { return };
+        let member = method_call(node).map(|(_, member)| member).or_else(|| {
+            let callee = node.child_by_field_name("function")?;
+            callee.child_by_field_name("name")
+        }).unwrap_or(node);
+        let receiver = self.short(receiver);
+        let (input, branches) = match name {
+            "take" => {
+                let mut expr = node;
+                while let Some(parent) = expr.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+                    expr = parent;
+                }
+                let discarded = expr.parent().is_some_and(|parent| parent.kind() == "expression_statement"
+                    && children(parent).iter().any(|token| token.kind() == ";"));
+                let output = |value: &str| {
+                    if discarded { format!("Discarded {value}") } else { value.into() }
+                };
+                (format!("Take the contents of the cell {receiver}"), vec![
+                    branch("Initialized", "Move the stored value out and leave the cell uninitialized.", output("Some(previous value)")),
+                    branch("Uninitialized", "Leave the cell uninitialized.", output("None")),
+                ])
+            }
+            "get_mut" => (format!("Try to borrow the contents of {receiver} for writing"), vec![
+                branch("Initialized", "Borrow the stored value mutably so the caller can change it.", "Some(mutable reference)"),
+                branch("Uninitialized", "Leave the cell empty.", "None"),
+            ]),
+            "get_or_init" => (format!("Read or initialize {receiver}"), vec![
+                branch("Initialized", "Reuse the stored value and skip this initializer.", "Shared reference"),
+                branch("This initializer returns", "Run this initializer and store its result.", "Shared reference to the stored result"),
+                branch("Another thread finishes initialization first", "Use its stored value, waiting if needed.", "Shared reference to the stored result"),
+                branch("This initializer panics", "Propagate the panic. This initialization attempt leaves the cell uninitialized.", "No value is returned"),
+            ]),
+            _ => return,
+        };
+        self.paths(node, self.src.span(member), true, input, branches, None);
     }
 
     fn from_fn(&mut self, node: Node<'_>, family: Family) {

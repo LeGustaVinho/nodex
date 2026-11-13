@@ -344,7 +344,13 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             let family = if matches!(method, "iter" | "iter_mut") { Family::Iter } else { Family::Slice };
             return Some((family, method.into()));
         }
-        if sym.package == "core" && matches!(descriptor, "bool/impl#[bool]then()." | "bool/impl#[bool]then_some().") {
+        if sym.package == "std" && matches!(descriptor,
+            "sync/once_lock/impl#[`OnceLock<T>`]take()."
+            | "sync/once_lock/impl#[`OnceLock<T>`]get_mut()."
+            | "sync/once_lock/impl#[`OnceLock<T>`]get_or_init().")
+        {
+            Family::OnceLock
+        } else if sym.package == "core" && matches!(descriptor, "bool/impl#[bool]then()." | "bool/impl#[bool]then_some().") {
             Family::Bool
         } else if descriptor.starts_with("sync/impl#[`Arc<") && name == "clone" && sym.package == "alloc" {
             Family::Arc
