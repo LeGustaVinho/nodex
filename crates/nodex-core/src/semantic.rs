@@ -387,6 +387,12 @@ pub(crate) fn annotate_expression_facts<'a>(flow: &mut FlowGraph, facts: impl It
                     ExpressionFactKind::ReferenceCopy => "reference-copy".into(),
                     ExpressionFactKind::Dynamic => "dynamic".into(),
                     ExpressionFactKind::Freeze => "runtime-freeze".into(),
+                    ExpressionFactKind::BooleanAssignment => {
+                        if expr.concept == Concept::Assign && matches!(expr.op.as_deref(), Some("bit_and" | "bit_or")) {
+                            expr.op = None;
+                        }
+                        continue;
+                    }
                     ExpressionFactKind::Spawn | ExpressionFactKind::Sleep | ExpressionFactKind::ChannelSend
                     | ExpressionFactKind::ProcessExit => continue,
                 };

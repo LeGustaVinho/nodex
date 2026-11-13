@@ -1406,6 +1406,13 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                 } else {
                     None
                 };
+                if boolean_assignment.is_some() {
+                    facts.expressions.push(ExpressionFact {
+                        site: site(expression.start_byte(), expression.end_byte()),
+                        kind: ExpressionFactKind::BooleanAssignment,
+                        ty: None,
+                    });
+                }
                 let (label, text) = boolean_assignment.map_or_else(
                     || ("Resolve the operator", format!("This operator calls {}.", target.display)),
                     |(label, text)| (label, text.into()),

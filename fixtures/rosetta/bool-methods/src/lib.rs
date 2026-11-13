@@ -44,6 +44,11 @@ pub fn assign_with_early_exit(mut lost: bool, update: Option<bool>) -> Option<bo
     Some(lost)
 }
 
+pub fn assign_in_value(left: &mut bool, right: &mut bool, update: bool) -> (Option<()>, Option<()>) {
+    let first = Some(*left |= update);
+    (first, Some(*right &= update))
+}
+
 pub fn assign_integer(mut mask: u32, flags: u32) -> u32 {
     mask |= flags;
     mask &= flags;

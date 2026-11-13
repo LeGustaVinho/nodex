@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Inspector presents proven boolean `|=` and `&=` as assignments, without the numeric bitwise signature.
 - Rust Blueprints show that boolean `|=` and `&=` still evaluate the right-hand expression when the destination already determines the result.
 - The Rust Blueprint Guide shows how iterator `zip` forms pairs and what happens when one input has no item for the pair.
 - The Rust Blueprint Guide shows what makes iterator `any` and `all` stop, including their results when there are no items to test.

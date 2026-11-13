@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use nodex_core::Project;
-use nodex_ir::{FlowEdgeKind, FlowGraph, Language, ValueBasis, reading::{ReadingContent, ReadingSite}};
+use nodex_ir::{Concept, Expr, FlowEdgeKind, FlowGraph, Language, ValueBasis, reading::{ReadingContent, ReadingSite}};
 use nodex_lang_api::LanguageFrontend;
 use nodex_lang_rust::RustFrontend;
 
@@ -35,6 +35,24 @@ fn assignments(flow: &FlowGraph) -> Vec<(&ReadingSite, &str, &str)> {
         }
         Some((site, label.as_str(), text.as_str()))
     }).collect()
+}
+
+fn assignment_ops(flow: &FlowGraph) -> Vec<(&str, Option<&str>)> {
+    fn collect<'a>(expr: &'a Expr, ops: &mut Vec<(&'a str, Option<&'a str>)>) {
+        if expr.concept == Concept::Assign && matches!(expr.label.as_str(), "|=" | "&=") {
+            ops.push((&expr.label, expr.op.as_deref()));
+        }
+        for child in &expr.children {
+            collect(child, ops);
+        }
+    }
+
+    let mut ops = Vec::new();
+    for expr in flow.nodes.iter().filter_map(|node| node.expr.as_ref()) {
+        collect(expr, &mut ops);
+    }
+    ops.sort_unstable();
+    ops
 }
 
 #[test]
@@ -130,4 +148,27 @@ fn scip_explains_eager_primitive_boolean_assignment_and_its_store() {
                 ReadingContent::Detail { label, .. } if label == "Resolve the operator")));
         }
     }
+}
+
+#[test]
+#[ignore = "needs rust-analyzer"]
+fn scip_removes_the_numeric_catalog_operation_from_proven_boolean_assignments() {
+    let mut project = open();
+    for name in ["assign_boolean", "assign_in_value"] {
+        let graph = flow(&mut project, name);
+        assert_eq!(assignment_ops(&graph), [("&=", Some("bit_and")), ("|=", Some("bit_or"))]);
+    }
+    let mut provider = RustFrontend.semantic(project.root()).unwrap().unwrap();
+    project.apply_semantic(Language::Rust, provider.analyze().unwrap());
+
+    for name in ["assign_boolean", "assign_in_value"] {
+        let graph = flow(&mut project, name);
+        assert_eq!(assignment_ops(&graph), [("&=", None), ("|=", None)]);
+        assert_eq!(assignments(&graph).len(), 2);
+    }
+    for name in ["assign_integer", "assign_by_reference"] {
+        let graph = flow(&mut project, name);
+        assert_eq!(assignment_ops(&graph), [("&=", Some("bit_and")), ("|=", Some("bit_or"))]);
+    }
+    assert_eq!(assignment_ops(&flow(&mut project, "assign_custom")), [("|=", Some("bit_or"))]);
 }

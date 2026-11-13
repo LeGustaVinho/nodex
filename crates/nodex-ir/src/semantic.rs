@@ -137,6 +137,7 @@ pub enum ExpressionFactKind {
     Sleep,
     ChannelSend,
     ProcessExit,
+    BooleanAssignment,
 }
 
 /// An exact source site classified by a language's type checker.
