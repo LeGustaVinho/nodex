@@ -240,8 +240,7 @@ fn match_expr(e: &Expr, language: Language) -> Option<String> {
     // Calls resolved to a project method are the project's, whatever their name.
     let project_symbol = e.symbol.is_some();
     for (pattern, key) in candidates {
-        if pattern.call != call || (language == Language::Rust && key == "list.flatten"
-            && e.target.as_deref() == Some("core::option::Option::flatten()")) {
+        if pattern.call != call || (language == Language::Rust && rust_target_conflicts(key, e.target.as_deref())) {
             continue;
         }
         let ok = match (&pattern.receiver, &receiver) {
@@ -260,6 +259,15 @@ fn match_expr(e: &Expr, language: Language) -> Option<String> {
         }
     }
     None
+}
+
+/// Calls that share a name with a catalog operation but have a different Rust library contract.
+fn rust_target_conflicts(operation: &str, target: Option<&str>) -> bool {
+    matches!((operation, target),
+        ("list.flatten", Some("core::option::Option::flatten()"))
+        | ("text.replace", Some("core::option::Option::replace()"))
+        | ("text.join", Some("std::path::Path::join()"))
+    )
 }
 
 /// Standard-library containers whose methods `*.name` patterns may match once a semantic
