@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide follows a successful `?` from the selected `if` branch or `match` arm into the expression that uses its value.
 - Rust Blueprints show `mem::replace` as a value replacement when Rust Analyzer resolves it, without a text operation label.
 - When a Rust block supplies the argument or receiver of a call, the Blueprint Guide shows that a successful `?` in the final expression still feeds that call.
 - Rust Blueprints keep the `Option::replace` and `Path::join` calls distinct from text replacement and joining when Rust Analyzer resolves the methods.

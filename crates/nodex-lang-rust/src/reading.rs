@@ -3210,6 +3210,18 @@ fn question_mark_consumer(mut node: Node<'_>) -> Option<&'static str> {
             {
                 node = parent;
             }
+            "else_clause" if matches!(node.kind(), "block" | "if_expression") => node = parent,
+            "if_expression" if parent.child_by_field_name("consequence") == Some(node)
+                || parent.child_by_field_name("alternative") == Some(node) =>
+            {
+                node = parent;
+            }
+            "match_arm" if parent.child_by_field_name("value") == Some(node) => {
+                let body = parent.parent().filter(|body| body.kind() == "match_block")?;
+                let owner = body.parent().filter(|owner| owner.kind() == "match_expression"
+                    && owner.child_by_field_name("body") == Some(body))?;
+                node = owner;
+            }
             _ => break parent,
         }
     };

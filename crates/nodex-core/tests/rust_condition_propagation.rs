@@ -256,3 +256,66 @@ fn question_mark_at_the_end_of_a_block_feeds_the_enclosing_call() {
             && branches[0].output == "Continue"
             && branches[1].action == "Finish this async block"));
 }
+
+#[test]
+fn question_mark_at_the_end_of_an_arm_feeds_the_expression_that_uses_its_value() {
+    let source = r#"
+        fn offense(
+            charge: bool, secondary: bool, left: Result<f64, String>, right: Result<f64, String>,
+            multiplier: f64,
+        ) -> Result<f64, String> {
+            let total = if charge { left? } else if secondary { 0.0 } else { right? } * multiplier;
+            Ok(total)
+        }
+        fn request(flag: bool, input: Result<u32, String>) -> Result<u32, String> {
+            Ok(match flag {
+                true => input?,
+                false => 0,
+            })
+        }
+        fn compound(input: Result<f64, String>, resistance: Option<f64>) -> Result<f64, String> {
+            let mut value = 2.0;
+            value *= match resistance {
+                Some(value) => value,
+                None => { input? }
+            };
+            Ok(value)
+        }
+        fn discarded(flag: bool, input: Result<(), String>) -> Result<(), String> {
+            let value = (if flag { input?; } else {}) == ();
+            std::hint::black_box(value);
+            Ok(())
+        }
+        fn completed_arm(flag: bool, input: Result<u32, String>) -> Result<u32, String> {
+            let value = match flag { true => input?, false => 0 };
+            Ok(value)
+        }
+        fn guarded(guard: Result<bool, String>) -> Result<u32, String> {
+            Ok(match 1 { n if guard? => n, _ => 0 })
+        }
+        fn scrutinee(input: Result<bool, String>) -> Result<u32, String> {
+            Ok(match input? { true => 1, false => 0 })
+        }
+    "#;
+    let ir = lower_source("src/lib.rs", source);
+    for (function, count, pin, continuation) in [
+        ("offense", 2, None, "Use the value to continue evaluating this expression"),
+        ("request", 1, None, "Use the value to continue evaluating the call"),
+        ("compound", 1, None, "Use the value to continue evaluating this expression"),
+        ("discarded", 1, Some("out"), "Continue"),
+        ("completed_arm", 1, Some("out"), "Continue"),
+        ("guarded", 1, None, "Continue checking the match guard"),
+        ("scrutinee", 1, None, "Continue evaluating the value to match"),
+    ] {
+        let graph = ir.flows.iter().find(|flow| flow.name == function).unwrap();
+        let questions = question_marks(graph, source).collect::<Vec<_>>();
+        assert_eq!(questions.len(), count, "{function}");
+        for (_, question) in questions {
+            assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
+                if branches[0].pin.as_deref() == pin && branches[0].output == continuation
+                    && branches[1].pin.as_deref() == Some("error")
+                    && branches[1].action == format!("Return from {function}")),
+                "{function}: {question:?}");
+        }
+    }
+}
