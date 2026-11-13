@@ -392,6 +392,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         {
             Family::Map
         } else if path.starts_with("core::iter::traits::iterator::Iterator::")
+                && (name != "zip" || sym.package == "core" && descriptor == "iter/traits/iterator/Iterator#zip().")
             || path.starts_with("core::iter::traits::collect::IntoIterator::")
             || name == "into_iter" && descriptor.contains("][IntoIterator]into_iter().")
             || descriptor.rsplit_once("][Iterator]").is_some_and(|(_, method)| {

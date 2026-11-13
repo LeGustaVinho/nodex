@@ -1810,6 +1810,7 @@ impl Reader<'_, '_> {
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::Arc if matches!(name.as_str(), "make_mut" | "unwrap_or_clone") => self.arc_value(node, &name),
             Family::Peekable => self.peekable(node, &name),
+            Family::Iter if name == "zip" => self.iterator_zip(node),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
@@ -2371,6 +2372,19 @@ impl Reader<'_, '_> {
         self.push(self.src.span(node), span, false, detail("Supply generic arguments to collect", text));
     }
 
+    fn iterator_zip(&mut self, node: Node<'_>) {
+        let Some((left, receiver_argument)) = receiver(node) else { return };
+        let Some(right) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let left = self.written(left, 80);
+        let right = self.written(right, 80);
+        self.at(node, true, detail(
+            "Pair items from two inputs",
+            format!(
+                "Create an iterator over pairs from the current positions of both inputs. Each pair puts the item from {left} first and the item from {right} second. When advancing from the front, try the first input first. If either input yields no item for a request, the paired iterator yields None for that request. The first input may already have supplied an item that goes unpaired."
+            ),
+        ));
+    }
+
     fn sequence(&mut self, node: Node, consumer: &str) {
         let Some((mut source, _)) = receiver(node) else { return };
         let option_list = consumer == "collect" && self.collects_option_list(node, unparen(source));
@@ -2383,6 +2397,7 @@ impl Reader<'_, '_> {
                 "par_iter" => "Read items by reference, allowing parallel processing",
                 "par_iter_mut" => "Read disjoint items by mutable reference, allowing parallel processing",
                 "into_par_iter" => "Take the source by value for parallel processing",
+                "zip" if operation.family == Family::Iter => "Yield the next pair in input order if both inputs supply an item. Otherwise, yield None for this request",
                 "zip" => "Pair one item with an item from the other input",
                 "chain" => "Read the first input, then the second",
                 "flatten" => "Yield the items from each inner sequence",

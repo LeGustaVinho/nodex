@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide shows how iterator `zip` forms pairs and what happens when one input has no item for the pair.
 - The Rust Blueprint Guide shows what makes iterator `any` and `all` stop, including their results when there are no items to test.
 - The Rust Blueprint Guide explains how `Peekable::peek` and `next_if` can leave the next item available for a later call.
 - The Rust Blueprint Guide shows how iterator `find` and `position` stop at the first match and what each call returns.
