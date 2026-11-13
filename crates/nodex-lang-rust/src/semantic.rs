@@ -1388,14 +1388,36 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                         if *previous != output { *previous = None; }
                     }).or_insert(output);
                 }
+                let boolean_assignment = if expression.kind() == "compound_assignment_expr"
+                    && name.start_byte() == s && name.end_byte() == e
+                    && sym.package == "core" && sym.standard()
+                {
+                    match (name.kind(), sym.descriptors) {
+                        ("|=", "ops/bit/impl#[bool][`BitOrAssign<Self>`]bitor_assign().") => Some((
+                            "Update a boolean with OR",
+                            "Evaluate the right-hand expression even when the destination is already true. If evaluation completes, store true in the destination when either boolean is true. Otherwise store false.",
+                        )),
+                        ("&=", "ops/bit/impl#[bool][`BitAndAssign<Self>`]bitand_assign().") => Some((
+                            "Update a boolean with AND",
+                            "Evaluate the right-hand expression even when the destination is already false. If evaluation completes, store true in the destination when both booleans are true. Otherwise store false.",
+                        )),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let (label, text) = boolean_assignment.map_or_else(
+                    || ("Resolve the operator", format!("This operator calls {}.", target.display)),
+                    |(label, text)| (label, text.into()),
+                );
                 facts.reading.push(ReadingFact {
                     anchor: line_index.span(&rel, expression.start_byte(), expression.end_byte()),
                     span: line_index.span(&rel, name.start_byte(), name.end_byte()),
                     basis: ValueBasis::TypeAnalysis,
                     expression_target: None,
                     content: ReadingContent::Detail {
-                        label: "Resolve the operator".into(),
-                        text: format!("This operator calls {}.", target.display),
+                        label: label.into(),
+                        text,
                         definition: None,
                         borrow: false,
                     },
