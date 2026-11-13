@@ -1897,6 +1897,7 @@ impl Reader<'_, '_> {
             Family::Map | Family::Slice if matches!(name.as_str(), "get" | "get_mut") => {
                 self.get(node)
             }
+            Family::Slice if name == "get_disjoint_mut" => self.disjoint_mut(node),
             Family::Map if matches!(name.as_str(), "or_default" | "or_insert" | "or_insert_with") => self.map_entry(node, &name),
             Family::Slice if name == "split_at_mut" => {
                 if let Some((base, position)) = receiver(node)
@@ -1954,6 +1955,21 @@ impl Reader<'_, '_> {
         let input = format!("{goal}. {timing} Tokio checks the wrapped future first, so a ready result wins even at an expired deadline. While waiting, the task can suspend. The timeout cannot interrupt work during a poll, and work started elsewhere may continue.");
         branches.push(branch("Deadline elapsed", "If the future is still pending when Tokio observes the expired timer, stop waiting.", "Err(Elapsed)"));
         self.paths(wait, self.src.span(call), true, input, branches, None);
+    }
+
+    fn disjoint_mut(&mut self, node: Node<'_>) {
+        let Some((slice, receiver_argument)) = receiver(node) else { return };
+        let Some(indices) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let input = format!(
+            "Check that each index or range in {} is within {} and that the requested parts do not overlap.",
+            self.written(indices, 100),
+            self.written(slice, 80),
+        );
+        self.paths(node, self.src.span(node), true, input, vec![
+            branch("All parts are valid and disjoint", "Return one mutable reference per requested part in the order supplied. Writing through a reference updates the original element or slice.", "Ok([&mut …])"),
+            branch("An index or range is out of bounds", "Return an error without handing out mutable references.", "Err(IndexOutOfBounds)"),
+            branch("Requested parts overlap", "Return an error without handing out mutable references.", "Err(OverlappingIndices)"),
+        ], None);
     }
 
     fn peekable(&mut self, node: Node<'_>, name: &str) {

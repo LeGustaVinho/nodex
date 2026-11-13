@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints show how `get_disjoint_mut` checks indices and ranges before lending several parts of a slice for editing.
 - Rust Blueprints distinguish a Tokio timeout from the value or error returned by the operation it was waiting for.
 - Rust Blueprints explain when `future::ready` evaluates its input and what `Box::pin` does before a future runs.
 - Rust Blueprints show how `Iterator::fold` starts with an initial value, updates it for each item, and returns it unchanged when the iterator is empty.
