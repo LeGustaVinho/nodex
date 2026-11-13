@@ -956,6 +956,7 @@ impl Reader<'_, '_> {
             "let_chain" => self.let_chain(node),
             "closure_expression" => self.closure(node),
             "block" => self.block_result(node),
+            "base_field_initializer" => self.struct_update(node),
             "macro_invocation" => self.macro_call(node),
             "await_expression" => self.at(node, false, detail("Await a result", "Continue here when the future is ready. If it is pending, this task can suspend.")),
             "unsafe_block" => self.at(node, false, detail("Operations with extra safety conditions", "Check the contract of each unsafe operation used here. Rust still checks the types.")),
@@ -1319,6 +1320,26 @@ impl Reader<'_, '_> {
             ),
         };
         self.push(self.src.span(node), operator, false, detail(label, text));
+    }
+
+    fn struct_update(&mut self, node: Node<'_>) {
+        let Some(constructor) = node.parent().and_then(|fields| fields.parent())
+            .filter(|parent| parent.kind() == "struct_expression") else { return };
+        if node.has_error() {
+            return;
+        }
+        let tokens = children(node);
+        let Some(operator) = tokens.iter().find(|token| token.kind() == ".." && !token.is_missing()) else { return };
+        let Some(base) = tokens.iter().find(|token| token.is_named() && !token.is_extra()) else { return };
+        self.push(
+            self.src.span(constructor),
+            self.src.span(*operator),
+            false,
+            detail("Fill omitted fields from the base struct", format!(
+                "Evaluate any written field values in source order, then evaluate {} as the base. Rust takes each omitted field from that base. It copies the field if its type implements Copy, or moves it into the new struct otherwise.",
+                self.written(*base, 120),
+            )),
+        );
     }
 
     fn short_circuit(&mut self, node: Node<'_>) {
