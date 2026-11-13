@@ -127,7 +127,8 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
       .filter((detail) => detail.label === "Match guard").map((detail) => ({ pin: pin.id, detail })))
     : [];
   const unmapped = node?.outputs.filter((pin) =>
-    pin.kind === "Exec" && pin.id !== "out" && pin.id !== "error" && pin.label && !choices.some((edge) => edge.from_pin === pin.id),
+    pin.kind === "Exec" && (pin.id !== "out" || (node.flavors.includes("while-let") && routed?.labels.out))
+      && pin.id !== "error" && pin.label && !choices.some((edge) => edge.from_pin === pin.id),
   ) ?? [];
   const terminal = node && ["Return", "Throw", "Break", "Continue", "Jump"].includes(node.concept);
   const continues = flow?.language === "rust" && node?.concept === "Continue";
@@ -231,7 +232,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
               <span>{node.outputs.find((p) => p.id === "error")?.label}</span>
             )}
             {unmapped.map((pin) => (
-              <span key={pin.id}>{executionPinLabel(node, pin.id, pin.label)} · no mapped step</span>
+              <span key={pin.id}>{routed?.labels[pin.id] ?? executionPinLabel(node, pin.id, pin.label)} · no mapped step</span>
             ))}
             {continues ? <span>Skip the rest of this iteration</span> : terminal && !breakResult && !afterBreak && <span>End of this path</span>}
             {afterBreak && <button type="button" onClick={() => focusCode(afterBreak, revision)}>Show code after the loop</button>}

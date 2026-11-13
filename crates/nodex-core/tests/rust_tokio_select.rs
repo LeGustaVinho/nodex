@@ -55,4 +55,11 @@ fn scip_select_explains_direct_loop_handlers_without_execution_routes() {
     assert!(steps[2].action.starts_with("Leave the enclosing loop."));
 
     assert!(selection(&flow(&mut project, "local_select")).is_none());
+
+    let durable = flow(&mut project, "durable");
+    let condition = durable.reading.iter().flatten().find(|site| matches!(&site.content,
+        ReadingContent::Paths { timing: Some(timing), .. } if timing == "Before each loop iteration")).unwrap();
+    assert_eq!(condition.basis, ValueBasis::TypeAnalysis);
+    assert!(matches!(&condition.content, ReadingContent::Paths { input, .. }
+        if input.contains("The task can suspend") && input.contains("None when the channel is closed and empty")));
 }

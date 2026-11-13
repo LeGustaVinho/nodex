@@ -971,6 +971,7 @@ impl Reader<'_, '_> {
             }
             "binary_expression" => self.short_circuit(node),
             "let_chain" => self.let_chain(node),
+            "while_expression" => self.while_let(node),
             "closure_expression" => self.closure(node),
             "block" => self.block_result(node),
             "base_field_initializer" => self.struct_update(node),
@@ -1430,10 +1431,85 @@ impl Reader<'_, '_> {
         );
     }
 
+    fn while_let(&mut self, node: Node<'_>) {
+        let (Some(condition), Some(body)) = (node.child_by_field_name("condition").map(unparen), node.child_by_field_name("body")) else { return };
+        let Some(keyword) = children(node).into_iter().find(|token| token.kind() == "while" && !token.is_missing()) else { return };
+        if condition.has_error() {
+            return;
+        }
+        let (input, mut entered, mut ended, resolved) = match condition.kind() {
+            "let_condition" => {
+                let (Some(pattern), Some(value)) = (condition.child_by_field_name("pattern"), condition.child_by_field_name("value")) else { return };
+                let known_by_syntax = self.always_matching_pattern(pattern, false);
+                let known_by_resolution = !known_by_syntax && self.evidence.definitions.is_some()
+                    && self.always_matching_pattern(pattern, true);
+                let irrefutable = known_by_syntax || known_by_resolution;
+                let source = unparen(value);
+                let awaits = source.kind() == "await_expression";
+                let received = awaits && named_children(source).into_iter()
+                    .find(|operand| !operand.is_extra()).and_then(|operand| self.op(unparen(operand)))
+                    .is_some_and(|op| op.family == Family::Effect && op.name == "recv_optional");
+                let value = self.written(value, 120);
+                let mut input = if irrefutable {
+                    format!("On each attempt, evaluate {value}. This pattern accepts every value it produces.")
+                } else {
+                    format!("On each attempt, evaluate {value} and check whether it matches {}.", self.written(pattern, 120))
+                };
+                if awaits {
+                    input.push_str(" The task can suspend while waiting. The pattern is checked when the future produces a value.");
+                }
+                if received {
+                    input.push_str(" This receive yields Some(message) for a message, and None when the channel is closed and empty.");
+                }
+                (
+                    input,
+                    branch(if irrefutable { "Value is ready" } else { "Pattern matches" },
+                        "Run the loop body with any names bound by this pattern.", "Run this iteration"),
+                    (!irrefutable).then(|| branch("Pattern does not match", "End the loop without running this iteration.", "Leave the loop")),
+                    known_by_resolution || received,
+                )
+            }
+            "let_chain" => (
+                "On each attempt, start with the first condition. Check the rest in order while all earlier checks pass.".into(),
+                branch("All conditions pass", "Run the loop body with the names bound by the matching patterns.", "Run this iteration"),
+                Some(branch("A condition fails", "Skip the remaining checks and end the loop before running the body again.", "Leave the loop")),
+                false,
+            ),
+            _ => return,
+        };
+        entered.pin = Some("body".into());
+        if let Some(branch) = &mut ended {
+            branch.pin = Some("out".into());
+        }
+        let content = ReadingContent::Paths {
+            input,
+            deferred: false,
+            branches: std::iter::once(entered).chain(ended).collect(),
+            result: None,
+            timing: Some("Before each loop iteration".into()),
+        };
+        self.push(self.src.header_span(node, Some(body)), self.src.span(keyword), resolved, content);
+    }
+
+    fn always_matching_pattern(&self, pattern: Node<'_>, resolve: bool) -> bool {
+        match pattern.kind() {
+            "_" => true,
+            "identifier" => resolve && self.evidence.definitions.is_some_and(|definitions| definitions.values().any(|definition| *definition == range(pattern))),
+            "ref_pattern" | "mut_pattern" => patterns(pattern).last().is_some_and(|binding| {
+                binding.kind() == "identifier" || self.always_matching_pattern(*binding, resolve)
+            }),
+            "reference_pattern" => patterns(pattern).last().is_some_and(|pattern| self.always_matching_pattern(*pattern, resolve)),
+            "tuple_pattern" => patterns(pattern).iter().all(|pattern| self.always_matching_pattern(*pattern, resolve)),
+            "remaining_field_pattern" => true,
+            _ => false,
+        }
+    }
+
     fn let_chain(&mut self, node: Node<'_>) {
         let Some(operator) = children(node).into_iter().find(|token| token.kind() == "&&") else {
             return;
         };
+        let is_while = while_let_header(node).is_some();
         let mut steps: Vec<_> = named_children(node)
             .into_iter()
             .filter(|check| !check.is_extra())
@@ -1447,11 +1523,15 @@ impl Reader<'_, '_> {
                 } else {
                     format!("Check whether {} is true.", self.short(check))
                 };
-                let timing = if index == 0 { "First" } else { "If all earlier checks pass" };
+                let timing = if index == 0 {
+                    if is_while { "First on each attempt" } else { "First" }
+                } else { "If all earlier checks pass" };
                 self.step(check, timing, action)
             })
             .collect();
-        steps.push(self.step(operator, "If a check fails", "Skip the remaining checks and the body guarded by the condition."));
+        let failure = if is_while { "Skip the remaining checks and leave the loop." }
+            else { "Skip the remaining checks and the body guarded by the condition." };
+        steps.push(self.step(operator, "If a check fails", failure));
         self.push(
             self.src.span(node),
             self.src.span(operator),
@@ -1544,7 +1624,11 @@ impl Reader<'_, '_> {
             branches[0].output = "Continue this callback with the value".into();
             branches[1].output = output.into();
         } else {
-            branches[0].pin = Some("out".into());
+            if while_let_condition(node).is_some() {
+                branches[0].output = "Continue checking the loop condition".into();
+            } else {
+                branches[0].pin = Some("out".into());
+            }
             branches[1].pin = Some("error".into());
         }
         self.paths(
@@ -2539,15 +2623,7 @@ impl Reader<'_, '_> {
             })
             .or_else(|| value.and_then(|value| self.known_type(value)));
         let route = match node.kind() {
-            "let_condition" => {
-                let control = std::iter::successors(node.parent(), Node::parent)
-                    .find(|ancestor| !matches!(ancestor.kind(), "let_chain" | "parenthesized_expression"));
-                Some(if control.is_some_and(|control| control.kind() == "while_expression") {
-                    "body".into()
-                } else {
-                    "true".into()
-                })
-            }
+            "let_condition" => Some(if while_let_header(node).is_some() { "body" } else { "true" }.into()),
             "for_expression" => Some("body".into()),
             _ if node.child_by_field_name("alternative").is_some() => Some("out".into()),
             _ => None,
@@ -2855,6 +2931,27 @@ impl Reader<'_, '_> {
         walk_pattern(pattern, context, &mut collect, self.src);
         parts
     }
+}
+
+fn while_let_header(mut node: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = node.parent().filter(|parent| matches!(parent.kind(), "let_chain" | "parenthesized_expression")) {
+        node = parent;
+    }
+    node.parent().filter(|parent| parent.kind() == "while_expression" && parent.child_by_field_name("condition") == Some(node))
+}
+
+fn while_let_condition(mut node: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = node.parent() {
+        match parent.kind() {
+            "while_expression" => return parent.child_by_field_name("condition").filter(|condition| {
+                *condition == node && matches!(unparen(*condition).kind(), "let_condition" | "let_chain")
+            }),
+            // These expressions have their own control context or are not part of the loop header.
+            "closure_expression" | "async_block" | "try_block" | "const_block" | "gen_block" | "function_item" => return None,
+            _ => node = parent,
+        }
+    }
+    None
 }
 
 fn vec_repeat_operand<'a>(src: Src<'a>, tokens: &[Node<'_>]) -> Option<(&'a str, Span)> {

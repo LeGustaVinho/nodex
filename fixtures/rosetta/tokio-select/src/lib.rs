@@ -39,3 +39,9 @@ pub fn local_select() {
         break;
     }
 }
+
+pub async fn durable(mut receiver: tokio::sync::mpsc::Receiver<u32>) {
+    while let Some(first) = receiver.recv().await {
+        std::hint::black_box(first);
+    }
+}

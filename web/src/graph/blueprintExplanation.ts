@@ -344,6 +344,7 @@ export function executionPinLabel(node: FlowNode, id: string, original: string):
     if (id === "true" || id === "body") return "All conditions passed · bindings available";
     if (id === "false") return "A condition did not pass";
   }
+  if (id === "out" && node.flavors.includes("while-let")) return "View after the loop";
   if (id === "true" && node.flavors.includes("if-let")) return "Matched · bindings available";
   if (id === "false" && node.flavors.includes("if-let")) return "Pattern did not match";
   if (id === "body" && node.flavors.includes("while-let")) return "Matched · bindings available";

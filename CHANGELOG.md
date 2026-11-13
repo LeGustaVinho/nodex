@@ -43,6 +43,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Rust Guide explains that `VecDeque::pop_front` removes and returns the first queued item, or returns `None` when the queue is empty.
 - The Rust Guide shows what `mem::take` and `mem::replace` store at a mutable reference and what previous value they return.
 - The Rust Guide distinguishes replacing an `Option` from filling it only when it is empty, and explains when `unwrap_or_default` computes a default value.
+- The Rust Guide explains the pattern check on each `while let` attempt and what makes the loop stop. A successful `?` in the condition keeps checking the condition.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

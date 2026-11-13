@@ -27,9 +27,10 @@ export function executionReading(node: FlowNode, sites: readonly ReadingSite[]) 
   const ports = new Set(node.outputs.filter((pin) => pin.kind === "Exec").map((pin) => pin.id));
   const candidates = sites.flatMap((site) => {
     const { content } = site;
-    // A let-else inside an expression cannot use the enclosing statement's else pin.
+    // A nested let-else or loop cannot use its enclosing statement's pins.
     if (content.kind !== "Paths" || content.deferred
-      || !content.branches.every((branch) => branch.pin && ports.has(branch.pin) && (!site.path || branch.pin !== "else"))) return [];
+      || node.flavors.includes("while-let") && (site.path || !content.branches.some((branch) => branch.pin === "body"))
+      || !content.branches.every((branch) => branch.pin && ports.has(branch.pin) && (!site.path || (branch.pin !== "else" && branch.pin !== "body")))) return [];
     const labels = Object.fromEntries(content.branches.map((branch) => [
       branch.pin!, `${branch.label} · ${branch.pin === "out" ? branch.output : branch.action}`,
     ]));

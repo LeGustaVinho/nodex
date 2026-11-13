@@ -61,6 +61,68 @@ const flow: FlowGraph = {
     .map(([from, from_pin, to]) => ({ from, from_pin, to, to_pin: "in", kind: "Exec", access: null })),
 };
 
+it("keeps while-let mismatch separate from question-mark propagation", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const settings = useUi.getState();
+  const check = {
+    ...step("Check queue", "Loop.While", [output("body", "Loop body"), output("out", "Completed"), output("error", "If propagation is needed: return early")]),
+    flavors: ["while-let", "try"],
+  };
+  const body = step("Consume next value", "Call");
+  const after = step("Return normally", "Return");
+  const example: FlowGraph = {
+    ...flow, nodes: [check, body, after],
+    edges: [
+      { from: check.id, from_pin: "body", to: body.id, to_pin: "in", kind: "Exec", access: null },
+      { from: check.id, from_pin: "out", to: after.id, to_pin: "in", kind: "Exec", access: null },
+    ],
+    reading: [
+      { node: check.id, span, basis: "Syntax", content: { kind: "Paths", input: "Evaluate on each attempt", deferred: false,
+        timing: "Before each loop iteration", branches: [
+          { label: "Pattern matches", action: "Run the body", output: "Run this iteration", pin: "body" },
+          { label: "Pattern does not match", action: "End the loop", output: "Leave the loop", pin: "out" },
+        ] } },
+      { node: check.id, path: "0.0", span: { ...span, start_byte: 2, end_byte: 3 }, basis: "Syntax", content: {
+        kind: "Paths", input: "Read the Result", deferred: false, branches: [
+          { label: "Continue", action: "Take the value", output: "Continue checking the loop condition" },
+          { label: "Propagate", action: "Return from catalog", output: "Propagate early", pin: "error" },
+        ],
+      } },
+    ],
+  };
+  const onStep = vi.fn();
+  const render = (graph: FlowGraph) => act(async () => root.render(
+    <BlueprintGuide flows={[graph]} activeFlow={graph.symbol} activeNode={check.id} onStep={onStep} />,
+  ));
+  const click = async (label: string) => {
+    const button = [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
+    expect(button, label).toBeDefined();
+    await act(async () => button!.click());
+  };
+  try {
+    useUi.setState({ blueprintExplanations: true });
+    await render(example);
+    await click("Continue");
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Continue checking the loop condition");
+    expect(onStep).not.toHaveBeenCalled();
+    await click("Pattern does not match");
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, after);
+
+    onStep.mockClear();
+    await render({ ...example, edges: example.edges.slice(0, 1) });
+    expect(host.textContent).toContain("Pattern does not match · Leave the loop · no mapped step");
+    await click("Pattern does not match");
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Leave the loop");
+    expect(onStep).not.toHaveBeenCalled();
+    await click("Pattern matches");
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, body);
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(settings);
+  }
+});
+
 it("explains a Rust break result and follows only a mapped exit", () => {
   const host = document.createElement("div");
   const root = createRoot(host);
