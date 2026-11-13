@@ -31,6 +31,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Rust Guide explains where a mapped `break value` sends its result. It identifies the loop or labeled block that ends and shows when the value initializes a variable outside it.
 - Rust casts explain the conversion after arithmetic when rust-analyzer confirms a standard numeric operator and its result type.
 - The Rust Guide explains how `Result::ok` and `Result::err` keep one outcome in `Some` and turn the other into `None`, including when another call uses the resulting `Option`.
+- The Rust Guide highlights the semicolon in `[value; length]` and explains how Rust determines the array length and evaluates the repeated value.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

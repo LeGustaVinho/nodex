@@ -944,6 +944,7 @@ impl Reader<'_, '_> {
             "call_expression" => self.call(node),
             "try_expression" => self.propagation(node),
             "type_cast_expression" => self.numeric_cast(node),
+            "array_expression" => self.array_repeat(node),
             "range_expression" => self.range_expression(node),
             "assignment_expression" => {
                 if let Some((equal, end)) = inclusive_range_to(node) {
@@ -996,6 +997,48 @@ impl Reader<'_, '_> {
             }
             _ => {}
         }
+    }
+
+    fn array_repeat(&mut self, node: Node<'_>) {
+        let Some((value, separator, length)) = nodex_lang_api::syntax_sites::rust_array_repeat(node)
+        else {
+            return;
+        };
+        let operand = |mut node: Node<'_>| {
+            while node.kind() == "parenthesized_expression" {
+                let Some(inner) = named_children(node).into_iter().find(|child| !child.is_extra())
+                else {
+                    break;
+                };
+                node = inner;
+            }
+            (node.kind(), self.src.text(node).trim() == "_")
+        };
+        let (value_kind, _) = operand(value);
+        let written_length = self.written(length, 80);
+        let (_, inferred) = operand(length);
+        let size = if inferred {
+            "Rust infers the array length from context.".into()
+        } else {
+            format!("The array has {written_length} elements. Rust determines this length at compile time.")
+        };
+        let behavior = match value_kind {
+            "const_block" => {
+                "Rust evaluates this const block once for each element. A length of zero skips it. This form also works for element types that cannot be copied."
+            }
+            "identifier" | "scoped_identifier" | "generic_function" | "macro_invocation" | "self" => {
+                "An ordinary value expression is evaluated once, even for an empty array. A named constant or a const block is evaluated once per element and is skipped for an empty array. Repeating an ordinary value more than once requires its type to implement Copy."
+            }
+            _ => {
+                "Rust evaluates the value expression once, even for an empty array. When it completes, its result supplies the elements. Repeating it more than once requires its type to implement Copy."
+            }
+        };
+        self.push(
+            self.src.span(node),
+            self.src.span(separator),
+            false,
+            detail("Build an array by repetition", format!("{size} {behavior}")),
+        );
     }
 
     fn numeric_cast(&mut self, node: Node<'_>) {

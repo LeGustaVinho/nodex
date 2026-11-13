@@ -367,6 +367,12 @@ explain = "The as keyword asks Rust to convert a value to the type written on th
 cue = "as"
 effects = [["3.75_f64 as u16", "The result is the integer 3"]]
 
+[array-repeat]
+label = "Repeat an array element"
+explain = "The expression before the semicolon supplies the elements. The expression after it gives the array length, which Rust knows at compile time."
+cue = ";"
+effects = [["[0; 3]", "Make an array containing three zeros"], ["[const { Vec::new() }; 2]", "Make a separate empty vector for each of the two elements"]]
+
 [explicit-type-args]
 label = "Explicit generic arguments"
 explain = "Supply generic arguments such as types, lifetimes, or constants. An underscore asks Rust to infer that part from context."

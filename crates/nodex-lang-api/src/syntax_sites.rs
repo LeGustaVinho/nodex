@@ -27,6 +27,22 @@ pub fn rust_inclusive_range_to(node: Node<'_>) -> Option<(Node<'_>, Node<'_>)> {
     Some((equal, end))
 }
 
+/// The three written parts of a Rust repeat expression, `[value; length]`.
+pub fn rust_array_repeat(node: Node<'_>) -> Option<(Node<'_>, Node<'_>, Node<'_>)> {
+    if node.kind() != "array_expression" || node.has_error() {
+        return None;
+    }
+    let length = node.child_by_field_name("length")?;
+    let separator = children(node)
+        .into_iter()
+        .find(|token| token.kind() == ";" && !token.is_missing())?;
+    let mut value = separator.prev_named_sibling()?;
+    while value.is_extra() {
+        value = value.prev_named_sibling()?;
+    }
+    Some((value, separator, length))
+}
+
 pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
     let mut occurrences = Vec::new();
     let mut stack = vec![root];
@@ -570,6 +586,11 @@ fn collect(
             }
             "unary_expression" => emit("deref", token("*"), false, false),
             "type_cast_expression" => emit("type-cast", token("as"), false, false),
+            "array_expression" => {
+                if let Some((_, separator, _)) = rust_array_repeat(n) {
+                    emit("array-repeat", Some(separator), false, false);
+                }
+            }
             "try_expression" => emit("try", token("?"), false, false),
             "let_declaration" => emit("let-else", token("else"), false, true),
             "match_pattern" => {

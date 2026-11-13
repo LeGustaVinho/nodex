@@ -483,7 +483,13 @@ impl<'a> ExprLowering<'a> {
             }
             "tuple_expression" | "array_expression" => {
                 let kids = named_children(node).into_iter().filter(|c| c.kind() != "attribute_item").map(|c| self.lower(c)).collect();
-                let label = if node.kind() == "tuple_expression" { "tuple" } else if src.text(node).contains(';') { "repeated items" } else { "list" };
+                let label = if node.kind() == "tuple_expression" {
+                    "tuple"
+                } else if nodex_lang_api::syntax_sites::rust_array_repeat(node).is_some() {
+                    "repeated items"
+                } else {
+                    "list"
+                };
                 let mut e = self.mk(node, Concept::Compose, label.into(), kids);
                 if node.kind() == "array_expression" {
                     e.ty = Some("list".into());
