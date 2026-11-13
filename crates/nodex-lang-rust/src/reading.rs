@@ -1718,8 +1718,10 @@ impl Reader<'_, '_> {
             }
             branches[1].output = output.into();
         } else {
-            if let Some(resume) = question_mark_condition(node).or_else(|| question_mark_consumer(node)) {
-                branches[0].output = resume.into();
+            if let Some(resume) = question_mark_condition(node).map(str::to_owned)
+                .or_else(|| question_mark_consumer(self.src, node))
+            {
+                branches[0].output = resume;
             } else {
                 branches[0].pin = Some("out".into());
             }
@@ -3287,7 +3289,7 @@ fn question_mark_condition(mut node: Node<'_>) -> Option<&'static str> {
     None
 }
 
-fn question_mark_consumer(mut node: Node<'_>) -> Option<&'static str> {
+fn question_mark_consumer(src: Src<'_>, mut node: Node<'_>) -> Option<String> {
     let parent = loop {
         let parent = node.parent()?;
         match parent.kind() {
@@ -3313,32 +3315,77 @@ fn question_mark_consumer(mut node: Node<'_>) -> Option<&'static str> {
             _ => break parent,
         }
     };
-    match parent.kind() {
-        "arguments" if parent.parent().is_some_and(|call| call.kind() == "call_expression") =>
-            Some("Use the value to continue evaluating the call"),
+    let short = |at| truncate(&src.norm(at), 48);
+    let generic_call = "Use the value to continue evaluating the call";
+    let generic_expression = "Use the value to continue evaluating this expression";
+    let continuation = match parent.kind() {
+        "arguments" => {
+            let call = parent.parent().filter(|call| call.kind() == "call_expression")?;
+            let callee = call.child_by_field_name("function")?;
+            let callee = if callee.kind() == "generic_function" {
+                callee.child_by_field_name("function")?
+            } else {
+                callee
+            };
+            let name = match callee.kind() {
+                "identifier" | "scoped_identifier" => Some(short(callee)),
+                "field_expression" => callee.child_by_field_name("field").map(short),
+                _ => None,
+            };
+            name.map_or_else(|| generic_call.into(), |name| {
+                format!("Use the value as an argument to {name}(...)")
+            })
+        }
         "call_expression" if parent.child_by_field_name("function") == Some(node) =>
-            Some("Use the value to continue evaluating the call"),
+            "Use the value as the function to call".into(),
         "field_expression" if parent.child_by_field_name("value") == Some(node) => {
             let mut callee = parent;
             if let Some(generic) = parent.parent().filter(|generic| generic.kind() == "generic_function"
                 && generic.child_by_field_name("function") == Some(parent)) {
                 callee = generic;
             }
-            let receiver_of_call = callee.parent().and_then(method_call)
-                .is_some_and(|(receiver, _)| receiver == node);
-            Some(if receiver_of_call {
-                "Use the value to continue evaluating the call"
+            if let Some((_, method)) = callee.parent().and_then(method_call)
+                .filter(|(receiver, _)| unparen(node) == *receiver || node == *receiver)
+            {
+                format!("Use the value as the receiver of .{}(...) while evaluating the call", short(method))
+            } else if let Some(field) = parent.child_by_field_name("field") {
+                format!("Read the .{} field from the value", short(field))
             } else {
-                "Use the value to continue evaluating the field access"
-            })
+                "Use the value to continue evaluating the field access".into()
+            }
         }
-        "unary_expression" | "binary_expression" | "type_cast_expression" | "index_expression"
+        "binary_expression" => {
+            if let (Some(operator), Some(left), Some(right)) = (
+                parent.child_by_field_name("operator"), parent.child_by_field_name("left"), parent.child_by_field_name("right"),
+            ) && !matches!(src.text(operator), "&&" | "||") && (node == left || node == right) {
+                let (side, other) = if node == left { ("left", right) } else { ("right", left) };
+                let operator = short(operator);
+                if matches!(unparen(other).kind(), "identifier" | "field_expression" | "integer_literal" | "float_literal") {
+                    format!("Use the value as the {side} operand of {operator} with {}", short(other))
+                } else {
+                    format!("Use the value as the {side} operand of {operator}")
+                }
+            } else {
+                generic_expression.into()
+            }
+        }
+        "compound_assignment_expr" if parent.child_by_field_name("right") == Some(node) => {
+            if let (Some(left), Some(operator)) = (
+                parent.child_by_field_name("left"), parent.child_by_field_name("operator"),
+            ) {
+                format!("Use the value on the right of {} {}", short(left), short(operator))
+            } else {
+                generic_expression.into()
+            }
+        }
+        "unary_expression" | "type_cast_expression" | "index_expression"
         | "reference_expression" | "await_expression" | "try_expression" | "tuple_expression"
         | "array_expression" | "field_initializer" | "base_field_initializer"
         | "assignment_expression" | "compound_assignment_expr" | "range_expression" =>
-            Some("Use the value to continue evaluating this expression"),
-        _ => None,
-    }
+            generic_expression.into(),
+        _ => return None,
+    };
+    Some(continuation)
 }
 
 fn vec_repeat_operand<'a>(src: Src<'a>, tokens: &[Node<'_>]) -> Option<(&'a str, Span)> {

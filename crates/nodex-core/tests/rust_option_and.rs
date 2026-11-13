@@ -103,7 +103,7 @@ fn scip_explains_eager_option_and_and_keeps_both_question_mark_exits() {
         assert!(
             matches!(&question.content, ReadingContent::Paths { branches, .. }
             if branches[0].pin.is_none()
-                && branches[0].output == "Use the value to continue evaluating the call"
+                && branches[0].output.contains("and(...)")
                 && branches[1].action == "Return from choose"
                 && branches[1].pin.as_deref() == Some("error"))
         );

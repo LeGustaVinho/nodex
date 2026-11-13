@@ -82,7 +82,7 @@ fn successful_propagation_in_a_decision_keeps_evaluating_that_decision() {
     let callback = ir.flows.iter().find(|graph| graph.name == "callback closure").unwrap();
     let (_, site) = question_marks(callback, source).next().unwrap();
     assert!(matches!(&site.content, ReadingContent::Paths { branches, .. }
-        if branches[0].pin.is_none() && branches[0].output == "Use the value to continue evaluating the call"
+        if branches[0].pin.is_none() && branches[0].output == "Use the value as an argument to Ok(...)"
             && branches[1].action == "Return from this closure"));
 }
 
@@ -130,7 +130,7 @@ fn let_else_tests_the_pattern_after_successful_propagation() {
     let (node, question) = question_marks(alternate, source).next().unwrap();
     assert_eq!(node.concept, Concept::Return);
     assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
-        if branches[0].pin.is_none() && branches[0].output == "Use the value to continue evaluating the call"
+        if branches[0].pin.is_none() && branches[0].output == "Use the value as an argument to Some(...)"
             && branches[1].pin.as_deref() == Some("error")));
 }
 
@@ -157,6 +157,16 @@ fn question_mark_success_finishes_the_surrounding_expression_before_advancing() 
             let result = input? as i64;
             Ok(result)
         }
+        fn right_operand(input: Result<i32, String>, starting: i32) -> Result<i32, String> {
+            let result = starting - input?;
+            Ok(result)
+        }
+        fn receiver_and_argument(
+            list: Result<Vec<i32>, String>, item: Result<i32, String>,
+        ) -> Result<(), String> {
+            list?.push(item?);
+            Ok(())
+        }
         fn chain(input: Result<Option<u8>, String>) -> Result<u8, String> {
             let result = input?.ok_or(String::new())?;
             Ok(result)
@@ -164,11 +174,12 @@ fn question_mark_success_finishes_the_surrounding_expression_before_advancing() 
     "#;
     let ir = lower_source("src/lib.rs", source);
     for (name, output, pin) in [
-        ("catalog", "Use the value to continue evaluating the call", None),
+        ("catalog", "Use the value as the receiver of .unwrap_or_default(...) while evaluating the call", None),
         ("plain", "Continue", Some("out")),
         ("standalone", "Continue after this statement", Some("out")),
-        ("field", "Use the value to continue evaluating the field access", None),
+        ("field", "Read the .0 field from the value", None),
         ("cast", "Use the value to continue evaluating this expression", None),
+        ("right_operand", "Use the value as the right operand of - with starting", None),
     ] {
         let graph = ir.flows.iter().find(|flow| flow.name == name).unwrap();
         let (node, site) = question_marks(graph, source).next().unwrap();
@@ -183,9 +194,18 @@ fn question_mark_success_finishes_the_surrounding_expression_before_advancing() 
     sites.sort_by_key(|site| site.span.start_byte);
     let [first, last] = sites.as_slice() else { panic!("{sites:?}") };
     assert!(matches!(&first.content, ReadingContent::Paths { branches, .. }
-        if branches[0].pin.is_none() && branches[0].output == "Use the value to continue evaluating the call"));
+        if branches[0].pin.is_none() && branches[0].output == "Use the value as the receiver of .ok_or(...) while evaluating the call"));
     assert!(matches!(&last.content, ReadingContent::Paths { branches, .. }
         if branches[0].pin.as_deref() == Some("out")));
+    let graph = ir.flows.iter().find(|flow| flow.name == "receiver_and_argument").unwrap();
+    let mut sites = question_marks(graph, source).map(|(_, site)| site).collect::<Vec<_>>();
+    sites.sort_by_key(|site| site.span.start_byte);
+    let [receiver, argument] = sites.as_slice() else { panic!("{sites:?}") };
+    assert!(matches!(&receiver.content, ReadingContent::Paths { branches, .. }
+        if branches[0].pin.is_none()
+            && branches[0].output == "Use the value as the receiver of .push(...) while evaluating the call"));
+    assert!(matches!(&argument.content, ReadingContent::Paths { branches, .. }
+        if branches[0].pin.is_none() && branches[0].output == "Use the value as an argument to push(...)"));
 }
 
 #[test]
@@ -224,12 +244,12 @@ fn question_mark_at_the_end_of_a_block_feeds_the_enclosing_call() {
     "#;
     let ir = lower_source("src/lib.rs", source);
     for (function, pin, resumed) in [
-        ("argument", None, "Use the value to continue evaluating the call"),
-        ("receiver", None, "Use the value to continue evaluating the call"),
+        ("argument", None, "Use the value as an argument to std::hint::black_box(...)"),
+        ("receiver", None, "Use the value as the receiver of .unwrap_or_default(...) while evaluating the call"),
         ("not_tail", Some("out"), "Continue after this statement"),
         ("discarded_tail", Some("out"), "Continue after this statement"),
         ("standalone", Some("out"), "Continue"),
-        ("black_box callback", None, "Use the value to continue evaluating the call"),
+        ("black_box callback", None, "Use the value as an argument to Ok(...)"),
     ] {
         let graph = ir.flows.iter().find(|flow| flow.name == function)
             .unwrap_or_else(|| panic!("Missing {function}: {:?}", ir.flows.iter().map(|flow| &flow.name).collect::<Vec<_>>()));
@@ -299,9 +319,9 @@ fn question_mark_at_the_end_of_an_arm_feeds_the_expression_that_uses_its_value()
     "#;
     let ir = lower_source("src/lib.rs", source);
     for (function, count, pin, continuation) in [
-        ("offense", 2, None, "Use the value to continue evaluating this expression"),
-        ("request", 1, None, "Use the value to continue evaluating the call"),
-        ("compound", 1, None, "Use the value to continue evaluating this expression"),
+        ("offense", 2, None, "Use the value as the left operand of * with multiplier"),
+        ("request", 1, None, "Use the value as an argument to Ok(...)"),
+        ("compound", 1, None, "Use the value on the right of value *="),
         ("discarded", 1, Some("out"), "Continue after this statement"),
         ("completed_arm", 1, Some("out"), "Continue"),
         ("guarded", 1, None, "Continue checking the match guard"),
@@ -349,7 +369,7 @@ fn a_question_mark_statement_discards_the_value_but_keeps_both_execution_outcome
         ("offense", "Continue after this statement"),
         ("fitting", "Continue after this statement"),
         ("maybe", "Continue after this statement"),
-        ("consumed", "Use the value to continue evaluating the call"),
+        ("consumed", "Use the value as an argument to std::hint::black_box(...)"),
         ("wildcard", "Continue"),
     ] {
         let graph = ir.flows.iter().find(|flow| flow.name == function).unwrap();
