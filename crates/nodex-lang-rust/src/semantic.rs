@@ -24,7 +24,10 @@ use nodex_lang_api::SemanticProvider;
 use protobuf::Message;
 use tree_sitter::Node;
 
-use crate::reading::{Evidence, Family, NumericAlias, Operations, Resolved, TypeIdentities, may_shadow_cast_type};
+use crate::reading::{
+    DefaultCollection, DefaultType, Evidence, Family, NumericAlias, Operations, Resolved,
+    TypeIdentities, may_shadow_cast_type, written_default_collection,
+};
 
 /// Semantic facts from `rust-analyzer scip`.
 pub struct RustAnalyzer {
@@ -113,7 +116,8 @@ impl RustAnalyzer {
         for (n, crate_root) in self.crate_roots.iter().enumerate() {
             let index = self.index(crate_root, n)?;
             let prefix = crate_root.strip_prefix(&self.root).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-            convert(&index, &self.root, &prefix, &self.local_packages, &packages, &mut facts);
+            let upstream_indexmaps = upstream_indexmap_versions(crate_root);
+            convert(&index, &self.root, &prefix, &self.local_packages, &packages, &upstream_indexmaps, &mut facts);
         }
         Ok(facts)
     }
@@ -560,6 +564,7 @@ type Range = (usize, usize);
 struct ReturnType {
     info: TypeInfo,
     cast_alias: Option<NumericAlias>,
+    default_collection: Option<DefaultCollection>,
     generics: Vec<Option<String>>,
     parameters: Vec<Option<TypeShape>>,
     receiver: bool,
@@ -619,6 +624,60 @@ fn written_type_identities(doc: &scip::types::Document, starts: &[usize], root: 
         }
         Some((node.start_byte(), (node.end_byte(), path)))
     }).collect()
+}
+
+fn upstream_indexmap_versions(root: &Path) -> HashSet<String> {
+    let Some(lockfile) = root.ancestors().map(|dir| dir.join("Cargo.lock")).find(|path| path.is_file()) else {
+        return HashSet::new();
+    };
+    let Some(packages) = std::fs::read_to_string(lockfile).ok()
+        .and_then(|text| toml::from_str::<toml::Table>(&text).ok())
+        .and_then(|mut lock| lock.remove("package"))
+    else { return HashSet::new() };
+    let mut registry = HashSet::new();
+    let mut other = HashSet::new();
+    for package in packages.as_array().into_iter().flatten() {
+        if package.get("name").and_then(toml::Value::as_str) != Some("indexmap") { continue; }
+        let Some(version) = package.get("version").and_then(toml::Value::as_str) else { continue };
+        if package.get("source").and_then(toml::Value::as_str) == Some("registry+https://github.com/rust-lang/crates.io-index") {
+            registry.insert(version.to_owned());
+        } else {
+            other.insert(version);
+        }
+    }
+    registry.retain(|version| !other.contains(version.as_str()));
+    registry
+}
+
+fn default_type_identities(
+    doc: &scip::types::Document, starts: &[usize], root: Node<'_>,
+    upstream_indexmaps: &HashSet<String>,
+) -> HashMap<Range, DefaultType> {
+    let mut sites = HashMap::new();
+    for occurrence in &doc.occurrences {
+        let Some(symbol) = parse_symbol(&occurrence.symbol) else { continue };
+        if !symbol.descriptors.ends_with('#') { continue; }
+        let Some((start, end)) = range_bytes(starts, &occurrence.range) else { continue };
+        let Some(leaf) = root.descendant_for_byte_range(start, end)
+            .filter(|node| node.start_byte() == start && node.end_byte() == end)
+        else { continue };
+        let name = leaf.parent().filter(|parent| parent.kind() == "scoped_type_identifier"
+            && parent.child_by_field_name("name") == Some(leaf)).unwrap_or(leaf);
+        if !name.parent().is_some_and(|parent| parent.kind() == "generic_type"
+            && parent.child_by_field_name("type") == Some(name))
+        {
+            continue;
+        }
+        let kind = match (symbol.package, symbol.descriptors) {
+            ("alloc", "vec/Vec#") if symbol.standard() => Some(DefaultType::Vec),
+            ("core", "option/Option#") if symbol.standard() => Some(DefaultType::Option),
+            ("core", "result/Result#") if symbol.standard() => Some(DefaultType::Result),
+            ("indexmap", "map/IndexMap#") if symbol.version.starts_with("2.") && upstream_indexmaps.contains(symbol.version) => Some(DefaultType::IndexMap),
+            _ => None,
+        };
+        record_unambiguous(&mut sites, (name.start_byte(), name.end_byte()), kind);
+    }
+    sites.into_iter().filter_map(|(range, kind)| Some((range, kind.flatten()?))).collect()
 }
 
 type CastAliases = HashMap<Range, NumericAlias>;
@@ -1099,7 +1158,7 @@ fn rust_type_facts(
     }
 }
 
-fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages: &HashSet<String>, packages: &[crate::project::CargoPackage], facts: &mut SemanticFacts) {
+fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages: &HashSet<String>, packages: &[crate::project::CargoPackage], upstream_indexmaps: &HashSet<String>, facts: &mut SemanticFacts) {
     // Where each project symbol is defined, and what every symbol is.
     let rel_of = |doc: &scip::types::Document| {
         let rel = doc.relative_path.replace('\\', "/");
@@ -1128,11 +1187,13 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
     }
 
     let mut typed_documents = HashMap::new();
+    let mut default_types = HashMap::new();
     for doc in &index.documents {
         let rel = rel_of(doc);
         let Some((text, starts)) = texts.get(&rel) else { continue };
         let Some(tree) = crate::parse(text) else { continue };
         let identities = written_type_identities(doc, starts, tree.root_node(), text);
+        default_types.insert(rel.clone(), default_type_identities(doc, starts, tree.root_node(), upstream_indexmaps));
         typed_documents.insert(rel, (tree, identities));
     }
     let mut cast_aliases = resolved_cast_aliases(index, &rel_of, &texts, &typed_documents);
@@ -1159,7 +1220,11 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             param.child_by_field_name("type").map(|ty| written_shape(ty, text, identities))
         }).collect();
         let cast_alias = cast_alias_at(&definition.file, ty);
-        Some((symbol, (definition, ReturnType { info, cast_alias, generics, parameters, receiver, owner, owner_generics })))
+        let default_collection = (function.kind() == "function_item"
+            && !named_children(function).iter().any(|part| part.kind() == "function_modifiers"
+                && nodex_lang_api::syntax::children(*part).iter().any(|token| token.kind() == "async")))
+            .then(|| written_default_collection(ty, default_types.get(&definition.file)?)).flatten();
+        Some((symbol, (definition, ReturnType { info, cast_alias, default_collection, generics, parameters, receiver, owner, owner_generics })))
     }).collect();
     for (definition, result) in return_types.values() {
         facts.types.push(TypeFact { site: (*definition).clone(), target: ValueFactTarget::Member, info: result.info.clone() });
@@ -1173,7 +1238,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let owner = field.parent()?.parent()?.child_by_field_name("name")?;
         let owner = ByteRange { file: definition.file.clone(), start: owner.start_byte() as u32, end: owner.end_byte() as u32 };
         let info = TypeInfo::new(written_shape(ty, text, identities), TypeOrigin::Declared, Some(text[ty.byte_range()].to_owned()));
-        Some((symbol, (owner, info, cast_alias_at(&definition.file, ty))))
+        let default_collection = default_types.get(&definition.file).and_then(|types| written_default_collection(ty, types));
+        Some((symbol, (owner, info, cast_alias_at(&definition.file, ty), default_collection)))
     }).collect();
 
     for doc in &index.documents {
@@ -1193,6 +1259,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let mut non_bindings = HashSet::new();
         let mut field_uses = Vec::new();
         let mut alias_values = HashMap::new();
+        let mut default_values = HashMap::new();
         let vec_macros: HashSet<_> = doc.occurrences.iter().filter_map(|occurrence| {
             let symbol = parse_symbol(&occurrence.symbol)?;
             (symbol.standard() && matches!(display(&symbol).as_str(), "alloc::macros::vec!" | "alloc::vec!" | "std::vec!"))
@@ -1300,8 +1367,10 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             {
                 let entry = fields.get(o.symbol.as_str());
                 record_unambiguous(&mut alias_values, (field.start_byte(), field.end_byte()),
-                    entry.and_then(|(_, _, alias)| alias.as_ref()));
-                if let Some((owner, info, _)) = entry {
+                    entry.and_then(|(_, _, alias, _)| alias.as_ref()));
+                record_unambiguous(&mut default_values, (field.start_byte(), field.end_byte()),
+                    entry.and_then(|(_, _, _, proof)| *proof));
+                if let Some((owner, info, _, _)) = entry {
                     field_uses.push((field, owner, info));
                 }
             }
@@ -1416,8 +1485,11 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             let key = (at.start_byte(), at.end_byte(), o.symbol.clone());
             if seen.insert(key) {
                 if ref_kind == RefKind::Call {
+                    let returns = return_types.get(o.symbol.as_str()).map(|(_, result)| result);
                     record_unambiguous(&mut alias_values, (at.start_byte(), at.end_byte()),
-                        return_types.get(o.symbol.as_str()).and_then(|(_, result)| result.cast_alias.as_ref()));
+                        returns.and_then(|result| result.cast_alias.as_ref()));
+                    record_unambiguous(&mut default_values, (at.start_byte(), at.end_byte()),
+                        returns.and_then(|result| result.default_collection));
                 }
                 if ref_kind == RefKind::Call && let Some((_, result)) = return_types.get(o.symbol.as_str()) {
                     let range = (at.start_byte(), at.end_byte());
@@ -1477,6 +1549,9 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             types: &facts.types[first_type..],
             type_identities: Some(identities),
             cast_aliases,
+            default_types: default_types.get(&rel),
+            default_collections: default_values.into_iter()
+                .filter_map(|(range, proof)| Some((range, proof.flatten()?))).collect(),
             definitions: Some(&local_definitions),
             uses: &local_uses,
             precise_captures: match edition {

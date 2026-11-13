@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide names the empty `Vec` or `IndexMap` installed by `mem::take` or returned by `unwrap_or_default` when Rust Analyzer confirms the collection type.
 - Rust Blueprints explain the paths through `let` conditions and short-circuit operators, which bounds a range includes, and where borrowed values come from. The Guide shows the full explanations, and the Inspector highlights the Rust syntax each explanation describes.
 - The Inspector keeps Rust declaration explanations visible across its tabs. Select a row to jump to the signature or type it describes.
 - When Rust skips the rest of an iteration with `continue`, the Blueprint Guide can take you back to the right loop, including a labeled outer loop.

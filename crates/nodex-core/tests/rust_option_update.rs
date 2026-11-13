@@ -82,7 +82,7 @@ fn scip_explains_option_mutation_and_the_conditional_default() {
         (
             "restore_layers",
             "unwrap_or_default",
-            ["value", "default value"],
+            ["value", "Empty Vec"],
         ),
         (
             "read_or_default",

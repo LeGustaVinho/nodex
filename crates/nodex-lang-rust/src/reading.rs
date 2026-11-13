@@ -277,6 +277,62 @@ pub(crate) struct NumericAlias {
     pub spelling: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DefaultType {
+    Vec,
+    IndexMap,
+    Option,
+    Result,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DefaultCollection {
+    name: &'static str,
+    container: Option<DefaultType>,
+    mutable_reference: bool,
+}
+
+pub(crate) fn written_default_collection(
+    ty: Node<'_>,
+    identities: &HashMap<Range, DefaultType>,
+) -> Option<DefaultCollection> {
+    let ty = crate::syntax::unparen_type(ty);
+    let (ty, mutable_reference) = if ty.kind() == "reference_type" {
+        if !children(ty).iter().any(|child| child.kind() == "mutable_specifier") {
+            return None;
+        }
+        (crate::syntax::unparen_type(ty.child_by_field_name("type")?), true)
+    } else {
+        (ty, false)
+    };
+    let head = |ty: Node<'_>| identities.get(&range(ty.child_by_field_name("type")?)).copied();
+    if ty.kind() != "generic_type" {
+        return None;
+    }
+    let (inner, container) = match head(ty)? {
+        outer @ (DefaultType::Option | DefaultType::Result) => {
+            let args = ty.child_by_field_name("type_arguments")?;
+            (crate::syntax::unparen_type(named_children(args).into_iter().find(|arg| !arg.is_extra())?), Some(outer))
+        }
+        _ => (ty, None),
+    };
+    if inner.kind() != "generic_type" {
+        return None;
+    }
+    let name = match head(inner)? {
+        DefaultType::Vec => {
+            let args = inner.child_by_field_name("type_arguments")?;
+            if named_children(args).into_iter().filter(|arg| !arg.is_extra()).count() != 1 {
+                return None;
+            }
+            "Vec"
+        }
+        DefaultType::IndexMap => "IndexMap",
+        _ => return None,
+    };
+    Some(DefaultCollection { name, container, mutable_reference })
+}
+
 #[derive(Default)]
 pub(crate) struct Evidence<'a> {
     pub operations: Operations,
@@ -286,6 +342,8 @@ pub(crate) struct Evidence<'a> {
     pub types: &'a [TypeFact],
     pub type_identities: Option<&'a TypeIdentities>,
     pub cast_aliases: HashMap<Range, NumericAlias>,
+    pub default_types: Option<&'a HashMap<Range, DefaultType>>,
+    pub default_collections: HashMap<Range, DefaultCollection>,
     pub definitions: Option<&'a HashMap<&'a str, Range>>,
     pub uses: &'a [(usize, usize, &'a str)],
     pub precise_captures: Option<bool>,
@@ -1122,16 +1180,21 @@ impl Reader<'_, '_> {
     }
 
     fn cast_binding_origin<'t>(&self, value: Node<'t>) -> Option<Node<'t>> {
-        let (start, end) = self.definition(value)?;
-        let root = std::iter::successors(Some(value), Node::parent).last()?;
-        let leaf = root.descendant_for_byte_range(start, end)?;
-        let declaration = std::iter::successors(leaf.parent(), Node::parent)
-            .find(|parent| matches!(parent.kind(), "let_declaration" | "parameter"))?;
+        let (declaration, leaf) = self.binding_declaration(value)?;
         let pattern = declaration.child_by_field_name("pattern")?;
         let origin = declaration
             .child_by_field_name("type")
             .or_else(|| declaration.child_by_field_name("value"))?;
         project_pattern(self.src, pattern, origin, leaf)
+    }
+
+    fn binding_declaration<'t>(&self, value: Node<'t>) -> Option<(Node<'t>, Node<'t>)> {
+        let (start, end) = self.definition(value)?;
+        let root = std::iter::successors(Some(value), Node::parent).last()?;
+        let leaf = root.descendant_for_byte_range(start, end)?;
+        let declaration = std::iter::successors(leaf.parent(), Node::parent)
+            .find(|parent| matches!(parent.kind(), "let_declaration" | "parameter"))?;
+        Some((declaration, leaf))
     }
 
     fn cast_source_number(&self, value: Node<'_>, depth: usize) -> Option<(CastNumber, bool)> {
@@ -1738,6 +1801,57 @@ impl Reader<'_, '_> {
         }
     }
 
+    fn proven_default_collection(&self, value: Node<'_>, depth: usize) -> Option<DefaultCollection> {
+        if depth >= 12 {
+            return None;
+        }
+        let value = unparen(value);
+        if let Some(proof) = self.evidence.default_collections.get(&range(value)) {
+            return Some(*proof);
+        }
+        match value.kind() {
+            "identifier" => {
+                let (declaration, binding) = self.binding_declaration(value)?;
+                let mut pattern = declaration.child_by_field_name("pattern")?;
+                if pattern.kind() == "mut_pattern" {
+                    pattern = named_children(pattern).into_iter().find(|child| child.kind() == "identifier")?;
+                }
+                if pattern != binding {
+                    return None;
+                }
+                written_default_collection(declaration.child_by_field_name("type")?, self.evidence.default_types?)
+            }
+            "reference_expression"
+                if children(value).iter().any(|child| child.kind() == "mutable_specifier") =>
+            {
+                let mut proof = self.proven_default_collection(value.child_by_field_name("value")?, depth + 1)?;
+                if proof.mutable_reference { return None; }
+                proof.mutable_reference = true;
+                Some(proof)
+            }
+            "call_expression" if self.op(value).is_some_and(|operation| operation.family == Family::MemReplace) =>
+                self.mem_value_collection(value, depth + 1),
+            _ => None,
+        }
+    }
+
+    fn mem_value_collection(&self, call: Node<'_>, depth: usize) -> Option<DefaultCollection> {
+        let callee = call.child_by_field_name("function")?;
+        if callee.kind() == "generic_function" {
+            // A written type argument can request a DerefMut coercion of the destination.
+            let args = callee.child_by_field_name("type_arguments")?;
+            let ty = named_children(args).into_iter().find(|ty| !ty.is_extra())?;
+            let proof = written_default_collection(ty, self.evidence.default_types?)?;
+            return (!proof.mutable_reference).then_some(proof);
+        }
+        let mut proof = self.proven_default_collection(argument(call, 0)?, depth)?;
+        if !proof.mutable_reference {
+            return None;
+        }
+        proof.mutable_reference = false;
+        Some(proof)
+    }
+
     fn mem_replace(&mut self, node: Node<'_>, name: &str) {
         let Some(callee) = node.child_by_field_name("function") else { return };
         let callee = if callee.kind() == "generic_function" {
@@ -1758,9 +1872,12 @@ impl Reader<'_, '_> {
             |place| self.written(place, 80),
         );
         let (label, action) = if name == "take" {
+            let default = self.mem_value_collection(node, 0)
+                .filter(|proof| proof.container.is_none())
+                .map_or_else(|| "the type's default value".into(), |proof| format!("an empty {}", proof.name));
             (
                 "Take the previous value and install the default",
-                format!("Compute the type's default value with Default::default(), then put it into {target}."),
+                format!("Compute {default} with Default::default(), then put it into {target}."),
             )
         } else {
             let Some(replacement) = argument(node, 1) else { return };
@@ -2237,6 +2354,15 @@ impl Reader<'_, '_> {
             Family::Result => result_paths(name),
             _ => return,
         };
+        if name == "unwrap_or_default" {
+            let container = if family == Family::Option { DefaultType::Option } else { DefaultType::Result };
+            if let Some(proof) = self.proven_default_collection(recv, 0)
+                .filter(|proof| !proof.mutable_reference && proof.container == Some(container))
+                && let Some(fallback) = paths.get_mut(1)
+            {
+                fallback.output = format!("Empty {}", proof.name);
+            }
+        }
         let returned = callback.and_then(closure_result);
         if let Some(ty) = returned.and_then(|expr| self.known_type(expr)) {
             match (family, name) {
