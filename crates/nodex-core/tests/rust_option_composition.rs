@@ -68,6 +68,9 @@ fn scip_distinguishes_option_composition_from_iterator_methods() {
     let iterator = flow(&mut project, "flatten_items");
     assert!(composition(&iterator).is_none());
     assert!(expression(&iterator, |expr| expr.op.as_deref() == Some("list.flatten")).is_some());
+    let pipeline = flow(&mut project, "flatten_pipeline");
+    assert!(composition(&pipeline).is_none());
+    assert!(expression(&pipeline, |expr| expr.flavors.iter().any(|flavor| flavor == "stage") && expr.label.starts_with("flatten(")).is_some());
     assert!(composition(&flow(&mut project, "zip_items")).is_none());
     assert!(composition(&flow(&mut project, "local_composition")).is_none());
 }

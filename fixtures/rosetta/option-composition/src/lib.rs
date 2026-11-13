@@ -18,7 +18,11 @@ pub fn validation(charge_volume: Option<f64>, module_capacity: Option<f64>) -> b
     charge_volume.zip(module_capacity).is_some_and(|(volume, cap)| volume > cap)
 }
 
-pub fn flatten_items(nested: Vec<Vec<u32>>) -> Vec<u32> {
+pub fn flatten_items(nested: impl Iterator<Item = Vec<u32>>) -> impl Iterator<Item = u32> {
+    nested.flatten()
+}
+
+pub fn flatten_pipeline(nested: Vec<Vec<u32>>) -> Vec<u32> {
     nested.into_iter().flatten().collect()
 }
 
