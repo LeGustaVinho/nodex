@@ -166,7 +166,7 @@ fn question_mark_success_finishes_the_surrounding_expression_before_advancing() 
     for (name, output, pin) in [
         ("catalog", "Use the value to continue evaluating the call", None),
         ("plain", "Continue", Some("out")),
-        ("standalone", "Continue", Some("out")),
+        ("standalone", "Continue after this statement", Some("out")),
         ("field", "Use the value to continue evaluating the field access", None),
         ("cast", "Use the value to continue evaluating this expression", None),
     ] {
@@ -226,8 +226,8 @@ fn question_mark_at_the_end_of_a_block_feeds_the_enclosing_call() {
     for (function, pin, resumed) in [
         ("argument", None, "Use the value to continue evaluating the call"),
         ("receiver", None, "Use the value to continue evaluating the call"),
-        ("not_tail", Some("out"), "Continue"),
-        ("discarded_tail", Some("out"), "Continue"),
+        ("not_tail", Some("out"), "Continue after this statement"),
+        ("discarded_tail", Some("out"), "Continue after this statement"),
         ("standalone", Some("out"), "Continue"),
         ("black_box callback", None, "Use the value to continue evaluating the call"),
     ] {
@@ -302,7 +302,7 @@ fn question_mark_at_the_end_of_an_arm_feeds_the_expression_that_uses_its_value()
         ("offense", 2, None, "Use the value to continue evaluating this expression"),
         ("request", 1, None, "Use the value to continue evaluating the call"),
         ("compound", 1, None, "Use the value to continue evaluating this expression"),
-        ("discarded", 1, Some("out"), "Continue"),
+        ("discarded", 1, Some("out"), "Continue after this statement"),
         ("completed_arm", 1, Some("out"), "Continue"),
         ("guarded", 1, None, "Continue checking the match guard"),
         ("scrutinee", 1, None, "Continue evaluating the value to match"),
@@ -317,5 +317,53 @@ fn question_mark_at_the_end_of_an_arm_feeds_the_expression_that_uses_its_value()
                     && branches[1].action == format!("Return from {function}")),
                 "{function}: {question:?}");
         }
+    }
+}
+
+#[test]
+fn a_question_mark_statement_discards_the_value_but_keeps_both_execution_outcomes() {
+    let source = r#"
+        fn offense(options: Result<Vec<u8>, String>) -> Result<u8, String> {
+            options?;
+            Ok(1)
+        }
+        fn fitting(add: impl FnOnce() -> Result<String, String>) -> Result<u8, String> {
+            (((add()?)));
+            Ok(2)
+        }
+        fn maybe(value: Option<String>) -> Option<u8> {
+            (value?);
+            Some(3)
+        }
+        fn consumed(value: Result<String, String>) -> Result<u8, String> {
+            std::hint::black_box(value?);
+            Ok(4)
+        }
+        fn wildcard(value: Result<String, String>) -> Result<u8, String> {
+            let _ = value?;
+            Ok(5)
+        }
+    "#;
+    let ir = lower_source("src/lib.rs", source);
+    for (function, expected) in [
+        ("offense", "Continue after this statement"),
+        ("fitting", "Continue after this statement"),
+        ("maybe", "Continue after this statement"),
+        ("consumed", "Use the value to continue evaluating the call"),
+        ("wildcard", "Continue"),
+    ] {
+        let graph = ir.flows.iter().find(|flow| flow.name == function).unwrap();
+        let (node, site) = question_marks(graph, source).next().unwrap();
+        let ReadingContent::Paths { branches, .. } = &site.content else { panic!("{site:?}") };
+        assert_eq!(branches[0].output, expected);
+        assert_eq!(
+            branches[0].action.contains("ignore the returned value"),
+            expected == "Continue after this statement",
+        );
+        assert_eq!(branches[0].pin.as_deref(), (function != "consumed").then_some("out"));
+        assert_eq!(branches[1].pin.as_deref(), Some("error"));
+        assert_eq!(branches[1].action, format!("Return from {function}"));
+        assert!(graph.edges.iter().any(|edge| edge.kind == FlowEdgeKind::Exec
+            && edge.from == node.id && edge.from_pin == "out"));
     }
 }

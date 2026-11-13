@@ -1693,8 +1693,15 @@ impl Reader<'_, '_> {
                 branch("Propagate", exit, "Propagate early"),
             ],
         };
+        let discarded = question_mark_result_is_discarded(node);
+        if discarded {
+            branches[0].action.push_str(" and ignore the returned value");
+            branches[0].output = "Continue after this statement".into();
+        }
         if let Some((_, output)) = iterator_exit {
-            branches[0].output = "Continue this callback with the value".into();
+            if !discarded {
+                branches[0].output = "Continue this callback with the value".into();
+            }
             branches[1].output = output.into();
         } else {
             if let Some(resume) = question_mark_condition(node).or_else(|| question_mark_consumer(node)) {
@@ -3172,6 +3179,16 @@ fn while_let_header(mut node: Node<'_>) -> Option<Node<'_>> {
         node = parent;
     }
     node.parent().filter(|parent| parent.kind() == "while_expression" && parent.child_by_field_name("condition") == Some(node))
+}
+
+fn question_mark_result_is_discarded(mut node: Node<'_>) -> bool {
+    while let Some(parent) = node.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+        node = parent;
+    }
+    node.parent().is_some_and(|parent| {
+        parent.kind() == "expression_statement"
+            && children(parent).iter().any(|token| token.kind() == ";" && !token.is_missing())
+    })
 }
 
 fn question_mark_condition(mut node: Node<'_>) -> Option<&'static str> {
