@@ -266,6 +266,7 @@ pub(crate) enum Family {
     VecRetain,
     StrSplit,
     Length,
+    Peekable,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -1795,6 +1796,7 @@ impl Reader<'_, '_> {
             Family::Bool => self.bool_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::Arc if matches!(name.as_str(), "make_mut" | "unwrap_or_clone") => self.arc_value(node, &name),
+            Family::Peekable => self.peekable(node, &name),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
@@ -1856,6 +1858,32 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn peekable(&mut self, node: Node<'_>, name: &str) {
+        let Some((iterator, receiver_argument)) = receiver(node) else { return };
+        let iterator = self.written(iterator, 80);
+        let (input, branches) = if name == "peek" {
+            (
+                format!("Look at the next item of {iterator}. Peekable may pull an item from the underlying iterator and store it so it stays next."),
+                vec![
+                    branch("An item is available", "Borrow the next item without consuming it. If the item is itself a reference, this returns a reference to that reference.", "Some(&item)"),
+                    branch("No item this time", "There is no next item to borrow on this call", "None"),
+                ],
+            )
+        } else {
+            let Some(predicate) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+            let predicate = self.written(predicate, 120);
+            (
+                format!("Check only the next item of {iterator}. If an item is available, pass a reference to it to the predicate {predicate}."),
+                vec![
+                    branch("Predicate returns true", "Consume and return the next item", "Some(item)"),
+                    branch("Predicate returns false", "Keep this item as the next one for a later call", "None"),
+                    branch("No item this time", "Skip calling the predicate", "None"),
+                ],
+            )
+        };
+        self.paths(node, self.src.span(node), true, input, branches, self.known_type(node));
     }
 
     fn arc_value(&mut self, node: Node<'_>, name: &str) {

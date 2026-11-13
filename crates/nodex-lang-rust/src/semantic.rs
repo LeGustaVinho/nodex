@@ -352,6 +352,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
                 "num/nonzero/impl#[`NonZero<T>`]get()." => return Some((Family::NonZero, name.into())),
                 "ops/range/impl#[`RangeInclusive<Idx>`]contains()." => return Some((Family::InclusiveRange, name.into())),
                 "str/impl#[str]split()." | "str/impl#[str]split_once()." => return Some((Family::StrSplit, name.into())),
+                "iter/adapters/peekable/impl#[`Peekable<I>`]peek()."
+                | "iter/adapters/peekable/impl#[`Peekable<I>`]next_if()." => return Some((Family::Peekable, name.into())),
                 "str/impl#[str]len()." => return Some((Family::Length, "bytes".into())),
                 "slice/impl#[`[T]`]len()." => return Some((Family::Length, "elements".into())),
                 _ => {}

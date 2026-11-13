@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide explains how `Peekable::peek` and `next_if` can leave the next item available for a later call.
 - The Rust Blueprint Guide shows how iterator `find` and `position` stop at the first match and what each call returns.
 - The Rust Blueprint Guide shows when `Arc::make_mut` can edit an existing value and when `make_mut` or `unwrap_or_clone` need to clone it.
 - Rust Blueprints distinguish UTF-8 byte length from the number of elements in a vector or slice when Rust Analyzer resolves `len`.
