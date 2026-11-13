@@ -2060,11 +2060,15 @@ impl Reader<'_, '_> {
             return;
         };
         let resolved = self.op(node).filter(|op| op.family == Family::Macro);
-        if resolved.is_some_and(|op| op.name == "select") {
+        let is_select = resolved.is_some_and(|op| op.name == "select");
+        let is_vec = resolved.is_some_and(|op| op.name == "vec");
+        if is_select {
             self.select_branches(node);
         }
+        let repeated_vec = is_vec && self.vec_repeat(node);
         let resolved = self.op(node).filter(|op| op.family == Family::Macro);
         let (label, text) = match resolved.map(|op| op.name.as_str()) {
+            Some("vec") if repeated_vec => ("Build a list", "This macro creates a Vec by repeating one value."),
             Some("vec") => (
                 "Build a list",
                 "This macro creates a Vec with the specified items.",
@@ -2102,6 +2106,36 @@ impl Reader<'_, '_> {
                 borrow: false,
             },
         );
+    }
+
+    fn vec_repeat(&mut self, node: Node<'_>) -> bool {
+        let Some(tree) = named_children(node).into_iter().find(|child| child.kind() == "token_tree") else { return false };
+        if tree.has_error() {
+            return false;
+        }
+        let tokens: Vec<_> = children(tree).into_iter().filter(|token| !token.is_extra()).collect();
+        let [_, arguments @ .., _] = tokens.as_slice() else { return false };
+        let mut separators = arguments.iter().enumerate().filter(|(_, token)| token.kind() == ";");
+        let Some((index, separator)) = separators.next().filter(|_| separators.next().is_none()) else { return false };
+        let Some((value, value_span)) = vec_repeat_operand(self.src, &arguments[..index]) else { return false };
+        let Some((length, length_span)) = vec_repeat_operand(self.src, &arguments[index + 1..]) else { return false };
+        let steps = vec![
+            ReadingStep {
+                span: value_span,
+                timing: "Evaluate the value once".into(),
+                action: format!("Evaluate {} once, even when the length is zero.", truncate(value, 120)),
+            },
+            ReadingStep {
+                span: length_span,
+                timing: "Read the vector length".into(),
+                action: format!("Use {} as the number of elements. This length can be computed at runtime.", truncate(length, 120)),
+            },
+            self.step(*separator, "Fill the vector", "Repeat the value using its type's Clone implementation. Elements can share data if Clone shares it. A length of zero drops the value and leaves the vector empty."),
+        ];
+        self.push(self.src.span(node), self.src.span(*separator), true, ReadingContent::Steps {
+            label: "Build a vector by repetition".into(), steps,
+        });
+        true
     }
 
     fn select_branches(&mut self, node: Node) {
@@ -2699,6 +2733,24 @@ impl Reader<'_, '_> {
         walk_pattern(pattern, context, &mut collect, self.src);
         parts
     }
+}
+
+fn vec_repeat_operand<'a>(src: Src<'a>, tokens: &[Node<'_>]) -> Option<(&'a str, Span)> {
+    let start = tokens.first()?.start_byte();
+    let end = tokens.last()?.end_byte();
+    let text = &src.text[start..end];
+    // Parsing one let initializer accepts nested punctuation and rejects a list of operands.
+    let prefix = "fn operand() { let _ = ";
+    let wrapped = format!("{prefix}{text}; }}");
+    let parsed = crate::parse(&wrapped).filter(|tree| !tree.root_node().has_error())?;
+    let value = parsed.root_node().named_child(0)?.child_by_field_name("body")?
+        .named_child(0)?.child_by_field_name("value")?;
+    if value.start_byte() != prefix.len() || value.end_byte() != prefix.len() + text.len()
+        || unparen(value).utf8_text(wrapped.as_bytes()).ok() == Some("_")
+    {
+        return None;
+    }
+    Some((text, src.index.span(src.file, start, end)))
 }
 
 fn select_loop_body(mut node: Node<'_>) -> Option<&'static str> {
@@ -3318,6 +3370,39 @@ fn operation_detail(family: Family, name: &str) -> Option<(&'static str, &'stati
 mod tests {
     use super::*;
     use nodex_lang_api::kit::LineIndex;
+
+    #[test]
+    fn vec_repeat_requires_two_complete_expressions() {
+        for (arguments, expected) in [
+            ("false; ships.len()", true),
+            ("value::<u32, u64>(); count", true),
+            ("{ seed(); 1 }; 0", true),
+            (r#"";", { seed(); "ready" }"#, false),
+            ("1, 2; count", false),
+            ("1; count, other", false),
+            ("1; count;", false),
+            ("1;", false),
+            ("; count", false),
+            ("1; _", false),
+        ] {
+            let text = format!("fn f() {{ let _ = vec![{arguments}]; }}");
+            let tree = crate::parse(&text).unwrap();
+            let root = tree.root_node();
+            let offset = text.find("vec!").unwrap();
+            let name = root.descendant_for_byte_range(offset, offset + "vec".len()).unwrap();
+            let call = std::iter::successors(Some(name), Node::parent).find(|node| node.kind() == "macro_invocation").unwrap();
+            let index = LineIndex::new(&text);
+            let src = Src { text: &text, file: "vec.rs", index: &index };
+            let evidence = Evidence {
+                operations: [(range(call), Some(Resolved { family: Family::Macro, name: "vec".into(), definition: None }))].into(),
+                ..Default::default()
+            };
+            let (reading, _, _) = collect(src, root, &evidence);
+            let found = reading.iter().any(|fact| matches!(&fact.content,
+                ReadingContent::Steps { label, .. } if label == "Build a vector by repetition"));
+            assert_eq!(found, expected, "{arguments}");
+        }
+    }
 
     #[test]
     fn select_direct_handler_uses_its_own_future_and_keyword_span() {

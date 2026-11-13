@@ -38,6 +38,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Rust Guide explains when a standard channel's `recv` blocks or reports disconnection, and how `Result::is_ok` turns its outcome into a boolean.
 - Open a separate Rust Blueprint for a callback or local closure whose body is directly a loop, including a `while` that waits for channel messages.
 - From a Rust `break`, the Guide can highlight the first mapped statement after the loop without advancing the execution path.
+- The Rust Guide highlights the semicolon in the standard `vec![value; length]` macro and explains evaluation, cloning, and the zero-length case.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
