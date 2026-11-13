@@ -16,7 +16,7 @@ use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, callback_entry_labe
 use tree_sitter::Node;
 
 use crate::expr::{ExprLowering, callee_path, macro_args, macro_name, reads};
-use crate::structure::{BodyJob, BodyKind};
+use crate::structure::{BodyJob, BodyKind, direct_loop_body};
 use crate::syntax::{Src, block_statements, children, first_child_of_kind, inclusive_range_to, is_comment, is_expression, is_item, named_children, parameters, pattern_bindings, statement_tail, unparen};
 
 pub struct Lowered {
@@ -182,7 +182,10 @@ pub fn lower_body(
         propagation_label,
     };
     let params: Vec<&str> = job.params.iter().map(|(n, _)| n.as_str()).collect();
+    let closure_loop = job.decl.kind() == "closure_expression" && direct_loop_body(job.body);
     let label = match job.kind {
+        BodyKind::LocalFunction if closure_loop && job.flavors.iter().any(|f| f == "async") =>
+            "when the future from this async closure is polled".into(),
         BodyKind::LocalFunction if job.flavors.iter().any(|f| f == "callback") => callback_entry_label(&job.name, &params),
         BodyKind::LocalFunction => format!("when local function {}({}) is called", job.name, params.join(", ")),
         _ if job.flavors.iter().any(|f| f == "test") => format!("when the test {} runs", job.name),
@@ -237,6 +240,8 @@ pub fn lower_body(
 
     if job.body.kind() == "block" {
         l.block(job.body, Some(start), &if job.returns_value { Tail::Return } else { Tail::No });
+    } else if closure_loop {
+        l.tail(job.body, job.body, Some(start), &Tail::Return);
     } else if job.returns_value || job.kind == BodyKind::LocalFunction {
         l.return_value(job.body, Some(job.body), Some(start), true);
     } else {

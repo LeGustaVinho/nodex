@@ -13,7 +13,7 @@ use tree_sitter::Node;
 
 use crate::syntax::{
     Src, attribute_flavors, bare_type_name, children_of_kind, doc_comment, first_child_of_kind, function_modifiers, last_segment,
-    named_children, parameters, receiver, type_names, visibility,
+    named_children, parameters, receiver, type_names, unparen, visibility,
 };
 
 /// What kind of body a [`BodyJob`] lowers.
@@ -21,7 +21,7 @@ use crate::syntax::{
 pub enum BodyKind {
     Function,
     Method,
-    /// A `fn` declared inside another function, or a block-bodied callback or local closure.
+    /// A nested `fn`, or a callback or local closure with a mapped body.
     LocalFunction,
 }
 
@@ -610,7 +610,7 @@ impl<'a, 't> Collector<'a, 't> {
         });
     }
 
-    /// Local functions, block-bodied callbacks and closures bound to locals get their own Blueprint.
+    /// Local functions and named callbacks or closures with statement bodies get their own Blueprint.
     fn local_functions(&mut self, body: Node<'t>, owner: &str) {
         let src = self.src;
         let mut stack = vec![body];
@@ -624,10 +624,15 @@ impl<'a, 't> Collector<'a, 't> {
                         self.function(c, &id, &name, owner, SymbolKind::Function, BodyKind::LocalFunction, flavors);
                     }
                     "closure_expression" => {
-                        if let Some((name, callback)) = callback_callee(src, c)
+                        let loop_body = c.child_by_field_name("body").is_some_and(direct_loop_body);
+                        let argument = if loop_body { outer_parentheses(c) } else { c };
+                        if let Some((name, callback)) = callback_callee(src, argument)
                             .map(|callee| (format!("{callee} callback"), true))
                             .or_else(|| closure_binding(src, c).map(|binding| (format!("{binding} closure"), false)))
-                            && c.child_by_field_name("body").is_some_and(|b| b.kind() == "block" && named_children(b).iter().any(|s| !crate::syntax::is_comment(s.kind())))
+                            && c.child_by_field_name("body").is_some_and(|body| {
+                                loop_body
+                                    || body.kind() == "block" && named_children(body).iter().any(|s| !crate::syntax::is_comment(s.kind()))
+                            })
                         {
                             let id = self.unique(format!("{owner}::{name}"));
                             self.closure(c, &id, &name, owner, callback);
@@ -696,10 +701,19 @@ impl<'a, 't> Collector<'a, 't> {
     }
 }
 
-pub(crate) fn closure_binding(src: Src, mut value: Node) -> Option<String> {
+pub(crate) fn direct_loop_body(body: Node<'_>) -> bool {
+    matches!(unparen(body).kind(), "loop_expression" | "while_expression" | "for_expression")
+}
+
+fn outer_parentheses(mut value: Node) -> Node {
     while let Some(parent) = value.parent().filter(|p| p.kind() == "parenthesized_expression") {
         value = parent;
     }
+    value
+}
+
+pub(crate) fn closure_binding(src: Src, value: Node) -> Option<String> {
+    let value = outer_parentheses(value);
     let declaration = value.parent().filter(|p| p.kind() == "let_declaration")?;
     if declaration.child_by_field_name("value") != Some(value) {
         return None;

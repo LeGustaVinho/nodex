@@ -547,7 +547,9 @@ impl<'a> ExprLowering<'a> {
         let src = self.src;
         let params: Vec<String> = parameters(src, node).into_iter().map(|(n, _)| n).collect();
         let body = node.child_by_field_name("body");
+        let symbol = self.functions.get(&node.start_byte()).cloned();
         let kids = match body {
+            Some(b) if symbol.is_some() && crate::structure::direct_loop_body(b) => Vec::new(),
             Some(b) if b.kind() != "block" => vec![self.lower(b)],
             Some(b) => {
                 // `|x| { x + 1 }`: a one-expression block reads like an expression body.
@@ -561,7 +563,7 @@ impl<'a> ExprLowering<'a> {
         };
         let mut e = self.mk(node, Concept::Lambda, truncate(&format!("|{}| …", params.join(", ")), 40), kids);
         e.params = params;
-        e.symbol = self.functions.get(&node.start_byte()).cloned();
+        e.symbol = symbol;
         let head = src.text(node).trim_start();
         if head.starts_with("move") || head.starts_with("async move") {
             e.flavors.push("move".into());
