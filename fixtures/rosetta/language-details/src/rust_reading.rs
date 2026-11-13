@@ -574,6 +574,27 @@ pub mod reading_cast_nominal {
     }
 }
 
+pub fn reading_result_ok(raw: i64, records: &HashMap<u32, i32>) -> Option<i32> {
+    u32::try_from(raw).ok().and_then(|key| records.get(&key).copied())
+}
+
+pub fn reading_result_err(raw: i64) -> Option<String> {
+    u32::try_from(raw).err().map(|error| error.to_string())
+}
+
+pub mod reading_result_shadows {
+    struct Result;
+
+    impl Result {
+        fn ok(self) -> Option<i32> { None }
+        fn err(self) -> Option<String> { None }
+    }
+
+    pub fn reading_local_result() -> (Option<i32>, Option<String>) {
+        (Result.ok(), Result.err())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2981,6 +2981,18 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
 
 fn result_paths(name: &str) -> Vec<ReadingBranch> {
     let (success, output, error, failure) = match name {
+        "ok" => (
+            "Keep the value inside Ok",
+            "Some(value)",
+            "Discard the error inside Err",
+            "None",
+        ),
+        "err" => (
+            "Discard the value inside Ok",
+            "None",
+            "Keep the error inside Err",
+            "Some(error)",
+        ),
         "map" => (
             "Run the callback with the value",
             "Ok(callback result)",

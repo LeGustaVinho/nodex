@@ -652,12 +652,47 @@ fn rust_matches_macro_uses_resolved_identity() {
 #[test]
 #[ignore = "needs rust-analyzer"]
 fn scip_reading_connects_lookup_paths_patterns_and_origins() {
+    fn conversion<'a>(graph: &'a FlowGraph, spelling: &str) -> Option<&'a ReadingSite> {
+        sites(graph).iter().find(|site| {
+            site.span.file == "src/rust_reading.rs"
+                && matches!(site.content, ReadingContent::Paths { .. })
+                && FIXTURE_SOURCE.get(site.span.start_byte as usize..site.span.end_byte as usize) == Some(spelling)
+        })
+    }
+
     let mut project = project();
     let before = flow(&mut project, "protected");
     let thread = before.nodes.iter().find(|node| node.code.starts_with("let thread =")).unwrap();
     assert_eq!(thread.concept, Concept::Var);
+    let conversions = [
+        ("reading_result_ok", "u32::try_from(raw).ok()", [
+            ("Success", "Keep the value inside Ok", "Some(value)"),
+            ("Error", "Discard the error inside Err", "None"),
+        ]),
+        ("reading_result_err", "u32::try_from(raw).err()", [
+            ("Success", "Discard the value inside Ok", "None"),
+            ("Error", "Keep the error inside Err", "Some(error)"),
+        ]),
+    ];
+    for (function, spelling, _) in conversions {
+        assert!(conversion(&flow(&mut project, function), spelling).is_none());
+    }
     let mut provider = RustFrontend.semantic(project.root()).unwrap().unwrap();
     project.apply_semantic(Language::Rust, provider.analyze().unwrap());
+    for (function, spelling, outcomes) in conversions {
+        let graph = flow(&mut project, function);
+        let site = conversion(&graph, spelling).unwrap_or_else(|| panic!("Missing {spelling} in {:?}", sites(&graph)));
+        assert_eq!(site.basis, ValueBasis::TypeAnalysis);
+        assert!(site.path.is_some());
+        let ReadingContent::Paths { input, branches, .. } = &site.content else { unreachable!() };
+        assert_eq!(input, "u32::try_from(raw)");
+        assert_eq!(branches.iter().map(|branch| (branch.label.as_str(), branch.action.as_str(), branch.output.as_str()))
+            .collect::<Vec<_>>(), outcomes);
+        assert!(branches.iter().all(|branch| branch.pin.is_none()));
+    }
+    let local = flow(&mut project, "reading_local_result");
+    assert!(conversion(&local, "Result.ok()").is_none());
+    assert!(conversion(&local, "Result.err()").is_none());
     for (function, specialized) in [
         ("reading_collect_standard_option", true),
         ("reading_collect_custom_from_iter", false),

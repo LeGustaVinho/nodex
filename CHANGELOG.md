@@ -30,6 +30,7 @@ The release workflow publishes the section of the version it builds as the relea
 - For standard numeric conversions, the Rust Guide shows when `From` returns the destination value directly and when `TryFrom` returns `Ok` or `Err`. Follow the conversion separately from the `expect` or other call that handles its result.
 - The Rust Guide explains where a mapped `break value` sends its result. It identifies the loop or labeled block that ends and shows when the value initializes a variable outside it.
 - Rust casts explain the conversion after arithmetic when rust-analyzer confirms a standard numeric operator and its result type.
+- The Rust Guide explains how `Result::ok` and `Result::err` keep one outcome in `Some` and turn the other into `None`, including when another call uses the resulting `Option`.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
