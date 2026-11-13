@@ -11,6 +11,7 @@ use nodex_lang_api::{
     blueprint_types::{expression_type, project_pattern, rust_grouped_pattern},
     kit::truncate,
     syntax::{Src, children, named_children},
+    syntax_sites::{rust_assignee_parts, rust_assignee_rest},
 };
 use tree_sitter::Node;
 
@@ -1081,6 +1082,8 @@ impl Reader<'_, '_> {
                 if let Some((equal, end)) = inclusive_range_to(node) {
                     let operator = self.src.index.span(self.src.file, node.start_byte(), equal.end_byte());
                     self.describe_range(node, operator, None, Some(end), true);
+                } else {
+                    self.destructuring_assignment(node);
                 }
             }
             "binary_expression" => self.short_circuit(node),
@@ -1457,7 +1460,7 @@ impl Reader<'_, '_> {
     }
 
     fn range_expression(&mut self, node: Node<'_>) {
-        if node.parent().is_some_and(|parent| {
+        if rust_assignee_rest(node) || node.parent().is_some_and(|parent| {
             parent.child_by_field_name("left") == Some(node) && inclusive_range_to(parent).is_some()
         }) {
             return;
@@ -1476,6 +1479,49 @@ impl Reader<'_, '_> {
         let mut bounds = bounds;
         let end = bounds.find(|bound| bound.start_byte() >= operator.end_byte());
         self.describe_range(node, self.src.span(*operator), start, end, operator.kind() == "..=");
+    }
+
+    fn destructuring_assignment(&mut self, node: Node<'_>) {
+        if node.has_error() {
+            return;
+        }
+        let (Some(mut left), Some(right)) = (node.child_by_field_name("left"), node.child_by_field_name("right")) else { return };
+        let Some(operator) = children(node).into_iter().find(|token| token.kind() == "=" && !token.is_missing()) else { return };
+        while left.kind() == "parenthesized_expression" {
+            let Some(inner) = left.named_children(&mut left.walk()).find(|child| !child.is_extra()) else { return };
+            left = inner;
+        }
+        if !matches!(left.kind(), "tuple_expression" | "struct_expression" | "array_expression") {
+            return;
+        }
+        let mut steps = vec![self.step(right, "First", "Evaluate the right side and take the corresponding parts for the destinations. If evaluation exits early, this assignment never starts writing to the destinations.")];
+        let mut pending = vec![left];
+        while let Some(part) = pending.pop() {
+            let step = match part.kind() {
+                "array_expression" if part.child_by_field_name("length").is_some() => return,
+                "struct_expression" if part.child_by_field_name("body")
+                    .is_some_and(|body| children(body).iter().any(|field| field.kind() == "base_field_initializer")) => return,
+                "parenthesized_expression" | "tuple_expression" | "struct_expression" | "array_expression" => {
+                    pending.extend(rust_assignee_parts(part).into_iter().rev());
+                    continue;
+                }
+                "identifier" if self.src.text(part) == "_" => self.step(part, "Ignore one part", "Skip the value at this position. There is no destination to write."),
+                "range_expression" if rust_assignee_rest(part) => self.step(part, "Ignore the remaining parts", "The dots skip the elements not named by the other destinations."),
+                "unary_expression" if part.child(0).is_none_or(|token| token.kind() != "*") => return,
+                "identifier" | "scoped_identifier" | "field_expression" | "index_expression" | "unary_expression" => {
+                    let destination = self.written(part, 80);
+                    self.step(part, "In left-to-right order", format!("Locate {destination}, drop its previous value if initialized, and write the corresponding part by move or copy."))
+                }
+                _ => return,
+            };
+            steps.push(step);
+        }
+        if steps.len() == 1 {
+            return;
+        }
+        self.push(self.src.span(node), self.src.span(operator), false, ReadingContent::Steps {
+            label: "Assign parts to existing destinations".into(), steps,
+        });
     }
 
     fn describe_range(&mut self, node: Node, operator: Span, start: Option<Node>, end: Option<Node>, inclusive: bool) {

@@ -1,4 +1,4 @@
-use crate::syntax::{Src, children};
+use crate::syntax::{Src, children, named_children};
 use nodex_ir::{Concept, Expr, FileIr, Language, Span, SymbolKind, SyntaxSite};
 use tree_sitter::Node;
 
@@ -41,6 +41,46 @@ pub fn rust_array_repeat(node: Node<'_>) -> Option<(Node<'_>, Node<'_>, Node<'_>
         value = value.prev_named_sibling()?;
     }
     Some((value, separator, length))
+}
+
+/// Parts of an assignee that receive components of the assigned value.
+pub fn rust_assignee_parts(node: Node<'_>) -> Vec<Node<'_>> {
+    let parts = |node| named_children(node).into_iter().filter(|part| !part.is_extra());
+    match node.kind() {
+        "tuple_expression" | "parenthesized_expression" => parts(node).collect(),
+        "array_expression" if node.child_by_field_name("length").is_none() => parts(node).collect(),
+        "struct_expression" => node.child_by_field_name("body").into_iter().flat_map(parts).filter_map(|field| {
+            match field.kind() {
+                "field_initializer" => field.child_by_field_name("value"),
+                "shorthand_field_initializer" => parts(field).find(|part| part.kind() == "identifier"),
+                _ => None,
+            }
+        }).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A bare `..` on the left of a destructuring assignment ignores remaining parts.
+pub fn rust_assignee_rest(mut node: Node<'_>) -> bool {
+    if node.kind() != "range_expression" || node.end_byte() - node.start_byte() != 2
+        || node.child(0).is_none_or(|token| token.kind() != "..")
+    {
+        return false;
+    }
+    let mut in_container = false;
+    while let Some(parent) = node.parent() {
+        if parent.kind() == "assignment_expression" {
+            return in_container && parent.child_by_field_name("left") == Some(node);
+        }
+        let container = match parent.kind() {
+            "field_initializer" => parent.parent().and_then(|body| body.parent()),
+            _ => Some(parent),
+        };
+        let Some(container) = container.filter(|container| rust_assignee_parts(*container).contains(&node)) else { return false };
+        in_container |= container.kind() != "parenthesized_expression";
+        node = container;
+    }
+    false
 }
 
 pub fn annotate(ir: &mut FileIr, root: Node, src: Src, javascript: bool) {
@@ -621,7 +661,7 @@ fn collect(
                     parent.child_by_field_name("left") == Some(n)
                         && rust_inclusive_range_to(parent).is_some()
                 });
-                if !split_inclusive {
+                if !split_inclusive && !rust_assignee_rest(n) {
                     emit("range-open", token(".."), false, false);
                 }
                 emit("range-inclusive", token("..="), false, false);

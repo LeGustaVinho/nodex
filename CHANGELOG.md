@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints show how destructuring assignments evaluate the right side before updating each existing destination.
 - The Rust Blueprint Guide explains why a sequential collection into `Result<Vec<_>, E>` stops at the first error and which work has already happened.
 - The Rust Blueprint Guide explains how `?` in the first argument of `matches!` can return early before the macro produces a boolean.
 - A Rust `map` callback explains at the start of its Blueprint when it runs and how the caller uses its return value.
