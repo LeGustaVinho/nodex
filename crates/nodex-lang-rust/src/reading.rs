@@ -2316,6 +2316,11 @@ impl Reader<'_, '_> {
             );
         }
         let mut input = match (family, name) {
+            (Family::Option, "ok_or") => {
+                let Some(error) = argument(node, callback_arg) else { return };
+                format!("If {} produces an Option, evaluate the error argument {} before checking whether the option is Some or None.",
+                    self.written(recv, 120), self.written(error, 120))
+            }
             (Family::Option, "replace") => format!("Replace the contents of {}", self.short(recv)),
             (Family::Option, "get_or_insert") => format!("Keep or fill {}", self.short(recv)),
             (Family::Option, "take_if") => format!("Take the contents of {} if the test passes", self.short(recv)),
@@ -3571,6 +3576,12 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
                 branch("Missing", "Skip the test", "None"),
             ];
         }
+        "ok_or" => (
+            "Keep the value inside Some and discard the evaluated error",
+            "Ok(value)",
+            "Use the already evaluated error",
+            "Err(error)",
+        ),
         "ok_or_else" => (
             "Keep the present value",
             "Ok(value)",
