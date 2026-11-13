@@ -258,6 +258,8 @@ pub(crate) enum Family {
     Effect,
     ArrayFromFn,
     IterFromFn,
+    FutureReady,
+    BoxPin,
     MemReplace,
     OnceLock,
     NonZero,
@@ -1871,6 +1873,7 @@ impl Reader<'_, '_> {
             Family::Iter if name == "zip" => self.iterator_zip(node),
             Family::Iter if name == "fold" => self.iterator_fold(node),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
+            Family::FutureReady | Family::BoxPin => self.future_preparation(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
             Family::Length => {
@@ -2312,6 +2315,41 @@ impl Reader<'_, '_> {
             _ => return,
         };
         self.paths(node, self.src.span(member), true, input, branches, None);
+    }
+
+    fn future_preparation(&mut self, node: Node<'_>, family: Family) {
+        let Some(callee) = node.child_by_field_name("function") else { return };
+        let callee = if callee.kind() == "generic_function" {
+            callee.child_by_field_name("function").unwrap_or(callee)
+        } else {
+            callee
+        };
+        let member = method_call(node).map(|(_, member)| member)
+            .or_else(|| callee.child_by_field_name("name")).unwrap_or(callee);
+        let (label, steps) = match family {
+            Family::FutureReady => {
+                let Some(value) = argument(node, 0) else { return };
+                ("Make a future from a value", vec![
+                    self.step(value, "Before the call", "Evaluate the argument now, including any effects from evaluating it."),
+                    self.step(node, "On the first poll", "The future immediately returns the stored value as Poll::Ready(value)."),
+                ])
+            }
+            Family::BoxPin => {
+                let Some(value) = argument(node, 0) else { return };
+                let future = value.kind() == "async_block" || self.op(value).is_some_and(|op| op.family == Family::FutureReady);
+                let (label, text) = if future {
+                    ("Put the future in a pinned box", "Box the future and return Pin<Box<T>>. Pinning keeps a future that relies on its address in place while the box handle can move. Polling the future is a separate operation.")
+                } else {
+                    ("Put the value in a pinned box", "Box the value and return Pin<Box<T>>. For values that rely on pinning, the box keeps the value at a stable address while the box handle can move.")
+                };
+                (label, vec![
+                    self.step(value, "Before the call", "Evaluate the argument to get the value to box."),
+                    self.step(node, "During this call", text),
+                ])
+            }
+            _ => return,
+        };
+        self.push(self.src.span(node), self.src.span(member), true, ReadingContent::Steps { label: label.into(), steps });
     }
 
     fn from_fn(&mut self, node: Node<'_>, family: Family) {
