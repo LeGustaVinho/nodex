@@ -374,7 +374,10 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             Family::OnceLock
         } else if sym.package == "core" && matches!(descriptor, "bool/impl#[bool]then()." | "bool/impl#[bool]then_some().") {
             Family::Bool
-        } else if descriptor.starts_with("sync/impl#[`Arc<") && name == "clone" && sym.package == "alloc" {
+        } else if sym.package == "alloc" && (matches!(descriptor,
+            "sync/impl#[`Arc<T, A>`]make_mut()." | "sync/impl#[`Arc<T, A>`]unwrap_or_clone().")
+            || descriptor.starts_with("sync/impl#[`Arc<") && name == "clone")
+        {
             Family::Arc
         } else if name == "clone" && (descriptor == "clone/Clone#clone()." || descriptor.contains("][Clone]clone().")) {
             Family::Clone

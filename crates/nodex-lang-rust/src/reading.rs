@@ -1788,6 +1788,7 @@ impl Reader<'_, '_> {
         match family {
             Family::Bool => self.bool_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
+            Family::Arc if matches!(name.as_str(), "make_mut" | "unwrap_or_clone") => self.arc_value(node, &name),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
@@ -1848,6 +1849,30 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn arc_value(&mut self, node: Node<'_>, name: &str) {
+        let Some(pointer) = argument(node, 0) else { return };
+        let pointer = self.written(pointer, 120);
+        let (input, branches) = if name == "make_mut" {
+            (
+                format!("Get mutable access to the value inside the Arc at {pointer}."),
+                vec![
+                    branch("Only owner, no Weak pointers", "Reuse the existing value in its allocation", "Mutable reference to the value"),
+                    branch("Other Arc owners", "Use the inner type's cloning behavior to create a value in a new allocation. If cloning finishes, point this Arc to it.", "Mutable reference to the clone"),
+                    branch("Only owner, with Weak pointers", "Keep the inner value without cloning it. Existing Weak pointers can no longer be upgraded to an Arc.", "Mutable reference to the value"),
+                ],
+            )
+        } else {
+            (
+                format!("Consume {pointer} and return an owned value."),
+                vec![
+                    branch("Only Arc owner", "Move the original value out of the Arc. Weak pointers do not prevent this.", "Original value"),
+                    branch("Other Arc owners", "Use the inner type's Clone implementation and return its result if cloning finishes.", "Cloned value"),
+                ],
+            )
+        };
+        self.paths(node, self.src.span(node), true, input, branches, self.known_type(node));
     }
 
     fn str_split(&mut self, node: Node<'_>, name: &str) {
