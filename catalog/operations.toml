@@ -1589,10 +1589,10 @@ output = "Results:list"
 explain = "Finishes when all the tasks finished, with all their results."
 cs = "Task.WhenAll(tasks)"
 ts = "Promise.all(promises)"
-rs = "join!(a, b), join_all(futures)"
+rs = "join_all(futures)"
 calls_cs = ["Task.WhenAll()", "UniTask.WhenAll()"]
 calls_ts = ["Promise.all()", "Promise.allSettled()"]
-calls_rs = ["join_all()", "join!()"]
+calls_rs = ["join_all()"]
 
 [operations."async.any"]
 title = "First to finish"

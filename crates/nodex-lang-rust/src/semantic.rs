@@ -444,6 +444,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         match (external, sym.package, descriptor) {
             (true, "tokio", "task/spawn/spawn().") => Family::Task,
             (true, "tokio", "macros/select/select!" | "select!") => return Some((Family::Macro, "select".into())),
+            (true, "tokio", "macros/join/join!") => return Some((Family::Macro, "join".into())),
+            (true, "tokio", "macros/try_join/try_join!") => return Some((Family::Macro, "try_join".into())),
             (true, "tokio", descriptor) if (descriptor.starts_with("time/") && matches!(name, "sleep" | "timeout_at"))
                 || (descriptor.starts_with("sync/mpsc/") || descriptor.starts_with("sync/broadcast/") || descriptor.starts_with("sync/oneshot/"))
                     && matches!(name, "send" | "recv")

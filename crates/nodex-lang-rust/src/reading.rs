@@ -2973,19 +2973,38 @@ impl Reader<'_, '_> {
                 "Wait for one eligible branch",
                 "Poll the eligible futures in the current task. When a future completes and its pattern matches, stop polling the other futures and run that branch's handler. A handler that finishes normally supplies the result of select!.",
             ),
+            Some("join") => (
+                "Wait for every future",
+                "Poll the futures concurrently within the current task. Once all of them finish, return their outputs as a tuple in the order the futures are written. If a future returns Err, keep that error in its tuple position and keep waiting for the others.",
+            ),
+            Some("try_join") => (
+                "Wait for every future to succeed",
+                "Poll the futures concurrently within the current task. If all return Ok, return Ok with a tuple of their values in the order the futures are written. When the macro encounters an Err, return it and drop the futures still in progress. Work already started elsewhere can continue, and effects already performed may still be observable.",
+            ),
             _ => (
                 "Macro invocation",
                 "Rust expands this macro during compilation using the tokens written at the call.",
             ),
         };
         let definition = resolved.and_then(|op| op.definition.clone());
+        let mut text = text.to_owned();
+        if resolved.is_some_and(|op| matches!(op.name.as_str(), "join" | "try_join"))
+            && let Some(tree) = named_children(node).into_iter().find(|child| child.kind() == "token_tree" && !child.has_error())
+        {
+            let tokens: Vec<_> = children(tree).into_iter().filter(|token| !token.is_extra()).collect();
+            if let [_, bias, separator, ..] = tokens.as_slice()
+                && self.src.text(*bias) == "biased" && separator.kind() == ";"
+            {
+                text.push_str(" With `biased;`, poll in written order. Otherwise, Tokio rotates which future it checks first.");
+            }
+        }
         self.push(
             self.src.span(node),
             self.src.span(name),
             resolved.is_some(),
             ReadingContent::Detail {
                 label: label.into(),
-                text: text.into(),
+                text,
                 definition,
                 borrow: false,
             },
