@@ -270,6 +270,12 @@ pub(crate) struct Resolved {
 pub(crate) type Operations = HashMap<Range, Option<Resolved>>;
 pub(crate) type TypeIdentities = BTreeMap<usize, (usize, String)>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NumericAlias {
+    pub primitive: &'static str,
+    pub spelling: String,
+}
+
 #[derive(Default)]
 pub(crate) struct Evidence<'a> {
     pub operations: Operations,
@@ -278,6 +284,7 @@ pub(crate) struct Evidence<'a> {
     pub non_bindings: HashSet<Range>,
     pub types: &'a [TypeFact],
     pub type_identities: Option<&'a TypeIdentities>,
+    pub cast_aliases: HashMap<Range, NumericAlias>,
     pub definitions: Option<&'a HashMap<&'a str, Range>>,
     pub uses: &'a [(usize, usize, &'a str)],
     pub precise_captures: Option<bool>,
@@ -545,7 +552,7 @@ fn imports_cast_type(src: Src<'_>, import: Node<'_>, name: &str) -> bool {
     }
 }
 
-fn may_shadow_cast_type(src: Src<'_>, ty: Node<'_>, analyzed: bool) -> bool {
+pub(crate) fn may_shadow_cast_type(src: Src<'_>, ty: Node<'_>, analyzed: bool) -> bool {
     let name = src.text(ty);
     std::iter::successors(ty.parent(), Node::parent).any(|scope| {
         let named = |node: Node| {
@@ -1058,7 +1065,7 @@ impl Reader<'_, '_> {
         let Some(target) = node.child_by_field_name("type") else {
             return;
         };
-        let Some(to) = self.written_cast_number(target) else {
+        let Some((to, target_resolved)) = self.written_cast_number(target) else {
             return;
         };
         let Some(value) = node.child_by_field_name("value").map(unparen) else {
@@ -1073,13 +1080,52 @@ impl Reader<'_, '_> {
         let Some((from, resolved)) = self.cast_source_number(value, 0) else {
             return;
         };
-        let label = format!("Convert {} to {}", from.name(), to.name());
+        let label = format!(
+            "Convert {} to {}",
+            self.cast_type_label(value, from, 0),
+            self.cast_type_label(crate::syntax::unparen_type(target), to, 0)
+        );
         self.push(
             self.src.span(node),
             self.src.span(operator),
-            resolved || target.kind() != "primitive_type",
+            resolved || target_resolved,
             detail(&label, numeric_cast_text(from, to)),
         );
+    }
+
+    fn cast_type_label(&self, node: Node<'_>, number: CastNumber, depth: usize) -> String {
+        if let Some(alias) = self
+            .evidence
+            .cast_aliases
+            .get(&range(node))
+            .filter(|alias| alias.primitive == number.name())
+        {
+            return format!("{} ({})", alias.spelling, number.name());
+        }
+        if depth < 12 {
+            let origin = match node.kind() {
+                "identifier" => self.cast_binding_origin(node),
+                "type_cast_expression" => node.child_by_field_name("type"),
+                _ => None,
+            };
+            if let Some(origin) = origin {
+                return self.cast_type_label(unparen(origin), number, depth + 1);
+            }
+        }
+        number.name().into()
+    }
+
+    fn cast_binding_origin<'t>(&self, value: Node<'t>) -> Option<Node<'t>> {
+        let (start, end) = self.definition(value)?;
+        let root = std::iter::successors(Some(value), Node::parent).last()?;
+        let leaf = root.descendant_for_byte_range(start, end)?;
+        let declaration = std::iter::successors(leaf.parent(), Node::parent)
+            .find(|parent| matches!(parent.kind(), "let_declaration" | "parameter"))?;
+        let pattern = declaration.child_by_field_name("pattern")?;
+        let origin = declaration
+            .child_by_field_name("type")
+            .or_else(|| declaration.child_by_field_name("value"))?;
+        project_pattern(self.src, pattern, origin, leaf)
     }
 
     fn cast_source_number(&self, value: Node<'_>, depth: usize) -> Option<(CastNumber, bool)> {
@@ -1087,29 +1133,31 @@ impl Reader<'_, '_> {
             return None;
         }
         let value = unparen(value);
+        if let Some(alias) = self.evidence.cast_aliases.get(&range(value)) {
+            return CastNumber::from_shape(&syntax_shape(Language::Rust, alias.primitive))
+                .map(|from| (from, true));
+        }
         match value.kind() {
             "identifier" => {
                 // The short type in a SCIP local signature can also name an enum.
-                let inferred = CastNumber::from_shape(&self.known_type(value)?.shape)?;
-                let (start, end) = self.definition(value)?;
-                let root = std::iter::successors(Some(value), Node::parent).last()?;
-                let leaf = root.descendant_for_byte_range(start, end)?;
-                let declaration = std::iter::successors(leaf.parent(), Node::parent)
-                    .find(|parent| matches!(parent.kind(), "let_declaration" | "parameter"))?;
-                let pattern = declaration.child_by_field_name("pattern")?;
-                let written = if let Some(ty) = declaration.child_by_field_name("type") {
-                    self.written_cast_number(project_pattern(self.src, pattern, ty, leaf)?)?
-                } else {
-                    let init = declaration.child_by_field_name("value")?;
-                    let projected = project_pattern(self.src, pattern, init, leaf)?;
-                    self.cast_source_number(projected, depth + 1)?.0
-                };
-                (inferred.name() == written.name()).then_some((written, true))
+                let info = self.known_type(value)?;
+                let origin = crate::syntax::unparen_type(self.cast_binding_origin(value)?);
+                let written = self
+                    .written_cast_number(origin)
+                    .or_else(|| self.cast_source_number(origin, depth + 1))?
+                    .0;
+                let agrees = CastNumber::from_shape(&info.shape)
+                    .is_some_and(|inferred| inferred.name() == written.name());
+                (agrees
+                    || matches!(&info.shape, TypeShape::Named { name, .. }
+                    if self.evidence.cast_aliases.get(&range(origin)).is_some_and(|alias|
+                        alias.spelling.rsplit("::").next() == Some(name.as_str())
+                    )))
+                .then_some((written, true))
             }
             "type_cast_expression" => {
                 let ty = value.child_by_field_name("type")?;
                 self.written_cast_number(ty)
-                    .map(|from| (from, ty.kind() != "primitive_type"))
             }
             "unary_expression" if children(value).iter().any(|token| token.kind() == "-") => {
                 let literal = named_children(value)
@@ -1137,14 +1185,20 @@ impl Reader<'_, '_> {
         }
     }
 
-    fn written_cast_number(&self, ty: Node<'_>) -> Option<CastNumber> {
+    fn written_cast_number(&self, ty: Node<'_>) -> Option<(CastNumber, bool)> {
+        let ty = crate::syntax::unparen_type(ty);
+        if let Some(alias) = self.evidence.cast_aliases.get(&range(ty)) {
+            return CastNumber::from_shape(&syntax_shape(Language::Rust, alias.primitive))
+                .map(|number| (number, true));
+        }
         if let Some((_, identity)) = self
             .evidence
             .type_identities
             .and_then(|types| types.get(&ty.start_byte()))
             .filter(|(end, _)| *end == ty.end_byte())
         {
-            return CastNumber::from_shape(&syntax_shape(Language::Rust, identity));
+            return CastNumber::from_shape(&syntax_shape(Language::Rust, identity))
+                .map(|number| (number, true));
         }
         if ty.kind() != "primitive_type"
             || may_shadow_cast_type(self.src, ty, self.evidence.type_identities.is_some())
@@ -1152,6 +1206,7 @@ impl Reader<'_, '_> {
             return None;
         }
         CastNumber::from_shape(&syntax_shape(Language::Rust, self.src.text(ty)))
+            .map(|number| (number, false))
     }
 
     fn block_result(&mut self, block: Node<'_>) {

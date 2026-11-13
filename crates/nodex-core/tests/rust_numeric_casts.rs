@@ -41,6 +41,7 @@ fn rust_casts_explain_only_the_numeric_rules_with_known_types() {
             let signed = -1_i8 as u16;
             let unsigned = 255_u8 as i16;
             let nested = 511_u16 as u8 as u32;
+            let grouped = (511_u16 as (u8)) as u32;
             let exact = 17_u16 as f32;
             let rounded = 17_i64 as f32;
             let float = 1.25_f64 as f32;
@@ -58,7 +59,7 @@ fn rust_casts_explain_only_the_numeric_rules_with_known_types() {
     assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
     let graph = ir.flows.iter().find(|flow| flow.name == "casts").unwrap();
     let details: Vec<_> = cast_details(graph).collect();
-    assert_eq!(details.len(), 11, "{details:?}");
+    assert_eq!(details.len(), 13, "{details:?}");
     for (site, _, _) in &details {
         assert_eq!(site.basis, ValueBasis::Syntax);
         assert_eq!(
@@ -225,7 +226,12 @@ fn rust_heading_cast_uses_the_resolved_return_type_from_another_file() {
     let (site, label, _) = cast_details(&field).next().unwrap();
     assert_eq!(label, "Convert f64 to i64");
     assert_eq!(site.basis, ValueBasis::TypeAnalysis);
-    for id in [alias_target, alias_source, nominal_source, inferred_nominal] {
+    let alias = project.flow(&alias_source).unwrap();
+    let (site, label, explanation) = cast_details(&alias).next().unwrap();
+    assert_eq!(label, "Convert f64 (i32) to u16");
+    assert_eq!(site.basis, ValueBasis::TypeAnalysis);
+    assert!(explanation.contains("lowest 16 bits"));
+    for id in [alias_target, nominal_source, inferred_nominal] {
         let graph = project.flow(&id).unwrap();
         assert!(cast_details(&graph).next().is_none(), "{:?}", graph.reading);
     }

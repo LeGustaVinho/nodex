@@ -1,0 +1,9 @@
+[package]
+name = "rust-numeric-aliases"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+narrow = []
+
+[workspace]

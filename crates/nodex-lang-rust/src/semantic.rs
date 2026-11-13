@@ -24,7 +24,7 @@ use nodex_lang_api::SemanticProvider;
 use protobuf::Message;
 use tree_sitter::Node;
 
-use crate::reading::{Evidence, Family, Operations, Resolved, TypeIdentities};
+use crate::reading::{Evidence, Family, NumericAlias, Operations, Resolved, TypeIdentities, may_shadow_cast_type};
 
 /// Semantic facts from `rust-analyzer scip`.
 pub struct RustAnalyzer {
@@ -555,6 +555,7 @@ type Range = (usize, usize);
 
 struct ReturnType {
     info: TypeInfo,
+    cast_alias: Option<NumericAlias>,
     generics: Vec<Option<String>>,
     parameters: Vec<Option<TypeShape>>,
     receiver: bool,
@@ -614,6 +615,191 @@ fn written_type_identities(doc: &scip::types::Document, starts: &[usize], root: 
         }
         Some((node.start_byte(), (node.end_byte(), path)))
     }).collect()
+}
+
+type CastAliases = HashMap<Range, NumericAlias>;
+
+fn record_unambiguous<K: std::hash::Hash + Eq, V: Eq>(
+    items: &mut HashMap<K, Option<V>>,
+    key: K,
+    value: V,
+) {
+    items
+        .entry(key)
+        .and_modify(|previous| {
+            if previous.as_ref() != Some(&value) {
+                *previous = None;
+            }
+        })
+        .or_insert(Some(value));
+}
+
+fn conditional_alias(alias: Node<'_>, text: &str) -> bool {
+    let is_conditional = |attribute: Node<'_>| {
+        named_children(attribute)
+            .into_iter()
+            .find(|child| child.kind() == "attribute")
+            .and_then(|attribute| {
+                named_children(attribute)
+                    .into_iter()
+                    .find(|child| !child.is_extra())
+            })
+            .is_some_and(|name| matches!(&text[name.byte_range()], "cfg" | "cfg_attr"))
+    };
+    std::iter::successors(Some(alias), Node::parent).any(|scope| {
+        std::iter::successors(scope.prev_named_sibling(), Node::prev_named_sibling)
+            .take_while(|previous| previous.is_extra() || previous.kind() == "attribute_item")
+            .filter(|previous| previous.kind() == "attribute_item")
+            .any(is_conditional)
+            || named_children(scope)
+                .into_iter()
+                .filter(|child| child.kind() == "inner_attribute_item")
+                .any(is_conditional)
+    })
+}
+
+fn resolved_cast_aliases(
+    index: &scip::types::Index,
+    rel_of: impl Fn(&scip::types::Document) -> String,
+    texts: &HashMap<String, (String, Vec<usize>)>,
+    typed_documents: &HashMap<String, (tree_sitter::Tree, TypeIdentities)>,
+) -> HashMap<String, CastAliases> {
+    enum AliasTarget<'a> {
+        Primitive(&'static str),
+        Alias(&'a str),
+    }
+
+    let mut definitions = HashMap::new();
+    let mut uses = HashMap::new();
+    for doc in &index.documents {
+        let file = rel_of(doc);
+        let Some((_, starts)) = texts.get(&file) else {
+            continue;
+        };
+        let Some((tree, _)) = typed_documents.get(&file) else {
+            continue;
+        };
+        let mut sites = HashMap::new();
+        for occurrence in &doc.occurrences {
+            let symbol = occurrence.symbol.as_str();
+            if !symbol.ends_with('#') && !symbol.starts_with("local ") {
+                continue;
+            }
+            let Some((start, end)) = range_bytes(starts, &occurrence.range) else {
+                continue;
+            };
+            let Some(leaf) = tree
+                .root_node()
+                .descendant_for_byte_range(start, end)
+                .filter(|leaf| leaf.start_byte() == start && leaf.end_byte() == end)
+            else {
+                continue;
+            };
+            if occurrence.symbol_roles & 1 == 1 {
+                if symbol.ends_with('#') {
+                    record_unambiguous(&mut definitions, symbol, (file.clone(), (start, end)));
+                }
+            } else if matches!(leaf.kind(), "type_identifier" | "primitive_type") {
+                let written = leaf
+                    .parent()
+                    .filter(|parent| {
+                        parent.kind() == "scoped_type_identifier"
+                            && parent.child_by_field_name("name") == Some(leaf)
+                    })
+                    .unwrap_or(leaf);
+                record_unambiguous(
+                    &mut sites,
+                    (written.start_byte(), written.end_byte()),
+                    symbol,
+                );
+            }
+        }
+        uses.insert(file, sites);
+    }
+
+    let mut line_indexes = HashMap::new();
+    let targets: HashMap<_, _> = definitions
+        .iter()
+        .filter_map(|(&symbol, definition)| {
+            let (file, (start, end)) = definition.as_ref()?;
+            let (text, _) = texts.get(file)?;
+            let (tree, identities) = typed_documents.get(file)?;
+            let name = tree.root_node().descendant_for_byte_range(*start, *end)?;
+            let item = name.parent().filter(|parent| {
+                parent.kind() == "type_item" && parent.child_by_field_name("name") == Some(name)
+            })?;
+            if item.has_error()
+                || item.child_by_field_name("type_parameters").is_some()
+                || item
+                    .parent()
+                    .and_then(|parent| parent.parent())
+                    .is_some_and(|owner| matches!(owner.kind(), "impl_item" | "trait_item"))
+                || conditional_alias(item, text)
+            {
+                return None;
+            }
+            let ty = crate::syntax::unparen_type(item.child_by_field_name("type")?);
+            if !matches!(
+                ty.kind(),
+                "primitive_type" | "type_identifier" | "scoped_type_identifier"
+            ) {
+                return None;
+            }
+            if let Some(resolved) = uses.get(file)?.get(&(ty.start_byte(), ty.end_byte())) {
+                return Some((symbol, AliasTarget::Alias((*resolved)?)));
+            }
+            let primitive = if let Some((_, identity)) = identities
+                .get(&ty.start_byte())
+                .filter(|(end, _)| *end == ty.end_byte())
+            {
+                primitive_number(identity)?
+            } else {
+                let index = line_indexes
+                    .entry(file)
+                    .or_insert_with(|| LineIndex::new(text));
+                let src = Src { text, file, index };
+                if ty.kind() != "primitive_type" || may_shadow_cast_type(src, ty, false) {
+                    return None;
+                }
+                primitive_number(src.text(ty))?
+            };
+            Some((symbol, AliasTarget::Primitive(primitive)))
+        })
+        .collect();
+
+    let resolved: HashMap<_, _> = targets
+        .keys()
+        .filter_map(|&symbol| {
+            let mut next = symbol;
+            for _ in 0..16 {
+                match targets.get(next)? {
+                    AliasTarget::Primitive(primitive) => return Some((symbol, *primitive)),
+                    AliasTarget::Alias(alias) => next = alias,
+                }
+            }
+            None
+        })
+        .collect();
+    uses.into_iter()
+        .map(|(file, sites)| {
+            let text = &texts[&file].0;
+            let aliases = sites
+                .into_iter()
+                .filter_map(|(range, symbol)| {
+                    let primitive = *resolved.get(symbol?)?;
+                    let spelling = text.get(range.0..range.1)?.trim().to_owned();
+                    Some((
+                        range,
+                        NumericAlias {
+                            primitive,
+                            spelling,
+                        },
+                    ))
+                })
+                .collect();
+            (file, aliases)
+        })
+        .collect()
 }
 
 fn with_type_identity(inferred: TypeShape, evidence: &TypeShape) -> TypeShape {
@@ -945,6 +1131,11 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let identities = written_type_identities(doc, starts, tree.root_node(), text);
         typed_documents.insert(rel, (tree, identities));
     }
+    let mut cast_aliases = resolved_cast_aliases(index, &rel_of, &texts, &typed_documents);
+    let cast_alias_at = |file: &str, ty: Node<'_>| {
+        let ty = crate::syntax::unparen_type(ty);
+        cast_aliases.get(file)?.get(&(ty.start_byte(), ty.end_byte())).cloned()
+    };
     let return_types: HashMap<_, _> = definitions.iter().filter_map(|(&symbol, definition)| {
         if !matches!(kind_of(parse_symbol(symbol)?.descriptors), "method" | "function") { return None; }
         let (text, _) = texts.get(&definition.file)?;
@@ -963,7 +1154,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let parameters = parameters.into_iter().filter(|param| !param.is_extra()).map(|param| {
             param.child_by_field_name("type").map(|ty| written_shape(ty, text, identities))
         }).collect();
-        Some((symbol, (definition, ReturnType { info, generics, parameters, receiver, owner, owner_generics })))
+        let cast_alias = cast_alias_at(&definition.file, ty);
+        Some((symbol, (definition, ReturnType { info, cast_alias, generics, parameters, receiver, owner, owner_generics })))
     }).collect();
     for (definition, result) in return_types.values() {
         facts.types.push(TypeFact { site: (*definition).clone(), target: ValueFactTarget::Member, info: result.info.clone() });
@@ -977,7 +1169,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let owner = field.parent()?.parent()?.child_by_field_name("name")?;
         let owner = ByteRange { file: definition.file.clone(), start: owner.start_byte() as u32, end: owner.end_byte() as u32 };
         let info = TypeInfo::new(written_shape(ty, text, identities), TypeOrigin::Declared, Some(text[ty.byte_range()].to_owned()));
-        Some((symbol, (owner, info)))
+        Some((symbol, (owner, info, cast_alias_at(&definition.file, ty))))
     }).collect();
 
     for doc in &index.documents {
@@ -996,6 +1188,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let mut operations = Operations::new();
         let mut non_bindings = HashSet::new();
         let mut field_uses = Vec::new();
+        let mut alias_values = HashMap::new();
         let vec_macros: HashSet<_> = doc.occurrences.iter().filter_map(|occurrence| {
             let symbol = parse_symbol(&occurrence.symbol)?;
             (symbol.standard() && matches!(display(&symbol).as_str(), "alloc::macros::vec!" | "alloc::vec!" | "std::vec!"))
@@ -1100,9 +1293,13 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             }
             if let Some(field) = name.parent().filter(|parent| parent.kind() == "field_expression"
                 && parent.child_by_field_name("field") == Some(name))
-                && let Some((owner, info)) = fields.get(o.symbol.as_str())
             {
-                field_uses.push((field, owner, info));
+                let entry = fields.get(o.symbol.as_str());
+                record_unambiguous(&mut alias_values, (field.start_byte(), field.end_byte()),
+                    entry.and_then(|(_, _, alias)| alias.as_ref()));
+                if let Some((owner, info, _)) = entry {
+                    field_uses.push((field, owner, info));
+                }
             }
             let mut add_value = |node: Node, fact_target, mut info: ValueInfo| {
                 info.basis = ValueBasis::TypeAnalysis;
@@ -1214,6 +1411,10 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             };
             let key = (at.start_byte(), at.end_byte(), o.symbol.clone());
             if seen.insert(key) {
+                if ref_kind == RefKind::Call {
+                    record_unambiguous(&mut alias_values, (at.start_byte(), at.end_byte()),
+                        return_types.get(o.symbol.as_str()).and_then(|(_, result)| result.cast_alias.as_ref()));
+                }
                 if ref_kind == RefKind::Call && let Some((_, result)) = return_types.get(o.symbol.as_str()) {
                     let range = (at.start_byte(), at.end_byte());
                     if result.generics.is_empty() && result.owner.is_none() {
@@ -1262,11 +1463,16 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let file = root.join(&rel);
         let edition = packages.iter().rev().find(|package| package.manifest.parent().is_some_and(|dir| file.starts_with(dir)))
             .and_then(|package| package.edition.as_deref());
+        let mut cast_aliases = cast_aliases.remove(&rel).unwrap_or_default();
+        cast_aliases.extend(alias_values.into_iter().filter_map(|(range, alias)| {
+            Some((range, alias.flatten()?.clone()))
+        }));
         let mut evidence = Evidence {
             operations,
             non_bindings,
             types: &facts.types[first_type..],
             type_identities: Some(identities),
+            cast_aliases,
             definitions: Some(&local_definitions),
             uses: &local_uses,
             precise_captures: match edition {

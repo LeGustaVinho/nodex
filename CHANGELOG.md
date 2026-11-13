@@ -39,6 +39,7 @@ The release workflow publishes the section of the version it builds as the relea
 - Open a separate Rust Blueprint for a callback or local closure whose body is directly a loop, including a `while` that waits for channel messages.
 - From a Rust `break`, the Guide can highlight the first mapped statement after the loop without advancing the execution path.
 - The Rust Guide highlights the semicolon in the standard `vec![value; length]` macro and explains evaluation, cloning, and the zero-length case.
+- When rust-analyzer resolves a numeric type alias in a cast, the Rust Guide shows the alias alongside its primitive type and explains the conversion.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
