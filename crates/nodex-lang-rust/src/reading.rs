@@ -263,6 +263,7 @@ pub(crate) enum Family {
     StringInsert,
     InclusiveRange,
     VecDrain,
+    StrSplit,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -1790,6 +1791,7 @@ impl Reader<'_, '_> {
             Family::StringInsert => self.string_insert(node),
             Family::InclusiveRange => self.inclusive_range_contains(node),
             Family::VecDrain => self.vec_drain(node),
+            Family::StrSplit => self.str_split(node, &name),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
             }
@@ -1832,6 +1834,23 @@ impl Reader<'_, '_> {
                     self.at(node, true, detail(label, description));
                 }
             }
+        }
+    }
+
+    fn str_split(&mut self, node: Node<'_>, name: &str) {
+        let Some((text, receiver_argument)) = receiver(node) else { return };
+        let Some(pattern) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let text = self.written(text, 100);
+        let pattern = self.written(pattern, 80);
+        if name == "split" {
+            self.at(node, true, detail("Iterate over pieces of text", format!(
+                "As the iterator is consumed, yield slices of {text} between matches for {pattern}. Each piece is a borrowed &str. Matches at the ends or next to each other can yield empty pieces. If the pattern never matches, the entire text is the only piece."
+            )));
+        } else {
+            self.paths(node, self.src.span(node), true, format!("Look for the first match for {pattern} in {text}."), vec![
+                branch("Pattern matches", "Borrow the text before and after the first match as two &str slices. Either slice can be empty.", "Some((before, after))"),
+                branch("No match", "There is no pair of slices", "None"),
+            ], self.known_type(node));
         }
     }
 

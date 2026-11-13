@@ -340,6 +340,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
                 "mem/take()." | "mem/replace()." => return Some((Family::MemReplace, name.into())),
                 "num/nonzero/impl#[`NonZero<T>`]get()." => return Some((Family::NonZero, name.into())),
                 "ops/range/impl#[`RangeInclusive<Idx>`]contains()." => return Some((Family::InclusiveRange, name.into())),
+                "str/impl#[str]split()." | "str/impl#[str]split_once()." => return Some((Family::StrSplit, name.into())),
                 _ => {}
             }
         }

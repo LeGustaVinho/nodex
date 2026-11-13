@@ -833,10 +833,8 @@ output = "Parts:list"
 explain = "Cuts the text into a list of parts at each separator."
 cs = "s.Split(',')"
 ts = "s.split(',')"
-rs = "s.split(',')"
 calls_cs = ["*.Split()"]
 calls_ts = ["*.split()"]
-calls_rs = ["*.split()"]
 
 [operations."text.join"]
 title = "Join list"

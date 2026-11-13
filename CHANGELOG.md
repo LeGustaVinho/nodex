@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints distinguish `str::split`, which yields borrowed text slices, from `split_once`, which returns a pair at the first match.
 - The Rust Blueprint Guide explains how `Option::as_deref_mut` borrows a target for editing and lets you use the original option again when the borrow ends.
 - The Rust Blueprint Guide explains what `Vec::drain` removes, what the iterator yields by value, and what happens when the iterator is dropped.
 - The Rust Blueprint Guide names the argument, method, field, or operator that will use the value extracted by `?`.
