@@ -2470,12 +2470,13 @@ impl Reader<'_, '_> {
             (Family::Option, "take_if") => format!("Take the contents of {} if the test passes", self.short(recv)),
             (Family::Option, "or") => "Choose which option to return".into(),
             (Family::Option, "and") => "Use the first option to decide whether to return the second".into(),
+            (Family::Option, "as_deref_mut") => format!("Borrow through {}. The original option stays in place and can be used again when the borrow ends.", self.short(recv)),
             (Family::Option, "map_or" | "map_or_else") => format!("Transform {} or use a fallback", self.short(recv)),
             (Family::Option | Family::Result, "unwrap_or_default") => format!("Read {} or use its default", self.short(recv)),
             _ => self.short(recv),
         };
         let mut span = self.src.span(node);
-        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "take_if" | "or" | "and" | "map_or" | "map_or_else" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
+        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "take_if" | "or" | "and" | "as_deref_mut" | "map_or" | "map_or_else" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
             let member = method_call(node).map(|(_, member)| member).or_else(|| {
                 let callee = node.child_by_field_name("function")?;
                 let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
@@ -3938,6 +3939,12 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
             "Borrow through the present value",
             "Some(reference to the target)",
             "Keep the absence",
+            "None",
+        ),
+        "as_deref_mut" => (
+            "Use DerefMut to borrow the target for writing. If the option holds a mutable reference, borrow its target again.",
+            "Some(mutable reference to the target)",
+            "Keep the option empty",
             "None",
         ),
         "copied" => (
