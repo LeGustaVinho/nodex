@@ -320,6 +320,13 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         if !descriptor.ends_with("().") {
             return None;
         }
+        if sym.package == "core" {
+            match descriptor {
+                "array/from_fn()." => return Some((Family::ArrayFromFn, name.into())),
+                "iter/sources/from_fn/from_fn()." => return Some((Family::IterFromFn, name.into())),
+                _ => {}
+            }
+        }
         if sym.package == "core" && let Some(conversion) = numeric_conversion(descriptor) {
             return Some(conversion);
         }

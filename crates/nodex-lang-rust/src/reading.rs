@@ -255,6 +255,8 @@ pub(crate) enum Family {
     Clone,
     Macro,
     Effect,
+    ArrayFromFn,
+    IterFromFn,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -923,8 +925,15 @@ impl Reader<'_, '_> {
                         (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
                             .then(|| "When the bool is true".into())
                     } else {
-                        matches!(operation.family, Family::Iter | Family::ParIter)
-                            .then(|| "When the iterator requests an item".into())
+                        match operation.family {
+                            Family::ArrayFromFn if argument(call, 0) == Some(scope) =>
+                                Some("While building the array".into()),
+                            Family::IterFromFn if argument(call, 0) == Some(scope) =>
+                                Some("On each next() call".into()),
+                            Family::Iter | Family::ParIter =>
+                                Some("When the iterator requests an item".into()),
+                            _ => None,
+                        }
                     }
                 }
             }
@@ -1538,6 +1547,7 @@ impl Reader<'_, '_> {
         match family {
             Family::Bool => self.bool_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
+            Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
             }
@@ -1581,6 +1591,28 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn from_fn(&mut self, node: Node<'_>, family: Family) {
+        let Some(callback) = argument(node, 0) else { return };
+        let (label, steps) = if family == Family::ArrayFromFn {
+            (
+                "Fill an array by index",
+                vec![
+                    self.step(callback, "During this call", "Call the function in index order starting at 0. Each successful call supplies the element at that index before construction proceeds. An empty array requires zero calls."),
+                    self.step(node, "If construction completes", "Return the completed array."),
+                ],
+            )
+        } else {
+            (
+                "Create an iterator from a function",
+                vec![
+                    self.step(node, "During this call", "Create the iterator and store the function for later."),
+                    self.step(callback, "On each next() call", "Run the function. Some(value) supplies one item. None means this request produced no item. The next request calls the function again, even after None, and its return value can change."),
+                ],
+            )
+        };
+        self.steps(node, label, steps);
     }
 
     fn numeric_conversion(&mut self, node: Node<'_>, source: &str, target: &str, checked: bool) {
