@@ -265,6 +265,7 @@ pub(crate) enum Family {
     VecDrain,
     VecRetain,
     StrSplit,
+    Length,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -1790,6 +1791,15 @@ impl Reader<'_, '_> {
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
+            Family::Length => {
+                self.inferred(node, &TypeInfo::new(TypeShape::scalar("UIntSize"), TypeOrigin::Compiler, Some("usize".into())));
+                let (label, text) = if name == "bytes" {
+                    ("Count UTF-8 bytes", "Return the number of UTF-8 bytes in the text as a usize. For example, the character 'é' occupies two bytes.")
+                } else {
+                    ("Count elements", "Return the number of elements currently in this vector or slice as a usize. Each element counts once, regardless of its size in bytes.")
+                };
+                self.at(node, true, detail(label, text));
+            }
             Family::StringInsert => self.string_insert(node),
             Family::InclusiveRange => self.inclusive_range_contains(node),
             Family::VecDrain => self.vec_drain(node),

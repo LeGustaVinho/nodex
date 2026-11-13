@@ -270,6 +270,8 @@ fn rust_target_conflicts(operation: &str, target: Option<&str>) -> bool {
         | ("text.contains", Some("core::ops::range::RangeInclusive::contains()"))
         | ("text.replace", Some("core::option::Option::replace()" | "core::mem::replace()"))
         | ("text.join", Some("std::path::Path::join()"))
+        | ("text.length", Some("core::str::str::len()" | "alloc::string::String::len()"
+            | "alloc::vec::Vec::len()" | "core::slice::[T::]len()."))
     )
 }
 

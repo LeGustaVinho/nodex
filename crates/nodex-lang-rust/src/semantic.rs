@@ -333,6 +333,12 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         if sym.package == "alloc" && descriptor == "vec/impl#[`Vec<T, A>`]drain()." {
             return Some((Family::VecDrain, name.into()));
         }
+        if sym.package == "alloc" && descriptor == "string/impl#[String]len()." {
+            return Some((Family::Length, "bytes".into()));
+        }
+        if sym.package == "alloc" && descriptor == "vec/impl#[`Vec<T, A>`]len()." {
+            return Some((Family::Length, "elements".into()));
+        }
         if sym.package == "alloc" && matches!(descriptor,
             "vec/impl#[`Vec<T, A>`]retain()." | "vec/impl#[`Vec<T, A>`]retain_mut().")
         {
@@ -346,6 +352,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
                 "num/nonzero/impl#[`NonZero<T>`]get()." => return Some((Family::NonZero, name.into())),
                 "ops/range/impl#[`RangeInclusive<Idx>`]contains()." => return Some((Family::InclusiveRange, name.into())),
                 "str/impl#[str]split()." | "str/impl#[str]split_once()." => return Some((Family::StrSplit, name.into())),
+                "str/impl#[str]len()." => return Some((Family::Length, "bytes".into())),
+                "slice/impl#[`[T]`]len()." => return Some((Family::Length, "elements".into())),
                 _ => {}
             }
         }

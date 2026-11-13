@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints distinguish UTF-8 byte length from the number of elements in a vector or slice when Rust Analyzer resolves `len`.
 - The Rust Blueprint Guide shows how `Vec::retain` and `retain_mut` test each element and what a `true` or `false` return means inside the test function.
 - Rust Blueprints distinguish `str::split`, which yields borrowed text slices, from `split_once`, which returns a pair at the first match.
 - The Rust Blueprint Guide explains how `Option::as_deref_mut` borrows a target for editing and lets you use the original option again when the borrow ends.
