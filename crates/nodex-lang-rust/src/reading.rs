@@ -1620,7 +1620,7 @@ impl Reader<'_, '_> {
                 let awaits = source.kind() == "await_expression";
                 let received = awaits && named_children(source).into_iter()
                     .find(|operand| !operand.is_extra()).and_then(|operand| self.op(unparen(operand)))
-                    .is_some_and(|op| op.family == Family::Effect && op.name == "recv_optional");
+                    .is_some_and(|op| op.family == Family::Effect && matches!(op.name.as_str(), "recv_optional" | "recv_mpsc"));
                 let value = self.written(value, 120);
                 let mut input = if irrefutable {
                     format!("On each attempt, evaluate {value}. This pattern accepts every value it produces.")
@@ -1912,19 +1912,7 @@ impl Reader<'_, '_> {
                     self.at(node, true, detail(label, description));
                 }
             }
-            Family::Effect if name == "timeout_at" => {
-                if let Some(recv) = argument(node, 1)
-                    && self.op(unparen(recv)).is_some_and(|op| op.family == Family::Effect && op.name == "recv_optional")
-                    && node.parent().is_some_and(|parent| parent.kind() == "await_expression")
-                {
-                    let wait = node.parent().unwrap();
-                    self.paths(wait, self.src.span(node), true, "Wait for a message or the deadline".into(), vec![
-                        branch("Message received", "Take the message from the channel", "Ok(Some(message))"),
-                        branch("Channel closed", "Continue without a message", "Ok(None)"),
-                        branch("Deadline elapsed", "Stop waiting for the message", "Err(Elapsed)"),
-                    ], None);
-                }
-            }
+            Family::Effect if matches!(name.as_str(), "timeout" | "timeout_at") => self.timeout(node, &name),
             Family::Iter | Family::ParIter if matches!(name.as_str(), "collect" | "sum" | "count" | "for_each") => {
                 self.sequence(node, &name);
             }
@@ -1935,6 +1923,37 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn timeout(&mut self, call: Node<'_>, name: &str) {
+        let mut operand = call;
+        while let Some(group) = operand.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+            operand = group;
+        }
+        let Some(wait) = operand.parent().filter(|parent| parent.kind() == "await_expression") else { return };
+        let (Some(limit), Some(future)) = (argument(call, 0), argument(call, 1)) else { return };
+        let timing = if name == "timeout_at" {
+            format!("Set the deadline to {} when creating the timeout.", self.written(limit, 80))
+        } else {
+            format!("Start the {} time limit when creating the timeout.", self.written(limit, 80))
+        };
+        let (goal, mut branches) = match self.op(future).filter(|op| op.family == Family::Effect).map(|op| op.name.as_str()) {
+            Some("recv_websocket") => ("Wait for a WebSocket message or the deadline", vec![
+                branch("Message received", "Use the message reported by the socket, which can be a close frame.", "Ok(Some(Ok(message)))"),
+                branch("Socket closed", "The receive completes without another message.", "Ok(None)"),
+                branch("Receive failed", "Keep the receive error inside the completed timeout result.", "Ok(Some(Err(error)))"),
+            ]),
+            Some("recv_mpsc") => ("Wait for a message or the deadline", vec![
+                branch("Message received", "Take the message from the channel.", "Ok(Some(message))"),
+                branch("Channel closed", "The closed channel has no messages left.", "Ok(None)"),
+            ]),
+            _ => ("Wait for the future or the deadline", vec![
+                branch("Future completes", "Wrap the future's original output in Ok. That output can itself be an error.", "Ok(output)"),
+            ]),
+        };
+        let input = format!("{goal}. {timing} Tokio checks the wrapped future first, so a ready result wins even at an expired deadline. While waiting, the task can suspend. The timeout cannot interrupt work during a poll, and work started elsewhere may continue.");
+        branches.push(branch("Deadline elapsed", "If the future is still pending when Tokio observes the expired timer, stop waiting.", "Err(Elapsed)"));
+        self.paths(wait, self.src.span(call), true, input, branches, None);
     }
 
     fn peekable(&mut self, node: Node<'_>, name: &str) {
@@ -4678,7 +4697,7 @@ fn operation_detail(family: Family, name: &str) -> Option<(&'static str, &'stati
             "Schedule the future on the runtime and return a task handle.",
         ),
         (Family::Effect, "send") => ("Send to a channel", "Pass the value to the channel. Inspect the result for delivery or an error."),
-        (Family::Effect, "recv_optional") => ("Prepare to receive a message", "Await the future to receive a message. It returns None when the channel is closed and empty."),
+        (Family::Effect, "recv_optional" | "recv_mpsc") => ("Prepare to receive a message", "Await the future to receive a message. It returns None when the channel is closed and empty."),
         (Family::Effect, "recv_blocking") => (
             "Receive a message on this thread",
             "Return the next queued message as Ok(message). If the queue is empty and a sender still exists, block this thread until a message arrives or all senders disconnect. When no senders or queued messages remain, return Err(RecvError).",

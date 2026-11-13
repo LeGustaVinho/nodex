@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints distinguish a Tokio timeout from the value or error returned by the operation it was waiting for.
 - Rust Blueprints explain when `future::ready` evaluates its input and what `Box::pin` does before a future runs.
 - Rust Blueprints show how `Iterator::fold` starts with an initial value, updates it for each item, and returns it unchanged when the iterator is empty.
 - Rust Blueprints distinguish `tokio::join!`, which waits for every output, from `tokio::try_join!`, which can return early on an error.

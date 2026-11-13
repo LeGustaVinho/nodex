@@ -116,8 +116,8 @@ impl RustAnalyzer {
         for (n, crate_root) in self.crate_roots.iter().enumerate() {
             let index = self.index(crate_root, n)?;
             let prefix = crate_root.strip_prefix(&self.root).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-            let upstream_indexmaps = upstream_indexmap_versions(crate_root);
-            convert(&index, &self.root, &prefix, &self.local_packages, &packages, &upstream_indexmaps, &mut facts);
+            let registry = upstream_registry_packages(crate_root);
+            convert(&index, &self.root, &prefix, &self.local_packages, &packages, &registry, &mut facts);
         }
         Ok(facts)
     }
@@ -147,6 +147,10 @@ struct Sym<'s> {
 impl Sym<'_> {
     fn standard(&self) -> bool {
         matches!(self.package, "alloc" | "core" | "std") && self.version.starts_with("https://github.com/rust-lang/rust/")
+    }
+
+    fn from_registry(&self, registry: &RegistryPackages) -> bool {
+        registry.contains(&(self.package.to_owned(), self.version.to_owned()))
     }
 }
 
@@ -307,7 +311,7 @@ fn arithmetic_result(sym: &Sym<'_>, operator: &str) -> Option<TypeShape> {
         .then(|| native_shape(Language::Rust, left))
 }
 
-fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Family, String)> {
+fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &RegistryPackages) -> Option<(Family, String)> {
     let descriptor = sym.descriptors;
     let name = path.rsplit("::").next()?;
     let name = name.strip_suffix("()").unwrap_or(name);
@@ -453,7 +457,11 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             (true, "tokio", "macros/select/select!" | "select!") => return Some((Family::Macro, "select".into())),
             (true, "tokio", "macros/join/join!") => return Some((Family::Macro, "join".into())),
             (true, "tokio", "macros/try_join/try_join!") => return Some((Family::Macro, "try_join".into())),
-            (true, "tokio", descriptor) if (descriptor.starts_with("time/") && matches!(name, "sleep" | "timeout_at"))
+            (true, "tokio", "time/timeout/timeout()." | "time/timeout/timeout_at().") if sym.from_registry(registry) => Family::Effect,
+            (true, "axum", "extract/ws/impl#[WebSocket]recv().") if sym.from_registry(registry) => return Some((Family::Effect, "recv_websocket".into())),
+            (true, "tokio", "sync/mpsc/bounded/impl#[`Receiver<T>`]recv()." | "sync/mpsc/unbounded/impl#[`UnboundedReceiver<T>`]recv().")
+                if sym.from_registry(registry) => return Some((Family::Effect, "recv_mpsc".into())),
+            (true, "tokio", descriptor) if (descriptor.starts_with("time/") && name == "sleep")
                 || (descriptor.starts_with("sync/mpsc/") || descriptor.starts_with("sync/broadcast/") || descriptor.starts_with("sync/oneshot/"))
                     && matches!(name, "send" | "recv")
                 || descriptor.starts_with("sync/semaphore/") && name == "acquire" => Family::Effect,
@@ -691,32 +699,38 @@ fn written_type_identities(doc: &scip::types::Document, starts: &[usize], root: 
     }).collect()
 }
 
-fn upstream_indexmap_versions(root: &Path) -> HashSet<String> {
+type RegistryPackages = HashSet<(String, String)>;
+
+fn upstream_registry_packages(root: &Path) -> RegistryPackages {
     let Some(lockfile) = root.ancestors().map(|dir| dir.join("Cargo.lock")).find(|path| path.is_file()) else {
         return HashSet::new();
     };
-    let Some(packages) = std::fs::read_to_string(lockfile).ok()
-        .and_then(|text| toml::from_str::<toml::Table>(&text).ok())
+    std::fs::read_to_string(lockfile).ok().map_or_else(RegistryPackages::new, |text| registry_packages(&text))
+}
+
+fn registry_packages(text: &str) -> RegistryPackages {
+    let Some(packages) = toml::from_str::<toml::Table>(text).ok()
         .and_then(|mut lock| lock.remove("package"))
     else { return HashSet::new() };
     let mut registry = HashSet::new();
     let mut other = HashSet::new();
     for package in packages.as_array().into_iter().flatten() {
-        if package.get("name").and_then(toml::Value::as_str) != Some("indexmap") { continue; }
+        let Some(name) = package.get("name").and_then(toml::Value::as_str) else { continue };
         let Some(version) = package.get("version").and_then(toml::Value::as_str) else { continue };
+        let identity = (name.to_owned(), version.to_owned());
         if package.get("source").and_then(toml::Value::as_str) == Some("registry+https://github.com/rust-lang/crates.io-index") {
-            registry.insert(version.to_owned());
+            registry.insert(identity);
         } else {
-            other.insert(version);
+            other.insert(identity);
         }
     }
-    registry.retain(|version| !other.contains(version.as_str()));
+    registry.retain(|identity| !other.contains(identity));
     registry
 }
 
 fn default_type_identities(
     doc: &scip::types::Document, starts: &[usize], root: Node<'_>,
-    upstream_indexmaps: &HashSet<String>,
+    registry: &RegistryPackages,
 ) -> HashMap<Range, DefaultType> {
     let mut sites = HashMap::new();
     for occurrence in &doc.occurrences {
@@ -737,7 +751,7 @@ fn default_type_identities(
             ("alloc", "vec/Vec#") if symbol.standard() => Some(DefaultType::Vec),
             ("core", "option/Option#") if symbol.standard() => Some(DefaultType::Option),
             ("core", "result/Result#") if symbol.standard() => Some(DefaultType::Result),
-            ("indexmap", "map/IndexMap#") if symbol.version.starts_with("2.") && upstream_indexmaps.contains(symbol.version) => Some(DefaultType::IndexMap),
+            ("indexmap", "map/IndexMap#") if symbol.version.starts_with("2.") && symbol.from_registry(registry) => Some(DefaultType::IndexMap),
             _ => None,
         };
         record_unambiguous(&mut sites, (name.start_byte(), name.end_byte()), kind);
@@ -1223,7 +1237,7 @@ fn rust_type_facts(
     }
 }
 
-fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages: &HashSet<String>, packages: &[crate::project::CargoPackage], upstream_indexmaps: &HashSet<String>, facts: &mut SemanticFacts) {
+fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages: &HashSet<String>, packages: &[crate::project::CargoPackage], registry: &RegistryPackages, facts: &mut SemanticFacts) {
     // Where each project symbol is defined, and what every symbol is.
     let rel_of = |doc: &scip::types::Document| {
         let rel = doc.relative_path.replace('\\', "/");
@@ -1258,7 +1272,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let Some((text, starts)) = texts.get(&rel) else { continue };
         let Some(tree) = crate::parse(text) else { continue };
         let identities = written_type_identities(doc, starts, tree.root_node(), text);
-        default_types.insert(rel.clone(), default_type_identities(doc, starts, tree.root_node(), upstream_indexmaps));
+        default_types.insert(rel.clone(), default_type_identities(doc, starts, tree.root_node(), registry));
         typed_documents.insert(rel, (tree, identities));
     }
     let mut cast_aliases = resolved_cast_aliases(index, &rel_of, &texts, &typed_documents);
@@ -1378,7 +1392,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                         let (text, _) = texts.get(&definition.file)?;
                         Some(LineIndex::new(text).span(&definition.file, definition.start as usize, definition.end as usize))
                     });
-                    let builtin = reading_operation(&sym, &display(&sym), external);
+                    let builtin = reading_operation(&sym, &display(&sym), external, registry);
                     let name = builtin.map_or_else(String::new, |(_, name)| name);
                     record_operation(&mut operations, invocation, Resolved { family: Family::Macro, name, definition });
                 }
@@ -1451,7 +1465,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                     },
                 });
             }
-            if let Some((family, operation)) = reading_operation(&sym, &target.display, external) {
+            if let Some((family, operation)) = reading_operation(&sym, &target.display, external, registry) {
                 let at = if name.kind() == "?" && operation == "branch" && sym.descriptors.ends_with("][Try]branch().") {
                     name.parent().and_then(|parent| match parent.kind() {
                         "try_expression" => Some(parent),
@@ -1699,6 +1713,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn registry_reading_requires_unambiguous_versions_and_exact_descriptors() {
+        let registry = registry_packages(r#"
+            [[package]]
+            name = "tokio"
+            version = "1.47.1"
+            source = "registry+https://github.com/rust-lang/crates.io-index"
+            [[package]]
+            name = "tokio"
+            version = "1.47.0"
+            [[package]]
+            name = "axum"
+            version = "0.8.4"
+            source = "registry+https://github.com/rust-lang/crates.io-index"
+            [[package]]
+            name = "axum"
+            version = "0.8.4"
+            source = "git+https://example.invalid/axum#commit"
+            [[package]]
+            name = "indexmap"
+            version = "2.14.2"
+            source = "registry+https://github.com/rust-lang/crates.io-index"
+        "#);
+        let resolve = |symbol: &str, registry: &RegistryPackages| {
+            let symbol = parse_symbol(symbol).unwrap();
+            reading_operation(&symbol, &display(&symbol), true, registry)
+        };
+        let timeout = "rust-analyzer cargo tokio 1.47.1 time/timeout/timeout().";
+        let websocket = "rust-analyzer cargo axum 0.8.4 extract/ws/impl#[WebSocket]recv().";
+        assert_eq!(resolve(timeout, &registry), Some((Family::Effect, "timeout".into())));
+        assert!(resolve(&timeout.replace("1.47.1", "1.47.0"), &registry).is_none());
+        assert!(resolve(&timeout.replace("time/timeout/", "time/local/"), &registry).is_none());
+        assert!(resolve(websocket, &registry).is_none());
+        let unambiguous = RegistryPackages::from([("axum".into(), "0.8.4".into())]);
+        assert_eq!(resolve(websocket, &unambiguous), Some((Family::Effect, "recv_websocket".into())));
+        assert!(resolve(&websocket.replace("WebSocket", "LocalSocket"), &unambiguous).is_none());
+        assert!(parse_symbol("rust-analyzer cargo indexmap 2.14.2 map/IndexMap#").unwrap().from_registry(&registry));
+    }
+
+    #[test]
     fn scip_symbols_read_as_paths() {
         let d = |s: &str| display(&parse_symbol(s).unwrap());
         assert_eq!(d("rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc vec/Vec#push()."), "alloc::vec::Vec::push()");
@@ -1718,8 +1771,8 @@ mod tests {
     #[test]
     fn recognizes_tokio_select_by_macro_identity() {
         let symbol = parse_symbol("rust-analyzer cargo tokio 1.47.1 macros/select/select!").unwrap();
-        assert_eq!(reading_operation(&symbol, &display(&symbol), true), Some((Family::Macro, "select".into())));
-        assert!(reading_operation(&symbol, &display(&symbol), false).is_none());
+        assert_eq!(reading_operation(&symbol, &display(&symbol), true, &RegistryPackages::new()), Some((Family::Macro, "select".into())));
+        assert!(reading_operation(&symbol, &display(&symbol), false, &RegistryPackages::new()).is_none());
     }
 
     #[test]
@@ -1728,7 +1781,7 @@ mod tests {
         let override_ = "slice/iter/impl#[`Iter<'a, T>`][Iterator]find_map().";
         let resolved = |symbol: &str| {
             let parsed = parse_symbol(symbol).unwrap();
-            reading_operation(&parsed, &display(&parsed), true)
+            reading_operation(&parsed, &display(&parsed), true, &RegistryPackages::new())
         };
         assert_eq!(resolved(&format!("{standard} {override_}")), Some((Family::Iter, "find_map".into())));
         assert_eq!(resolved(&format!("rust-analyzer cargo local 0.1.0 {override_}")), None);
