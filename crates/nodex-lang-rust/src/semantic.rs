@@ -333,6 +333,11 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         if sym.package == "alloc" && descriptor == "vec/impl#[`Vec<T, A>`]drain()." {
             return Some((Family::VecDrain, name.into()));
         }
+        if sym.package == "alloc" && matches!(descriptor,
+            "vec/impl#[`Vec<T, A>`]retain()." | "vec/impl#[`Vec<T, A>`]retain_mut().")
+        {
+            return Some((Family::VecRetain, name.into()));
+        }
         if sym.package == "core" {
             match descriptor {
                 "array/from_fn()." => return Some((Family::ArrayFromFn, name.into())),

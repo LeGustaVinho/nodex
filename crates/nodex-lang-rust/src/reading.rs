@@ -263,6 +263,7 @@ pub(crate) enum Family {
     StringInsert,
     InclusiveRange,
     VecDrain,
+    VecRetain,
     StrSplit,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
@@ -1057,6 +1058,7 @@ impl Reader<'_, '_> {
             "let_chain" => self.let_chain(node),
             "while_expression" => self.while_let(node),
             "closure_expression" => self.closure(node),
+            "return_expression" => self.retain_return(node),
             "block" => self.block_result(node),
             "base_field_initializer" => self.struct_update(node),
             "macro_invocation" => self.macro_call(node),
@@ -1791,6 +1793,7 @@ impl Reader<'_, '_> {
             Family::StringInsert => self.string_insert(node),
             Family::InclusiveRange => self.inclusive_range_contains(node),
             Family::VecDrain => self.vec_drain(node),
+            Family::VecRetain => self.vec_retain(node, &name),
             Family::StrSplit => self.str_split(node, &name),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
@@ -1851,6 +1854,47 @@ impl Reader<'_, '_> {
                 branch("Pattern matches", "Borrow the text before and after the first match as two &str slices. Either slice can be empty.", "Some((before, after))"),
                 branch("No match", "There is no pair of slices", "None"),
             ], self.known_type(node));
+        }
+    }
+
+    fn vec_retain(&mut self, node: Node<'_>, name: &str) {
+        let Some((receiver, position)) = receiver(node) else { return };
+        let Some(test) = argument(node, usize::from(position.is_some())) else { return };
+        let access = if name == "retain_mut" {
+            "Give the test a mutable reference (&mut T) so it can change the element."
+        } else {
+            "Give the test a shared reference (&T) to the element."
+        };
+        self.steps(node, "Keep selected elements in the vector", vec![
+            self.step(test, "During the call", format!("Call the test once per element in its original order. {access}")),
+            self.step(receiver, "For each result", "Keep the element on true and remove it on false."),
+            self.step(node, "If the call completes", "The kept elements stay in their original order in the same vector."),
+        ]);
+    }
+
+    fn retain_predicate(&self, closure: Node<'_>) -> bool {
+        let Some(call) = direct_argument_call(closure) else { return false };
+        self.op(call).is_some_and(|operation| operation.family == Family::VecRetain)
+            && receiver(call).is_some_and(|(_, position)| argument(call, usize::from(position.is_some())) == Some(closure))
+    }
+
+    fn retain_return(&mut self, node: Node<'_>) {
+        let Some(closure) = boundary(node).filter(|scope| scope.kind() == "closure_expression") else { return };
+        if !self.retain_predicate(closure) {
+            return;
+        }
+        let Some(value) = named_children(node).into_iter().find(|child| !child.is_extra()) else { return };
+        self.retain_decision(unparen(value), node);
+    }
+
+    fn retain_decision(&mut self, value: Node<'_>, anchor: Node<'_>) {
+        let (label, message) = match self.src.text(value) {
+            "true" => ("Keep this element", "This result tells the vector to keep the current element."),
+            "false" => ("Remove this element", "This result tells the vector to remove the current element."),
+            _ => return,
+        };
+        if value.kind() == "boolean_literal" {
+            self.push(self.src.span(anchor), self.src.span(value), true, detail(label, message));
         }
     }
 
@@ -2763,6 +2807,17 @@ impl Reader<'_, '_> {
         let tokens = children(node);
         let moves = tokens.iter().any(|token| token.kind() == "move");
         let async_ = tokens.iter().any(|token| token.kind() == "async");
+        if self.retain_predicate(node) && let Some(body) = node.child_by_field_name("body") {
+            let body = unparen(body);
+            let tail = if body.kind() == "block" {
+                block_statements(body).next_back().and_then(statement_tail)
+            } else {
+                Some(body)
+            };
+            if let Some(tail) = tail {
+                self.retain_decision(unparen(tail), tail);
+            }
+        }
         if !async_ && !moves {
             self.closure_result_borrow(node);
         }
