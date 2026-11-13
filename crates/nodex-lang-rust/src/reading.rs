@@ -2375,11 +2375,12 @@ impl Reader<'_, '_> {
             (Family::Option, "get_or_insert") => format!("Keep or fill {}", self.short(recv)),
             (Family::Option, "take_if") => format!("Take the contents of {} if the test passes", self.short(recv)),
             (Family::Option, "or") => "Choose which option to return".into(),
+            (Family::Option, "and") => "Use the first option to decide whether to return the second".into(),
             (Family::Option | Family::Result, "unwrap_or_default") => format!("Read {} or use its default", self.short(recv)),
             _ => self.short(recv),
         };
         let mut span = self.src.span(node);
-        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "take_if" | "or" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
+        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "take_if" | "or" | "and" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
             let member = method_call(node).map(|(_, member)| member).or_else(|| {
                 let callee = node.child_by_field_name("function")?;
                 let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
@@ -2394,10 +2395,11 @@ impl Reader<'_, '_> {
                 self.step(value, "Before the method runs", format!("Evaluate {} even if the option already contains a value.", self.written(value, 80))),
             ]);
         }
-        if family == Family::Option && name == "or" && let Some(other) = argument(node, callback_arg) {
+        if family == Family::Option && matches!(name, "or" | "and") && let Some(other) = argument(node, callback_arg) {
+            let first = if name == "or" { "Some" } else { "None" };
             self.steps(node, "Evaluate both options in order", vec![
                 self.step(recv, "First", "Evaluate the first option. If evaluation leaves this scope, the second option is skipped."),
-                self.step(other, "If the first evaluation completes", "Evaluate the second option even if the first is Some. This evaluation can leave the scope before the method runs."),
+                self.step(other, "If the first evaluation completes", format!("Evaluate the second option even if the first is {first}. This evaluation can leave the scope before the method runs.")),
             ]);
         }
         if family == Family::Option && name == "unwrap_or_else"
@@ -3625,6 +3627,12 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
             "Run the callback with the value",
             "Some(callback result)",
             "Skip the callback",
+            "None",
+        ),
+        "and" => (
+            "Discard the value inside Some and return the second option",
+            "Second Option (Some or None)",
+            "Discard the already evaluated second option",
             "None",
         ),
         "and_then" => (

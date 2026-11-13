@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide shows how `Option::and` evaluates both options and uses the first option to decide whether to return the second.
 - The Rust Blueprint Guide explains that `NonZero::get` returns the stored integer, which is guaranteed to be nonzero.
 - The Rust Blueprint Guide follows a successful `?` from the selected `if` branch or `match` arm into the expression that uses its value.
 - Rust Blueprints show `mem::replace` as a value replacement when Rust Analyzer resolves it, without a text operation label.
