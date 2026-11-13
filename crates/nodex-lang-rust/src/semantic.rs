@@ -395,6 +395,13 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             || descriptor.rsplit_once("][Iterator]").is_some_and(|(_, method)| {
                 matches!(method, "find_map()." | "filter_map()." | "try_fold().")
             })
+            || sym.package == "core" && matches!(descriptor,
+                "slice/iter/impl#[`Iter<'a, T>`][Iterator]find()."
+                | "slice/iter/impl#[`Iter<'a, T>`][Iterator]position()."
+                | "slice/iter/impl#[`IterMut<'a, T>`][Iterator]find()."
+                | "slice/iter/impl#[`IterMut<'a, T>`][Iterator]position()."
+                | "iter/adapters/rev/impl#[`Rev<I>`][Iterator]find()."
+                | "iter/adapters/chain/impl#[`Chain<A, B>`][Iterator]find().")
             || matches!(name, "iter" | "iter_mut") && matches!(sym.package, "alloc" | "std") && descriptor.starts_with("collections/")
         {
             Family::Iter

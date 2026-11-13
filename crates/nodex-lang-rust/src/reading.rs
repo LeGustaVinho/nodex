@@ -699,6 +699,8 @@ fn direct_argument_call(mut value: Node<'_>) -> Option<Node<'_>> {
 
 #[derive(Clone, Copy)]
 enum IteratorCallback {
+    Find,
+    Position,
     FindMap,
     FilterMap,
     TryFold,
@@ -710,6 +712,8 @@ impl IteratorCallback {
             return None;
         }
         match operation.name.as_str() {
+            "find" => Some(Self::Find),
+            "position" => Some(Self::Position),
             "find_map" => Some(Self::FindMap),
             "filter_map" => Some(Self::FilterMap),
             "try_fold" => Some(Self::TryFold),
@@ -725,6 +729,8 @@ impl IteratorCallback {
 
     fn timing(self) -> &'static str {
         match self {
+            Self::Find => "While find searches",
+            Self::Position => "While position searches",
             Self::FindMap => "While find_map searches",
             Self::FilterMap => "When the iterator requests an item",
             Self::TryFold => "While try_fold processes items",
@@ -1059,7 +1065,7 @@ impl Reader<'_, '_> {
             "let_chain" => self.let_chain(node),
             "while_expression" => self.while_let(node),
             "closure_expression" => self.closure(node),
-            "return_expression" => self.retain_return(node),
+            "return_expression" => self.predicate_return(node),
             "block" => self.block_result(node),
             "base_field_initializer" => self.struct_update(node),
             "macro_invocation" => self.macro_call(node),
@@ -1843,6 +1849,7 @@ impl Reader<'_, '_> {
             Family::Iter | Family::ParIter if matches!(name.as_str(), "collect" | "sum" | "count" | "for_each") => {
                 self.sequence(node, &name);
             }
+            Family::Iter if matches!(name.as_str(), "find" | "position") => self.iterator_search(node, &name),
             _ => {
                 if let Some((label, description)) = operation_detail(family, &name) {
                     self.at(node, true, detail(label, description));
@@ -1907,30 +1914,56 @@ impl Reader<'_, '_> {
         ]);
     }
 
-    fn retain_predicate(&self, closure: Node<'_>) -> bool {
-        let Some(call) = direct_argument_call(closure) else { return false };
-        self.op(call).is_some_and(|operation| operation.family == Family::VecRetain)
-            && receiver(call).is_some_and(|(_, position)| argument(call, usize::from(position.is_some())) == Some(closure))
+    fn predicate_family(&self, closure: Node<'_>) -> Option<Family> {
+        let call = direct_argument_call(closure)?;
+        let (_, position) = receiver(call)?;
+        if argument(call, usize::from(position.is_some())) != Some(closure) {
+            return None;
+        }
+        let operation = self.op(call)?;
+        match (operation.family, operation.name.as_str()) {
+            (Family::VecRetain, _) | (Family::Iter, "find" | "position") => Some(operation.family),
+            _ => None,
+        }
     }
 
-    fn retain_return(&mut self, node: Node<'_>) {
+    fn predicate_return(&mut self, node: Node<'_>) {
         let Some(closure) = boundary(node).filter(|scope| scope.kind() == "closure_expression") else { return };
-        if !self.retain_predicate(closure) {
+        let Some(family) = self.predicate_family(closure) else { return };
+        let Some(value) = named_children(node).into_iter().find(|child| !child.is_extra()) else { return };
+        self.predicate_decision(unparen(value), node, family);
+    }
+
+    fn predicate_decision(&mut self, value: Node<'_>, anchor: Node<'_>, family: Family) {
+        if value.kind() != "boolean_literal" {
             return;
         }
-        let Some(value) = named_children(node).into_iter().find(|child| !child.is_extra()) else { return };
-        self.retain_decision(unparen(value), node);
-    }
-
-    fn retain_decision(&mut self, value: Node<'_>, anchor: Node<'_>) {
-        let (label, message) = match self.src.text(value) {
-            "true" => ("Keep this element", "This result tells the vector to keep the current element."),
-            "false" => ("Remove this element", "This result tells the vector to remove the current element."),
+        let (label, message) = match (family, self.src.text(value)) {
+            (Family::VecRetain, "true") => ("Keep this element", "This result tells the vector to keep the current element."),
+            (Family::VecRetain, "false") => ("Remove this element", "This result tells the vector to remove the current element."),
+            (Family::Iter, "true") => ("Accept this item and stop", "The search found its first matching item."),
+            (Family::Iter, "false") => ("Skip this item and keep looking", "The search can try another item if one is available."),
             _ => return,
         };
-        if value.kind() == "boolean_literal" {
-            self.push(self.src.span(anchor), self.src.span(value), true, detail(label, message));
-        }
+        self.push(self.src.span(anchor), self.src.span(value), true, detail(label, message));
+    }
+
+    fn iterator_search(&mut self, node: Node<'_>, name: &str) {
+        let member = method_call(node).map(|(_, member)| member).or_else(|| {
+            let callee = node.child_by_field_name("function")?;
+            let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
+            callee.child_by_field_name("name")
+        }).unwrap_or(node);
+        let (input, result) = if name == "find" {
+            ("Find the first matching item. During this call, the test receives a shared reference (&Item) to each candidate. If the iterator yields references, find gives the test a reference to that reference.", "Some(item)")
+        } else {
+            ("Find the position of the first matching item. During this call, the test receives each candidate as Item, which can itself be a reference. Count from zero at the next item this iterator would yield.", "Some(index)")
+        };
+        let input = format!("{input} Skip each candidate for which the test returns false.");
+        self.paths(node, self.src.span(member), true, input, vec![
+            branch("The test returns true", "Stop after consuming the matching item. The next read from the iterator can pick up after it.", result),
+            branch("No match in this search", "The iterator reaches a point where it yields no item. The test returned false for every item it saw.", "None"),
+        ], self.known_type(node));
     }
 
     fn vec_drain(&mut self, node: Node<'_>) {
@@ -2842,7 +2875,7 @@ impl Reader<'_, '_> {
         let tokens = children(node);
         let moves = tokens.iter().any(|token| token.kind() == "move");
         let async_ = tokens.iter().any(|token| token.kind() == "async");
-        if self.retain_predicate(node) && let Some(body) = node.child_by_field_name("body") {
+        if let Some(family) = self.predicate_family(node) && let Some(body) = node.child_by_field_name("body") {
             let body = unparen(body);
             let tail = if body.kind() == "block" {
                 block_statements(body).next_back().and_then(statement_tail)
@@ -2850,7 +2883,7 @@ impl Reader<'_, '_> {
                 Some(body)
             };
             if let Some(tail) = tail {
-                self.retain_decision(unparen(tail), tail);
+                self.predicate_decision(unparen(tail), tail, family);
             }
         }
         if !async_ && !moves {
