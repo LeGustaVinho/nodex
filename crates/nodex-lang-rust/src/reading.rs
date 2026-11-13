@@ -993,6 +993,18 @@ impl Reader<'_, '_> {
                         let (_, receiver_argument) = receiver(call)?;
                         (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
                             .then(|| "If this call runs the initializer".into())
+                    } else if operation.family == Family::Option
+                        && matches!(operation.name.as_str(), "map_or" | "map_or_else")
+                    {
+                        let (_, receiver_argument) = receiver(call)?;
+                        let first = usize::from(receiver_argument.is_some());
+                        if argument(call, first + 1) == Some(scope) {
+                            Some("When the option contains a value".into())
+                        } else if operation.name == "map_or_else" && argument(call, first) == Some(scope) {
+                            Some("When the option is empty".into())
+                        } else {
+                            None
+                        }
                     } else if operation.family == Family::Option && operation.name == "take_if" {
                         let (_, receiver_argument) = receiver(call)?;
                         (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
@@ -2400,11 +2412,12 @@ impl Reader<'_, '_> {
             (Family::Option, "take_if") => format!("Take the contents of {} if the test passes", self.short(recv)),
             (Family::Option, "or") => "Choose which option to return".into(),
             (Family::Option, "and") => "Use the first option to decide whether to return the second".into(),
+            (Family::Option, "map_or" | "map_or_else") => format!("Transform {} or use a fallback", self.short(recv)),
             (Family::Option | Family::Result, "unwrap_or_default") => format!("Read {} or use its default", self.short(recv)),
             _ => self.short(recv),
         };
         let mut span = self.src.span(node);
-        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "take_if" | "or" | "and" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
+        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "take_if" | "or" | "and" | "map_or" | "map_or_else" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
             let member = method_call(node).map(|(_, member)| member).or_else(|| {
                 let callee = node.child_by_field_name("function")?;
                 let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
@@ -2424,6 +2437,15 @@ impl Reader<'_, '_> {
             self.steps(node, "Evaluate both options in order", vec![
                 self.step(recv, "First", "Evaluate the first option. If evaluation leaves this scope, the second option is skipped."),
                 self.step(other, "If the first evaluation completes", format!("Evaluate the second option even if the first is {first}. This evaluation can leave the scope before the method runs.")),
+            ]);
+        }
+        if family == Family::Option && matches!(name, "map_or" | "map_or_else")
+            && let (Some(fallback), Some(mapper)) = (argument(node, callback_arg), argument(node, callback_arg + 1))
+        {
+            let fallback_label = if name == "map_or" { "fallback value" } else { "expression that supplies the fallback function" };
+            self.steps(node, "Evaluate the arguments before checking the option", vec![
+                self.step(fallback, "If the option expression completes", format!("Evaluate the {fallback_label}, even if the option contains a value.")),
+                self.step(mapper, "If the fallback argument completes", "Evaluate the expression that supplies the transformation function, even if the option is empty."),
             ]);
         }
         if family == Family::Option && name == "unwrap_or_else"
@@ -3662,6 +3684,18 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
             "Some(callback result)",
             "Skip the callback",
             "None",
+        ),
+        "map_or" => (
+            "Pass the value inside Some to the transformation",
+            "Transformation result",
+            "Use the already evaluated fallback",
+            "Fallback value",
+        ),
+        "map_or_else" => (
+            "Pass the value inside Some to the transformation",
+            "Transformation result",
+            "Call the fallback function",
+            "Fallback result",
         ),
         "and" => (
             "Discard the value inside Some and return the second option",
