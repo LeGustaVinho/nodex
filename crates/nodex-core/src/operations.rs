@@ -266,6 +266,7 @@ fn rust_target_conflicts(operation: &str, target: Option<&str>) -> bool {
     matches!((operation, target),
         ("list.flatten", Some("core::option::Option::flatten()"))
         | ("list.get", Some("core::num::nonzero::NonZero::get()"))
+        | ("list.add", Some("alloc::string::String::insert()"))
         | ("text.replace", Some("core::option::Option::replace()" | "core::mem::replace()"))
         | ("text.join", Some("std::path::Path::join()"))
     )

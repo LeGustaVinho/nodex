@@ -260,6 +260,7 @@ pub(crate) enum Family {
     MemReplace,
     OnceLock,
     NonZero,
+    StringInsert,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -1770,6 +1771,7 @@ impl Reader<'_, '_> {
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
+            Family::StringInsert => self.string_insert(node),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
             }
@@ -1813,6 +1815,21 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn string_insert(&mut self, node: Node<'_>) {
+        let Some((text, receiver_argument)) = receiver(node) else { return };
+        let index = usize::from(receiver_argument.is_some());
+        let (Some(position), Some(character)) = (argument(node, index), argument(node, index + 1)) else { return };
+        let text = self.written(text, 80);
+        let character = self.written(character, 80);
+        let (label, action) = if position.kind() == "integer_literal" && self.src.text(position) == "0" {
+            ("Insert a character at the start", format!("Insert {character} at the start of {text}, changing the existing String. Byte offset 0 is the start of any String, including an empty one."))
+        } else {
+            let position = self.written(position, 80);
+            ("Insert a character at a byte offset", format!("Insert {character} at byte offset {position} in {text}, changing the existing String. An offset equal to the byte length appends the character. The call panics if the offset is greater than the byte length or falls inside a UTF-8 character."))
+        };
+        self.at(node, true, detail(label, action));
     }
 
     fn proven_default_collection(&self, value: Node<'_>, depth: usize) -> Option<DefaultCollection> {

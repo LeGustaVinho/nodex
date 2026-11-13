@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- The Rust Blueprint Guide explains how `String::insert` changes a string at a UTF-8 byte offset, including insertion at the start.
 - The Rust Blueprint Guide shows when a statement ending in `?;` ignores the successful value and continues.
 - The Rust Blueprint Guide shows how `Option::and` evaluates both options and uses the first option to decide whether to return the second.
 - The Rust Blueprint Guide explains that `NonZero::get` returns the stored integer, which is guaranteed to be nonzero.
