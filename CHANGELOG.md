@@ -40,6 +40,7 @@ The release workflow publishes the section of the version it builds as the relea
 - From a Rust `break`, the Guide can highlight the first mapped statement after the loop without advancing the execution path.
 - The Rust Guide highlights the semicolon in the standard `vec![value; length]` macro and explains evaluation, cloning, and the zero-length case.
 - When rust-analyzer resolves a numeric type alias in a cast, the Rust Guide shows the alias alongside its primitive type and explains the conversion.
+- The Rust Guide explains that `VecDeque::pop_front` removes and returns the first queued item, or returns `None` when the queue is empty.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 

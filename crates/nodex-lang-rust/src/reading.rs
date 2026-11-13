@@ -3395,6 +3395,10 @@ fn operation_detail(family: Family, name: &str) -> Option<(&'static str, &'stati
             "Return the next queued message as Ok(message). If the queue is empty and a sender still exists, block this thread until a message arrives or all senders disconnect. When no senders or queued messages remain, return Err(RecvError).",
         ),
         (Family::Effect, "recv") => ("Receive from a channel", "Use the next message or the error reported by the channel."),
+        (Family::Effect, "deque_pop_front") => (
+            "Remove the front item from the queue",
+            "If the queue has an item, remove it from the front and return Some(item). An empty queue returns None.",
+        ),
         (Family::Effect, "sleep") => ("Block the thread for a duration", "The calling thread waits for the duration."),
         (Family::Effect, "sleep_async") => ("Create a timer future", "Await the future to wait for the duration. The task can suspend."),
         (Family::Effect, "send_async") => ("Prepare to send a message", "Await the future to send the message when the channel has capacity."),

@@ -320,6 +320,9 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         if !descriptor.ends_with("().") {
             return None;
         }
+        if sym.package == "alloc" && descriptor == "collections/vec_deque/impl#[`VecDeque<T, A>`]pop_front()." {
+            return Some((Family::Effect, "deque_pop_front".into()));
+        }
         if sym.package == "core" {
             match descriptor {
                 "array/from_fn()." => return Some((Family::ArrayFromFn, name.into())),

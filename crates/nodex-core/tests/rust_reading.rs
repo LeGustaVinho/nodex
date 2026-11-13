@@ -707,6 +707,17 @@ fn scip_reading_connects_lookup_paths_patterns_and_origins() {
     assert_eq!(receive.basis, ValueBasis::TypeAnalysis);
     assert!(matches!(&receive.content, ReadingContent::Detail { text, .. }
         if text.contains("block this thread") && text.contains("Err(RecvError)")));
+    let queue = flow(&mut project, "reading_queue_path");
+    let pop = sites(&queue).iter().find(|site| {
+        site.span.file == "src/rust_reading.rs"
+            && FIXTURE_SOURCE.get(site.span.start_byte as usize..site.span.end_byte as usize) == Some("queue.pop_front()")
+            && matches!(&site.content, ReadingContent::Detail { label, .. }
+                if label == "Remove the front item from the queue")
+    }).unwrap();
+    assert_eq!(pop.basis, ValueBasis::TypeAnalysis);
+    assert_eq!(queue.node(&pop.node).unwrap().concept, Concept::LoopWhile);
+    assert!(matches!(&pop.content, ReadingContent::Detail { text, .. }
+        if text.contains("Some(item)") && text.contains("An empty queue returns None")));
     for (function, specialized) in [
         ("reading_collect_standard_option", true),
         ("reading_collect_custom_from_iter", false),

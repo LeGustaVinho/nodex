@@ -586,6 +586,15 @@ pub fn reading_drain_messages(receiver: std::sync::mpsc::Receiver<i32>) {
     while receiver.recv().is_ok() {}
 }
 
+pub fn reading_queue_path(mut queue: std::collections::VecDeque<u32>, target: u32) -> bool {
+    while let Some(current) = queue.pop_front() {
+        if current == target {
+            return true;
+        }
+    }
+    false
+}
+
 pub mod reading_result_shadows {
     struct Result;
 
