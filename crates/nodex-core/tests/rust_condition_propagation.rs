@@ -84,3 +84,50 @@ fn successful_propagation_in_a_decision_keeps_evaluating_that_decision() {
     assert!(matches!(&site.content, ReadingContent::Paths { branches, .. }
         if branches[0].pin.as_deref() == Some("out") && branches[1].action == "Return from this closure"));
 }
+
+#[test]
+fn let_else_tests_the_pattern_after_successful_propagation() {
+    let source = r#"
+        fn visit_map(next_key: impl FnOnce() -> Result<Option<String>, &'static str>) -> Result<String, &'static str> {
+            let Some(key) = next_key()? else { return Err("missing bits"); };
+            Ok(key)
+        }
+        enum Value { Number(u32), Text }
+        fn resistance(member: impl FnOnce() -> Result<Value, &'static str>) -> Result<u32, &'static str> {
+            let Value::Number(amount) = member()? else { return Err("numeric damage pattern amount"); };
+            Ok(amount)
+        }
+        fn alternate(input: Option<u32>, fallback: impl FnOnce() -> Option<u32>) -> Option<u32> {
+            let Some(value) = input else { return Some(fallback()?); };
+            Some(value)
+        }
+    "#;
+    let ir = lower_source("src/lib.rs", source);
+    for (name, fallback) in [("visit_map", "missing bits"), ("resistance", "numeric damage pattern amount")] {
+        let graph = ir.flows.iter().find(|flow| flow.name == name).unwrap();
+        let (node, question) = question_marks(graph, source).next().unwrap();
+        assert!(node.flavors.iter().any(|flavor| flavor == "let-else"));
+        assert!(node.outputs.iter().any(|pin| pin.id == "error"));
+        assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
+            if branches[0].pin.is_none()
+                && branches[0].output == "Continue evaluating the initializer before checking the let-else pattern"
+                && branches[1].pin.as_deref() == Some("error") && branches[1].action == format!("Return from {name}")));
+
+        let decision = graph.reading.iter().flatten().find(|site| site.node == node.id && site.path.is_none()
+            && &source[site.span.start_byte as usize..site.span.end_byte as usize] == "else").unwrap();
+        assert!(matches!(&decision.content, ReadingContent::Paths { branches, .. }
+            if branches[0].pin.as_deref() == Some("out") && branches[1].pin.as_deref() == Some("else")));
+        let edge = |pin| graph.edges.iter().find(|edge| edge.kind == FlowEdgeKind::Exec && edge.from == node.id && edge.from_pin == pin);
+        let matched = graph.node(&edge("out").unwrap().to).unwrap();
+        let mismatched = graph.node(&edge("else").unwrap().to).unwrap();
+        assert!(matched.code.starts_with("Ok("));
+        assert!(mismatched.code.contains(fallback));
+        assert!(edge("error").is_none());
+    }
+
+    let alternate = ir.flows.iter().find(|flow| flow.name == "alternate").unwrap();
+    let (node, question) = question_marks(alternate, source).next().unwrap();
+    assert_eq!(node.concept, Concept::Return);
+    assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
+        if branches[0].pin.as_deref() == Some("out") && branches[1].pin.as_deref() == Some("error")));
+}

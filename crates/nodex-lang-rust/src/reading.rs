@@ -2994,6 +2994,8 @@ fn question_mark_condition(mut node: Node<'_>) -> Option<&'static str> {
             "if_expression" if field_is("condition") => Some("Continue checking the if condition"),
             "match_expression" if field_is("value") => Some("Continue evaluating the value to match"),
             "match_pattern" if field_is("condition") => Some("Continue checking the match guard"),
+            "let_declaration" if field_is("value") && parent.child_by_field_name("alternative").is_some() =>
+                Some("Continue evaluating the initializer before checking the let-else pattern"),
             "return_expression" | "break_expression" | "yield_expression" => {
                 transfer = Some("Continue with the value");
                 None

@@ -123,6 +123,61 @@ it("keeps while-let mismatch separate from question-mark propagation", async () 
   }
 });
 
+it("keeps question-mark success local before testing a let-else pattern", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const settings = useUi.getState();
+  const check = {
+    ...step("Read the key", "Destructure", [output("out", ""), output("else", "Otherwise"), output("error", "Return early on error")]),
+    flavors: ["let-else", "try"],
+  };
+  const matched = step("Use the key", "Call");
+  const absent = step("Return missing bits", "Return");
+  const example: FlowGraph = {
+    ...flow, nodes: [check, matched, absent],
+    edges: [
+      { from: check.id, from_pin: "out", to: matched.id, to_pin: "in", kind: "Exec", access: null },
+      { from: check.id, from_pin: "else", to: absent.id, to_pin: "in", kind: "Exec", access: null },
+    ],
+    reading: [
+      { node: check.id, span, basis: "Syntax", content: { kind: "Paths", input: "Check whether next_key()? matches Some(key)",
+        deferred: false, branches: [
+          { label: "Pattern matches", action: "Bind the key", output: "Continue below", pin: "out" },
+          { label: "Pattern mismatch", action: "Run the else block", output: "Run else", pin: "else" },
+        ] } },
+      { node: check.id, path: "0.0", span: { ...span, start_byte: 2, end_byte: 3 }, basis: "TypeAnalysis", content: {
+        kind: "Paths", input: "Read the Result", deferred: false, branches: [
+          { label: "Success", action: "Unwrap Ok", output: "Continue evaluating the initializer before checking the let-else pattern" },
+          { label: "Error", action: "Return from visit_map", output: "Propagate early", pin: "error" },
+        ],
+      } },
+    ],
+  };
+  const onStep = vi.fn();
+  const click = async (label: string) => {
+    const button = [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
+    expect(button, label).toBeDefined();
+    await act(async () => button!.click());
+  };
+  try {
+    useUi.setState({ blueprintExplanations: true });
+    await act(async () => root.render(<BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode={check.id} onStep={onStep} />));
+    await click("Success");
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("before checking the let-else pattern");
+    await click("Error");
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Propagate early");
+    expect(onStep).not.toHaveBeenCalled();
+    await click("Pattern mismatch");
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, absent);
+    onStep.mockClear();
+    await click("Pattern matches");
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, matched);
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(settings);
+  }
+});
+
 it("explains a Rust break result and follows only a mapped exit", () => {
   const host = document.createElement("div");
   const root = createRoot(host);

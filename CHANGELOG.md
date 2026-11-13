@@ -46,6 +46,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Rust Guide explains the pattern check on each `while let` attempt and what makes the loop stop. A successful `?` in the condition keeps checking the condition.
 - The Rust Guide explains when `Option::take_if` runs its test, when the value moves out, and when changes made by the test stay in the option.
 - A successful Rust `?` inside a condition, the value tested by `match`, or the source of a `for` loop stays in that expression in the Guide. The early return is shown separately.
+- In Rust `let ... else`, the Guide separates an early return from `?` in the initializer from the pattern check that determines whether the `else` block runs.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
