@@ -11,17 +11,23 @@ fn flow(project: &mut Project, name: &str) -> FlowGraph {
 }
 
 fn call<'a>(graph: &'a FlowGraph, method: &str) -> &'a Expr {
-    graph.nodes.iter().filter_map(|node| node.expr.as_ref()).find(|expr| expr.label == method)
+    fn find<'a>(expression: &'a Expr, method: &str) -> Option<&'a Expr> {
+        if expression.label == method { return Some(expression); }
+        expression.children.iter().find_map(|child| find(child, method))
+    }
+    graph.nodes.iter().filter_map(|node| node.expr.as_ref()).find_map(|expr| find(expr, method))
         .unwrap_or_else(|| panic!("Missing {method} in {}: {:?}", graph.name, graph.nodes))
 }
 
 #[test]
 #[ignore = "needs rust-analyzer"]
-fn scip_does_not_label_option_replacement_or_path_join_as_text_operations() {
+fn scip_does_not_label_value_replacement_or_path_join_as_text_operations() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rosetta/rust-operation-overloads");
     let mut project = Project::open(&root, vec![Arc::new(RustFrontend)]).unwrap();
     let cases = [
         ("update_hit_layers", "replace", "text.replace", Some("core::option::Option::replace()")),
+        ("restore_hit_layers", "std::mem::replace", "text.replace", Some("core::mem::replace()")),
+        ("replace_attribute", "core::mem::replace", "text.replace", Some("core::mem::replace()")),
         ("market_groups", "join", "text.join", Some("std::path::Path::join()")),
         ("replace_text", "replace", "text.replace", None),
         ("join_text", "join", "text.join", None),
@@ -47,6 +53,11 @@ fn scip_does_not_label_option_replacement_or_path_join_as_text_operations() {
         if name == "update_hit_layers" {
             assert!(graph.reading.iter().flatten().any(|site| matches!(&site.content,
                 ReadingContent::Paths { branches, .. } if branches[0].output == "Some(previous value)" && branches[1].output == "None")));
+        }
+        if matches!(name, "restore_hit_layers" | "replace_attribute") {
+            assert!(graph.reading.iter().flatten().any(|site| matches!(&site.content,
+                ReadingContent::Steps { label, steps } if label == "Replace and return the previous value"
+                    && steps[1].action.contains("without dropping it in this call"))));
         }
     }
 }
