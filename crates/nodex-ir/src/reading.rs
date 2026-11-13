@@ -171,6 +171,10 @@ impl FlowGraph {
                 .nodes
                 .iter()
                 .filter_map(|node| {
+                    if fact.expression_target == Some(Concept::Entry) {
+                        return (node.concept == Concept::Entry && node.span == fact.anchor)
+                            .then_some((0, node, None));
+                    }
                     if let Some((size, path)) = node
                         .expr
                         .as_ref()

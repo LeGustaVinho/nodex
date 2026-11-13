@@ -2997,6 +2997,7 @@ impl Reader<'_, '_> {
             !captures.is_empty(),
             detail(&label, text),
         );
+        self.map_callback_entry(node, parameters, async_);
         if !async_ && moves {
             self.closure_result_borrow(node);
         }
@@ -3023,6 +3024,41 @@ impl Reader<'_, '_> {
             };
             self.pattern(self.src.span(node), pattern, None, input, ty, source, None);
         }
+    }
+
+    fn map_callback_entry(&mut self, closure: Node<'_>, parameters: Node<'_>, async_: bool) {
+        let Some(call) = direct_argument_call(closure) else { return };
+        let Some((_, receiver_argument)) = receiver(call) else { return };
+        if argument(call, usize::from(receiver_argument.is_some())) != Some(closure) {
+            return;
+        }
+        let Some(operation) = self.op(call).filter(|operation| operation.name == "map") else { return };
+        let (label, text) = match (operation.family, async_) {
+            (Family::Iter, false) => (
+                "Transform an item from the iterator",
+                "Iterator::map creates an iterator and saves this function for later. When a consumer reads a mapped item, the iterator passes the input item to this function and yields the returned value.",
+            ),
+            (Family::Option, false) => (
+                "Transform the value inside Some",
+                "During Option::map, Some passes its value to this function once and wraps the returned value in a new Some. None skips this function and stays None.",
+            ),
+            (Family::Iter, true) => (
+                "Create a future for an iterator item",
+                "Iterator::map saves this async function for later. When a consumer reads a mapped item, the iterator passes the input item to this function and yields the future it creates. This body runs when the future is polled.",
+            ),
+            (Family::Option, true) => (
+                "Create a future for the value inside Some",
+                "During Option::map, Some passes its value to this async function once and wraps the future it creates in a new Some. This body runs when the future is polled. None skips this function and stays None.",
+            ),
+            _ => return,
+        };
+        self.readings.push(ReadingFact {
+            anchor: self.src.header_span(closure, closure.child_by_field_name("body")),
+            span: self.src.span(parameters),
+            basis: ValueBasis::TypeAnalysis,
+            content: detail(label, text),
+            expression_target: Some(Concept::Entry),
+        });
     }
 
     fn closure_result_borrow(&mut self, closure: Node<'_>) {
