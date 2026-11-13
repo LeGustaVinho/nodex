@@ -3200,10 +3200,19 @@ fn question_mark_condition(mut node: Node<'_>) -> Option<&'static str> {
 }
 
 fn question_mark_consumer(mut node: Node<'_>) -> Option<&'static str> {
-    while let Some(parent) = node.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
-        node = parent;
-    }
-    let parent = node.parent()?;
+    let parent = loop {
+        let parent = node.parent()?;
+        match parent.kind() {
+            "parenthesized_expression" => node = parent,
+            "expression_statement" if statement_tail(parent) == Some(node) => node = parent,
+            "block" if block_statements(parent).next_back() == Some(node)
+                && statement_tail(node).is_some() =>
+            {
+                node = parent;
+            }
+            _ => break parent,
+        }
+    };
     match parent.kind() {
         "arguments" if parent.parent().is_some_and(|call| call.kind() == "call_expression") =>
             Some("Use the value to continue evaluating the call"),

@@ -187,3 +187,72 @@ fn question_mark_success_finishes_the_surrounding_expression_before_advancing() 
     assert!(matches!(&last.content, ReadingContent::Paths { branches, .. }
         if branches[0].pin.as_deref() == Some("out")));
 }
+
+#[test]
+fn question_mark_at_the_end_of_a_block_feeds_the_enclosing_call() {
+    let source = r#"
+        fn argument(input: Result<u8, String>) -> Result<u8, String> {
+            let value = std::hint::black_box({ input? });
+            Ok(value)
+        }
+        fn receiver(input: Result<Option<u8>, String>) -> Result<u8, String> {
+            let value = ({ { input? } }).unwrap_or_default();
+            Ok(value)
+        }
+        fn not_tail(input: Result<u8, String>) -> Result<u8, String> {
+            let value = std::hint::black_box({ input?; 1 });
+            Ok(value)
+        }
+        fn discarded_tail(input: Result<u8, String>) -> Result<(), String> {
+            std::hint::black_box({ input?; });
+            Ok(())
+        }
+        fn standalone(input: Result<u8, String>) -> Result<u8, String> {
+            let value = { input? };
+            Ok(value)
+        }
+        fn callback(input: Result<u8, String>) -> Result<u8, String> {
+            let callback = std::hint::black_box(|| -> Result<u8, String> { Ok({ input? }) });
+            callback()
+        }
+        async fn future_boundary(input: Result<u8, String>) -> Result<u8, String> {
+            std::hint::black_box(async { Ok::<u8, String>(input?) }).await
+        }
+        async fn future_tail(input: Result<Result<u8, String>, String>) -> Result<u8, String> {
+            std::hint::black_box(async { input? }).await
+        }
+    "#;
+    let ir = lower_source("src/lib.rs", source);
+    for (function, pin, resumed) in [
+        ("argument", None, "Use the value to continue evaluating the call"),
+        ("receiver", None, "Use the value to continue evaluating the call"),
+        ("not_tail", Some("out"), "Continue"),
+        ("discarded_tail", Some("out"), "Continue"),
+        ("standalone", Some("out"), "Continue"),
+        ("black_box callback", None, "Use the value to continue evaluating the call"),
+    ] {
+        let graph = ir.flows.iter().find(|flow| flow.name == function)
+            .unwrap_or_else(|| panic!("Missing {function}: {:?}", ir.flows.iter().map(|flow| &flow.name).collect::<Vec<_>>()));
+        let (node, question) = question_marks(graph, source).next().unwrap();
+        assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
+            if branches[0].pin.as_deref() == pin && branches[0].output == resumed
+                && branches[1].pin.as_deref() == Some("error")), "{function}: {question:?}");
+        if function != "black_box callback" {
+            assert!(graph.edges.iter().any(|edge| edge.kind == FlowEdgeKind::Exec
+                && edge.from == node.id && edge.from_pin == "out"));
+        } else {
+            assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
+                if branches[1].action == "Return from this callback"));
+        }
+    }
+    let future = ir.flows.iter().find(|flow| flow.name == "future_boundary").unwrap();
+    let (_, question) = question_marks(future, source).next().unwrap();
+    assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
+        if branches[1].action == "Finish this async block"));
+    let future_tail = ir.flows.iter().find(|flow| flow.name == "future_tail").unwrap();
+    let (_, question) = question_marks(future_tail, source).next().unwrap();
+    assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
+        if branches[0].pin.as_deref() == Some("out")
+            && branches[0].output == "Continue"
+            && branches[1].action == "Finish this async block"));
+}
