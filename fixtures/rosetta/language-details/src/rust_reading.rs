@@ -582,6 +582,10 @@ pub fn reading_result_err(raw: i64) -> Option<String> {
     u32::try_from(raw).err().map(|error| error.to_string())
 }
 
+pub fn reading_drain_messages(receiver: std::sync::mpsc::Receiver<i32>) {
+    while receiver.recv().is_ok() {}
+}
+
 pub mod reading_result_shadows {
     struct Result;
 

@@ -3148,6 +3148,12 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
 
 fn result_paths(name: &str) -> Vec<ReadingBranch> {
     let (success, output, error, failure) = match name {
+        "is_ok" => (
+            "The Result contains a successful value",
+            "true",
+            "The Result contains an error",
+            "false",
+        ),
         "ok" => (
             "Keep the value inside Ok",
             "Some(value)",
@@ -3277,6 +3283,10 @@ fn operation_detail(family: Family, name: &str) -> Option<(&'static str, &'stati
         ),
         (Family::Effect, "send") => ("Send to a channel", "Pass the value to the channel. Inspect the result for delivery or an error."),
         (Family::Effect, "recv_optional") => ("Prepare to receive a message", "Await the future to receive a message. It returns None when the channel is closed and empty."),
+        (Family::Effect, "recv_blocking") => (
+            "Receive a message on this thread",
+            "Return the next queued message as Ok(message). If the queue is empty and a sender still exists, block this thread until a message arrives or all senders disconnect. When no senders or queued messages remain, return Err(RecvError).",
+        ),
         (Family::Effect, "recv") => ("Receive from a channel", "Use the next message or the error reported by the channel."),
         (Family::Effect, "sleep") => ("Block the thread for a duration", "The calling thread waits for the duration."),
         (Family::Effect, "sleep_async") => ("Create a timer future", "Await the future to wait for the duration. The task can suspend."),

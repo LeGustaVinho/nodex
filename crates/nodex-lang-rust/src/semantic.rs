@@ -392,6 +392,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         }
     };
     let operation = match (family, sym.package, name) {
+        (Family::Effect, "std", "recv") if descriptor == "sync/mpsc/impl#[`Receiver<T>`]recv()." => "recv_blocking",
         (Family::Effect, "tokio", "recv") if descriptor.starts_with("sync/mpsc/") => "recv_optional",
         (Family::Effect, "tokio", "send") if descriptor.starts_with("sync/mpsc/bounded/") => "send_async",
         (Family::Effect, "tokio", "sleep") => "sleep_async",

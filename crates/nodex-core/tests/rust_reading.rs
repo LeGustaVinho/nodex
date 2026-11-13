@@ -693,6 +693,20 @@ fn scip_reading_connects_lookup_paths_patterns_and_origins() {
     let local = flow(&mut project, "reading_local_result");
     assert!(conversion(&local, "Result.ok()").is_none());
     assert!(conversion(&local, "Result.err()").is_none());
+    let drain = flow(&mut project, "reading_drain_messages");
+    let test = conversion(&drain, "receiver.recv().is_ok()").unwrap();
+    assert_eq!(test.basis, ValueBasis::TypeAnalysis);
+    let ReadingContent::Paths { branches, .. } = &test.content else { unreachable!() };
+    assert_eq!(branches.iter().map(|branch| branch.output.as_str()).collect::<Vec<_>>(), ["true", "false"]);
+    assert!(branches.iter().all(|branch| branch.pin.is_none()));
+    let receive = sites(&drain).iter().find(|site| {
+        site.span.file == "src/rust_reading.rs"
+            && FIXTURE_SOURCE.get(site.span.start_byte as usize..site.span.end_byte as usize) == Some("receiver.recv()")
+    }).unwrap();
+    assert_eq!(receive.node, test.node);
+    assert_eq!(receive.basis, ValueBasis::TypeAnalysis);
+    assert!(matches!(&receive.content, ReadingContent::Detail { text, .. }
+        if text.contains("block this thread") && text.contains("Err(RecvError)")));
     for (function, specialized) in [
         ("reading_collect_standard_option", true),
         ("reading_collect_custom_from_iter", false),

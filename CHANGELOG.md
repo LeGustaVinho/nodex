@@ -35,6 +35,7 @@ The release workflow publishes the section of the version it builds as the relea
 - The Rust Guide highlights `..base` in a struct expression and explains when Rust evaluates the base and how it fills the omitted fields.
 - The Rust Guide shows when `array::from_fn` calls a function for each index and when `iter::from_fn` waits for a request for the next item.
 - In a recognized `tokio::select!` inside a loop, the Rust Guide explains when a branch's direct `break` leaves the loop or `continue` starts the next iteration.
+- The Rust Guide explains when a standard channel's `recv` blocks or reports disconnection, and how `Result::is_ok` turns its outcome into a boolean.
 
 - Blueprint badges identify values, references, and pointers. Select a syntax badge for the exact source and examples, or a Rust reference for its owner and known call sites.
 
