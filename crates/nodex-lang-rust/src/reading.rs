@@ -259,6 +259,7 @@ pub(crate) enum Family {
     IterFromFn,
     MemReplace,
     OnceLock,
+    NonZero,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -3869,6 +3870,10 @@ fn result_paths(name: &str) -> Vec<ReadingBranch> {
 
 fn operation_detail(family: Family, name: &str) -> Option<(&'static str, &'static str)> {
     Some(match (family, name) {
+        (Family::NonZero, "get") => (
+            "Read the nonzero integer",
+            "Return the stored integer in its underlying integer type. Its value is guaranteed to be different from zero.",
+        ),
         (Family::Slice, "split_at_mut") => (
             "Split a mutable borrow",
             "Borrow the ranges before and from the split position. The ranges are disjoint. An out-of-bounds position panics.",

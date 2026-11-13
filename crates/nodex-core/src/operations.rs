@@ -265,6 +265,7 @@ fn match_expr(e: &Expr, language: Language) -> Option<String> {
 fn rust_target_conflicts(operation: &str, target: Option<&str>) -> bool {
     matches!((operation, target),
         ("list.flatten", Some("core::option::Option::flatten()"))
+        | ("list.get", Some("core::num::nonzero::NonZero::get()"))
         | ("text.replace", Some("core::option::Option::replace()" | "core::mem::replace()"))
         | ("text.join", Some("std::path::Path::join()"))
     )

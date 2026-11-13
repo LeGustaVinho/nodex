@@ -332,6 +332,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
                 "array/from_fn()." => return Some((Family::ArrayFromFn, name.into())),
                 "iter/sources/from_fn/from_fn()." => return Some((Family::IterFromFn, name.into())),
                 "mem/take()." | "mem/replace()." => return Some((Family::MemReplace, name.into())),
+                "num/nonzero/impl#[`NonZero<T>`]get()." => return Some((Family::NonZero, name.into())),
                 _ => {}
             }
         }
