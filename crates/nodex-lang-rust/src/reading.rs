@@ -928,6 +928,10 @@ impl Reader<'_, '_> {
                     let operation = self.op(call)?;
                     if let Some(callback) = IteratorCallback::operation(operation) {
                         callback.is_callback(call, scope).then(|| callback.timing().into())
+                    } else if operation.family == Family::Option && operation.name == "take_if" {
+                        let (_, receiver_argument) = receiver(call)?;
+                        (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
+                            .then(|| "When the option contains a value".into())
                     } else if operation.family == Family::Bool && operation.name == "then" {
                         let (_, receiver_argument) = receiver(call)?;
                         (argument(call, usize::from(receiver_argument.is_some())) == Some(scope))
@@ -2197,11 +2201,12 @@ impl Reader<'_, '_> {
         let mut input = match (family, name) {
             (Family::Option, "replace") => format!("Replace the contents of {}", self.short(recv)),
             (Family::Option, "get_or_insert") => format!("Keep or fill {}", self.short(recv)),
+            (Family::Option, "take_if") => format!("Take the contents of {} if the test passes", self.short(recv)),
             (Family::Option | Family::Result, "unwrap_or_default") => format!("Read {} or use its default", self.short(recv)),
             _ => self.short(recv),
         };
         let mut span = self.src.span(node);
-        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
+        if matches!((family, name), (Family::Option, "replace" | "get_or_insert" | "take_if" | "unwrap_or_default") | (Family::Result, "unwrap_or_default")) {
             let member = method_call(node).map(|(_, member)| member).or_else(|| {
                 let callee = node.child_by_field_name("function")?;
                 let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
@@ -3405,6 +3410,21 @@ fn option_paths(name: &str) -> Vec<ReadingBranch> {
             ];
         }
         "take" => ("Move the contents out and leave None", "Some(previous value)", "Leave the slot empty", "None"),
+        "take_if" => {
+            return vec![
+                branch("Empty", "Skip the test and leave the option empty", "None"),
+                branch(
+                    "Present · test returns true",
+                    "Run the test with a mutable reference to the value. Move the resulting contents out and leave None.",
+                    "Some(taken value)",
+                ),
+                branch(
+                    "Present · test returns false",
+                    "Run the test with a mutable reference to the value. Leave the value in the option, including any changes made by the test.",
+                    "None",
+                ),
+            ];
+        }
         "replace" => (
             "Store the new value as Some and give back the previous value",
             "Some(previous value)",
