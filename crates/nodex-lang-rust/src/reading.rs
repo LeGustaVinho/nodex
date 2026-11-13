@@ -262,6 +262,7 @@ pub(crate) enum Family {
     OnceLock,
     NonZero,
     StringInsert,
+    Utf8,
     InclusiveRange,
     VecDrain,
     VecRetain,
@@ -1878,6 +1879,7 @@ impl Reader<'_, '_> {
                 self.at(node, true, detail(label, text));
             }
             Family::StringInsert => self.string_insert(node),
+            Family::Utf8 => self.utf8(node, &name),
             Family::InclusiveRange => self.inclusive_range_contains(node),
             Family::VecDrain => self.vec_drain(node),
             Family::VecRetain => self.vec_retain(node, &name),
@@ -2132,6 +2134,30 @@ impl Reader<'_, '_> {
             None => format!("Return true if the range has not been exhausted and {item} is at or above its current start and at or below its current end. Both endpoints are included. If either comparison fails, including incomparable values, return false."),
         };
         self.at(node, true, detail("Check both inclusive bounds", text));
+    }
+
+    fn utf8(&mut self, node: Node<'_>, conversion: &str) {
+        let Some(callee) = node.child_by_field_name("function") else { return };
+        let member = callee.child_by_field_name("name").unwrap_or(callee);
+        let (input, valid, invalid) = match conversion {
+            "borrowed" => (
+                "Check whether the borrowed bytes form UTF-8 text.",
+                branch("Valid UTF-8", "View the same bytes as text through a shared reference.", "Ok(&str)"),
+                branch("Invalid UTF-8", "Report where UTF-8 validation stopped. The original bytes remain unchanged.", "Err(Utf8Error)"),
+            ),
+            "owned" => (
+                "Take ownership of the byte vector and check whether it forms UTF-8 text.",
+                branch("Valid UTF-8", "Use the vector's buffer as an owned String without copying the bytes.", "Ok(String)"),
+                branch("Invalid UTF-8", "Keep the original vector in the error. Recover it with into_bytes() on the error.", "Err(FromUtf8Error)"),
+            ),
+            "lossy" => (
+                "Decode the borrowed bytes as UTF-8. The returned Cow can hold borrowed or owned text.",
+                branch("Valid UTF-8", "Borrow the input as text without allocating a new string.", "Cow::Borrowed(&str)"),
+                branch("Invalid UTF-8", "Create an owned string and replace invalid UTF-8 sequences with � (U+FFFD).", "Cow::Owned(String)"),
+            ),
+            _ => return,
+        };
+        self.paths(node, self.src.span(member), true, input.into(), vec![valid, invalid], self.known_type(node));
     }
 
     fn string_insert(&mut self, node: Node<'_>) {

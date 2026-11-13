@@ -330,6 +330,13 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
         if sym.package == "alloc" && descriptor == "string/impl#[String]insert()." {
             return Some((Family::StringInsert, name.into()));
         }
+        if sym.package == "alloc" {
+            match descriptor {
+                "string/impl#[String]from_utf8()." => return Some((Family::Utf8, "owned".into())),
+                "string/impl#[String]from_utf8_lossy()." => return Some((Family::Utf8, "lossy".into())),
+                _ => {}
+            }
+        }
         if sym.package == "alloc" && descriptor == "vec/impl#[`Vec<T, A>`]drain()." {
             return Some((Family::VecDrain, name.into()));
         }
@@ -351,6 +358,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
                 "mem/take()." | "mem/replace()." => return Some((Family::MemReplace, name.into())),
                 "num/nonzero/impl#[`NonZero<T>`]get()." => return Some((Family::NonZero, name.into())),
                 "ops/range/impl#[`RangeInclusive<Idx>`]contains()." => return Some((Family::InclusiveRange, name.into())),
+                "str/converts/from_utf8()." | "str/impl#[str]from_utf8()." => return Some((Family::Utf8, "borrowed".into())),
                 "str/impl#[str]split()." | "str/impl#[str]split_once()." => return Some((Family::StrSplit, name.into())),
                 "iter/adapters/peekable/impl#[`Peekable<I>`]peek()."
                 | "iter/adapters/peekable/impl#[`Peekable<I>`]next_if()." => return Some((Family::Peekable, name.into())),

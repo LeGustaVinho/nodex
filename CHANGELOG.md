@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints explain when UTF-8 conversion borrows bytes, takes ownership of them, or replaces invalid sequences.
 - Rust Blueprints show how destructuring assignments evaluate the right side before updating each existing destination.
 - The Rust Blueprint Guide explains why a sequential collection into `Result<Vec<_>, E>` stops at the first error and which work has already happened.
 - The Rust Blueprint Guide explains how `?` in the first argument of `matches!` can return early before the macro produces a boolean.
