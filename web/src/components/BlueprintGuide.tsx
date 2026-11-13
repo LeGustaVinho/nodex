@@ -59,6 +59,18 @@ function rustBreakResult(node: FlowNode) {
   return { target, label, binding, returns: node.flavors.includes("break-value-return") };
 }
 
+function sourceAfterBreak(flow: FlowGraph, node: FlowNode) {
+  if (node.concept !== "Break") return;
+  const id = node.flavors.find((flavor) => flavor.startsWith("break-loop:"))?.slice("break-loop:".length);
+  const loop = id && flow.nodes.find((candidate) => candidate.id === id && candidate.concept.startsWith("Loop."));
+  if (!loop || !loop.outputs.some((pin) => pin.id === "out" && pin.kind === "Exec")) return;
+  const [successor, ...others] = flow.edges.filter((edge) => edge.kind === "Exec" && edge.from === loop.id && edge.from_pin === "out");
+  if (!successor || others.length) return;
+  const next = flow.nodes.find((candidate) => candidate.id === successor.to);
+  if (!next || next.flavors.includes("implicit-drop") || next.span.file !== flow.span.file) return;
+  return next.span.start_byte >= node.span.end_byte && next.span.end_byte > next.span.start_byte ? next.span : undefined;
+}
+
 interface Visit {
   flow: string;
   node: string;
@@ -92,6 +104,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
   const guideOnOpen = useUi((s) => s.blueprintGuideOnOpen);
   const explanations = useUi((s) => s.blueprintExplanations);
   const select = useUi((s) => s.select);
+  const focusCode = useUi((s) => s.focusCode);
   const setGuideOnOpen = useUi((s) => s.setBlueprintGuideOnOpen);
   const flow = flows.find((f) => f.symbol === activeFlow);
   const entry = (f: FlowGraph) => f.nodes.find((n) => n.concept === "Entry" || n.concept === "EventEntry") ?? f.nodes[0];
@@ -119,6 +132,8 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
   const terminal = node && ["Return", "Throw", "Break", "Continue", "Jump"].includes(node.concept);
   const continues = flow?.language === "rust" && node?.concept === "Continue";
   const breakResult = currentSource && flow?.language === "rust" && node ? rustBreakResult(node) : undefined;
+  const afterBreak = !replaying && currentSource && revision && flow?.language === "rust" && node
+    ? sourceAfterBreak(flow, node) : undefined;
   const nextIteration = !replaying && currentSource && continues && flow && node ? continueTarget(flow, node) : undefined;
   const enclosing = !choices.length && !terminal && flow ? enclosingBlock(flow, visits) : undefined;
 
@@ -218,9 +233,10 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             {unmapped.map((pin) => (
               <span key={pin.id}>{executionPinLabel(node, pin.id, pin.label)} · no mapped step</span>
             ))}
-            {continues ? <span>Skip the rest of this iteration</span> : terminal && !breakResult && <span>End of this path</span>}
+            {continues ? <span>Skip the rest of this iteration</span> : terminal && !breakResult && !afterBreak && <span>End of this path</span>}
+            {afterBreak && <button type="button" onClick={() => focusCode(afterBreak, revision)}>Show code after the loop</button>}
             {nextIteration && <button type="button" onClick={() => visit(flow, nextIteration.node, { resumesLoop: true })}>{nextIteration.action}</button>}
-            {(!terminal || breakResult) && !choices.length && !enclosing && <span>End of the mapped path</span>}
+            {(!terminal || breakResult || afterBreak) && !choices.length && !enclosing && <span>End of the mapped path</span>}
           </div>
         </>
       )}

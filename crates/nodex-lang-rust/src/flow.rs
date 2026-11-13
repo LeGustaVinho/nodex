@@ -78,8 +78,8 @@ struct BreakScope {
 }
 
 enum BreakScopeKind {
-    ValueLoop,
-    UnitLoop,
+    ValueLoop(String),
+    UnitLoop(String),
     LabeledBlock,
 }
 
@@ -807,8 +807,8 @@ impl Lowering<'_, '_> {
                 if let Some(l) = &label_name {
                     flavors.push(format!("label:{l}"));
                 }
-                let into = if is_break && value.is_some() {
-                    self.break_value_destination(label_name.as_deref(), &mut flavors)
+                let into = if is_break {
+                    self.break_destination(label_name.as_deref(), value.is_some(), &mut flavors)
                 } else {
                     String::new()
                 };
@@ -1066,19 +1066,29 @@ impl Lowering<'_, '_> {
         Some(self.b.exec_out(&id, "out", "Then"))
     }
 
-    fn break_value_destination(&self, label: Option<&str>, flavors: &mut Vec<String>) -> String {
+    fn break_destination(&self, label: Option<&str>, has_value: bool, flavors: &mut Vec<String>) -> String {
         let label = label.map(label_identifier);
         let Some(scope) = self.break_scopes.iter().rev().find(|scope| {
             label.as_deref().is_none_or(|label| scope.label.as_deref() == Some(label))
         }) else {
             return String::new();
         };
-        let target = match scope.kind {
-            BreakScopeKind::ValueLoop => "loop",
+        let target = match &scope.kind {
+            BreakScopeKind::ValueLoop(id) => {
+                flavors.push(format!("break-loop:{id}"));
+                "loop"
+            }
+            BreakScopeKind::UnitLoop(id) if !has_value => {
+                flavors.push(format!("break-loop:{id}"));
+                return String::new();
+            }
             BreakScopeKind::LabeledBlock if label.is_some() => "block",
             // A value cannot break a `while`/`for`, or cross a labeled block without a label.
             _ => return String::new(),
         };
+        if !has_value {
+            return String::new();
+        }
         flavors.push(format!("break-value-target:{target}"));
         match &scope.tail {
             Tail::Set { shown, .. } => {
@@ -1159,7 +1169,11 @@ impl Lowering<'_, '_> {
         }
         let b = self.b.exec_out(&id, "body", "Loop body");
         if let Some(body) = body {
-            let kind = if e.kind() == "loop_expression" { BreakScopeKind::ValueLoop } else { BreakScopeKind::UnitLoop };
+            let kind = if e.kind() == "loop_expression" {
+                BreakScopeKind::ValueLoop(id.clone())
+            } else {
+                BreakScopeKind::UnitLoop(id.clone())
+            };
             self.break_scopes.push(BreakScope {
                 label: label.map(|label| label_identifier(src.text(label)).into_owned()),
                 kind,

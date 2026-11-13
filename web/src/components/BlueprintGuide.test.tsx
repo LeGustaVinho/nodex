@@ -111,6 +111,48 @@ it("marks only an observed, unique execution edge and excludes the after-block s
   expect(recordedEdgeId({ ...flow, edges: [...flow.edges, alternate] }, step)).toBeUndefined();
 });
 
+it("shows the code after a Rust break without advancing the execution path", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const settings = useUi.getState();
+  const focusCode = vi.fn();
+  const onStep = vi.fn();
+  const afterSpan = { ...span, start_byte: 12, end_byte: 20 };
+  const stop = { ...step("Break", "Break"), flavors: ["break-loop:outer"] };
+  const after = { ...step("After outer", "Call"), span: afterSpan };
+  const graph: FlowGraph = {
+    ...flow, source_revision: "current",
+    nodes: [stop, step("outer", "Loop.Infinite", [output("out", "Completed")]), after],
+    edges: [exec("outer", "out", after.id)],
+  };
+  const render = (example: FlowGraph, revision = "current", replaying = false) => act(async () => root.render(
+    <BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode={stop.id} onStep={onStep}
+      replaying={replaying} sources={{ [span.file]: { bytes: new Uint8Array(30), revision } }} />,
+  ));
+  const action = () => [...host.querySelectorAll("button")].find((button) => button.textContent === "Show code after the loop");
+  try {
+    useUi.setState({ focusCode });
+    await render(graph);
+    expect(action()).toBeDefined();
+    await act(async () => action()!.click());
+    expect(focusCode).toHaveBeenCalledExactlyOnceWith(afterSpan, "current");
+    expect(onStep).not.toHaveBeenCalled();
+    expect(host.querySelector("button")?.disabled).toBe(true);
+
+    await render(graph, "edited");
+    expect(action()).toBeUndefined();
+    await render(graph, "current", true);
+    expect(action()).toBeUndefined();
+    await render({ ...graph, nodes: [...graph.nodes.slice(0, 2), { ...after, flavors: ["implicit-drop"] }] });
+    expect(action()).toBeUndefined();
+    await render({ ...graph, edges: [...graph.edges, exec("outer", "out", "Other")] });
+    expect(action()).toBeUndefined();
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(settings);
+  }
+});
+
 it("guides a selected branch and keeps explanations independent of the guide preference", () => {
   const host = document.createElement("div");
   const root = createRoot(host);

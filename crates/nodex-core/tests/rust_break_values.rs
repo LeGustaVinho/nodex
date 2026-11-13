@@ -11,6 +11,10 @@ fn destination(node: &FlowNode) -> (Option<&str>, Option<&str>) {
     (flavor("break-value-target:"), flavor("break-value-binding:"))
 }
 
+fn loop_target(node: &FlowNode) -> Option<&str> {
+    node.flavors.iter().find_map(|flavor| flavor.strip_prefix("break-loop:"))
+}
+
 #[test]
 fn break_uses_the_pattern_binding_and_initializes_the_loop_binding() {
     let source = r#"
@@ -36,6 +40,10 @@ fn break_uses_the_pattern_binding_and_initializes_the_loop_binding() {
     let reinforce = ir.flows.iter().find(|flow| flow.name == "reinforce").unwrap();
     let found = escape(reinforce, "break target");
     assert_eq!(destination(found), (Some("loop"), Some("target₂")));
+    let target_loop = reinforce.node(loop_target(found).unwrap()).unwrap();
+    assert_eq!(target_loop.concept, Concept::LoopInfinite);
+    let after = reinforce.edges.iter().find(|edge| edge.from == target_loop.id && edge.from_pin == "out").unwrap();
+    assert!(reinforce.node(&after.to).unwrap().code.contains("target"));
     let definition = reinforce.nodes.iter().find(|node| node.label.starts_with("target₂ =")).unwrap();
     assert!(definition.outputs.iter().any(|pin| pin.label == "target₂"));
     assert!(reinforce.edges.iter().any(|edge| {
@@ -97,6 +105,11 @@ fn nested_breaks_resolve_the_nearest_eligible_scope_and_its_result() {
     assert_eq!(destination(escape(nested, "break 13")), (Some("loop"), Some("inner")));
     assert_eq!(destination(escape(nested, "break 'scope 17")), (Some("block"), Some("block_value")));
     assert_eq!(destination(escape(nested, "break block_value")), (Some("loop"), Some("outer")));
+    let outer = loop_target(escape(nested, "break 'scope 11")).unwrap();
+    assert_eq!(loop_target(escape(nested, "break block_value")), Some(outer));
+    assert_ne!(loop_target(escape(nested, "break 13")), Some(outer));
+    assert_ne!(loop_target(escape(nested, "break 7")), Some(outer));
+    assert_eq!(loop_target(escape(nested, "break 'scope 17")), None);
 
     let tail = ir.flows.iter().find(|flow| flow.name == "tail").unwrap();
     assert!(escape(tail, "break Some(19)").flavors.iter().any(|flavor| flavor == "break-value-return"));
