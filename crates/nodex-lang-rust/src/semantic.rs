@@ -400,8 +400,14 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             || sym.package == "core" && matches!(descriptor,
                 "slice/iter/impl#[`Iter<'a, T>`][Iterator]find()."
                 | "slice/iter/impl#[`Iter<'a, T>`][Iterator]position()."
+                | "slice/iter/impl#[`Iter<'a, T>`][Iterator]any()."
+                | "slice/iter/impl#[`Iter<'a, T>`][Iterator]all()."
                 | "slice/iter/impl#[`IterMut<'a, T>`][Iterator]find()."
                 | "slice/iter/impl#[`IterMut<'a, T>`][Iterator]position()."
+                | "slice/iter/impl#[`IterMut<'a, T>`][Iterator]any()."
+                | "slice/iter/impl#[`IterMut<'a, T>`][Iterator]all()."
+                | "str/iter/impl#[`Bytes<'_>`][Iterator]any()."
+                | "str/iter/impl#[`Bytes<'_>`][Iterator]all()."
                 | "iter/adapters/rev/impl#[`Rev<I>`][Iterator]find()."
                 | "iter/adapters/chain/impl#[`Chain<A, B>`][Iterator]find().")
             || matches!(name, "iter" | "iter_mut") && matches!(sym.package, "alloc" | "std") && descriptor.starts_with("collections/")

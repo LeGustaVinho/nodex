@@ -702,6 +702,8 @@ fn direct_argument_call(mut value: Node<'_>) -> Option<Node<'_>> {
 enum IteratorCallback {
     Find,
     Position,
+    Any,
+    All,
     FindMap,
     FilterMap,
     TryFold,
@@ -715,6 +717,8 @@ impl IteratorCallback {
         match operation.name.as_str() {
             "find" => Some(Self::Find),
             "position" => Some(Self::Position),
+            "any" => Some(Self::Any),
+            "all" => Some(Self::All),
             "find_map" => Some(Self::FindMap),
             "filter_map" => Some(Self::FilterMap),
             "try_fold" => Some(Self::TryFold),
@@ -732,6 +736,8 @@ impl IteratorCallback {
         match self {
             Self::Find => "While find searches",
             Self::Position => "While position searches",
+            Self::Any => "While any checks for a match",
+            Self::All => "While all checks each item",
             Self::FindMap => "While find_map searches",
             Self::FilterMap => "When the iterator requests an item",
             Self::TryFold => "While try_fold processes items",
@@ -755,6 +761,13 @@ impl IteratorCallback {
             _ => None,
         }
     }
+}
+
+enum Predicate {
+    Retain,
+    Search,
+    Any,
+    All,
 }
 
 fn single_type_argument(node: Node<'_>) -> Option<Node<'_>> {
@@ -1851,7 +1864,7 @@ impl Reader<'_, '_> {
             Family::Iter | Family::ParIter if matches!(name.as_str(), "collect" | "sum" | "count" | "for_each") => {
                 self.sequence(node, &name);
             }
-            Family::Iter if matches!(name.as_str(), "find" | "position") => self.iterator_search(node, &name),
+            Family::Iter if matches!(name.as_str(), "find" | "position" | "any" | "all") => self.iterator_search(node, &name),
             _ => {
                 if let Some((label, description)) = operation_detail(family, &name) {
                     self.at(node, true, detail(label, description));
@@ -1942,7 +1955,7 @@ impl Reader<'_, '_> {
         ]);
     }
 
-    fn predicate_family(&self, closure: Node<'_>) -> Option<Family> {
+    fn predicate_callback(&self, closure: Node<'_>) -> Option<Predicate> {
         let call = direct_argument_call(closure)?;
         let (_, position) = receiver(call)?;
         if argument(call, usize::from(position.is_some())) != Some(closure) {
@@ -1950,27 +1963,34 @@ impl Reader<'_, '_> {
         }
         let operation = self.op(call)?;
         match (operation.family, operation.name.as_str()) {
-            (Family::VecRetain, _) | (Family::Iter, "find" | "position") => Some(operation.family),
+            (Family::VecRetain, _) => Some(Predicate::Retain),
+            (Family::Iter, "find" | "position") => Some(Predicate::Search),
+            (Family::Iter, "any") => Some(Predicate::Any),
+            (Family::Iter, "all") => Some(Predicate::All),
             _ => None,
         }
     }
 
     fn predicate_return(&mut self, node: Node<'_>) {
         let Some(closure) = boundary(node).filter(|scope| scope.kind() == "closure_expression") else { return };
-        let Some(family) = self.predicate_family(closure) else { return };
+        let Some(predicate) = self.predicate_callback(closure) else { return };
         let Some(value) = named_children(node).into_iter().find(|child| !child.is_extra()) else { return };
-        self.predicate_decision(unparen(value), node, family);
+        self.predicate_decision(unparen(value), node, predicate);
     }
 
-    fn predicate_decision(&mut self, value: Node<'_>, anchor: Node<'_>, family: Family) {
+    fn predicate_decision(&mut self, value: Node<'_>, anchor: Node<'_>, predicate: Predicate) {
         if value.kind() != "boolean_literal" {
             return;
         }
-        let (label, message) = match (family, self.src.text(value)) {
-            (Family::VecRetain, "true") => ("Keep this element", "This result tells the vector to keep the current element."),
-            (Family::VecRetain, "false") => ("Remove this element", "This result tells the vector to remove the current element."),
-            (Family::Iter, "true") => ("Accept this item and stop", "The search found its first matching item."),
-            (Family::Iter, "false") => ("Skip this item and keep looking", "The search can try another item if one is available."),
+        let (label, message) = match (predicate, self.src.text(value)) {
+            (Predicate::Retain, "true") => ("Keep this element", "This result tells the vector to keep the current element."),
+            (Predicate::Retain, "false") => ("Remove this element", "This result tells the vector to remove the current element."),
+            (Predicate::Search, "true") => ("Accept this item and stop", "The search found its first matching item."),
+            (Predicate::Search, "false") => ("Skip this item and keep looking", "The search can try another item if one is available."),
+            (Predicate::Any, "true") => ("Stop and return true from any", "This item matches, which is enough for any to return true."),
+            (Predicate::Any, "false") => ("Keep looking for a match", "This item fails the test. any checks the next item if one is available."),
+            (Predicate::All, "true") => ("Keep checking the other items", "This item passes the test. all checks the next item if one is available."),
+            (Predicate::All, "false") => ("Stop and return false from all", "This item fails the test, which is enough for all to return false."),
             _ => return,
         };
         self.push(self.src.span(anchor), self.src.span(value), true, detail(label, message));
@@ -1982,6 +2002,19 @@ impl Reader<'_, '_> {
             let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
             callee.child_by_field_name("name")
         }).unwrap_or(node);
+        if matches!(name, "any" | "all") {
+            let (goal, decisive, fallback, stop, resume) = if name == "any" {
+                ("Check whether at least one item passes the test.", "true", "false", "The test returns true", "Every tested item failed, or the iterator yielded no items.")
+            } else {
+                ("Check whether every item passes the test.", "false", "true", "The test returns false", "Every tested item passed, or the iterator yielded no items.")
+            };
+            let input = format!("{goal} During this call, the test receives each item by value as Item, which can itself be a reference. When the test returns {fallback}, try the next item if one is available.");
+            self.paths(node, self.src.span(member), true, input, vec![
+                branch(stop, "Stop at the first such item, after consuming it. The next read from the iterator can pick up after it.", decisive),
+                branch("No item gave a decisive result", resume, fallback),
+            ], self.known_type(node));
+            return;
+        }
         let (input, result) = if name == "find" {
             ("Find the first matching item. During this call, the test receives a shared reference (&Item) to each candidate. If the iterator yields references, find gives the test a reference to that reference.", "Some(item)")
         } else {
@@ -2903,7 +2936,7 @@ impl Reader<'_, '_> {
         let tokens = children(node);
         let moves = tokens.iter().any(|token| token.kind() == "move");
         let async_ = tokens.iter().any(|token| token.kind() == "async");
-        if let Some(family) = self.predicate_family(node) && let Some(body) = node.child_by_field_name("body") {
+        if let Some(predicate) = self.predicate_callback(node) && let Some(body) = node.child_by_field_name("body") {
             let body = unparen(body);
             let tail = if body.kind() == "block" {
                 block_statements(body).next_back().and_then(statement_tail)
@@ -2911,7 +2944,7 @@ impl Reader<'_, '_> {
                 Some(body)
             };
             if let Some(tail) = tail {
-                self.predicate_decision(unparen(tail), tail, family);
+                self.predicate_decision(unparen(tail), tail, predicate);
             }
         }
         if !async_ && !moves {
