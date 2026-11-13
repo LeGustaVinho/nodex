@@ -336,6 +336,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
                 "iter/sources/from_fn/from_fn()." => return Some((Family::IterFromFn, name.into())),
                 "mem/take()." | "mem/replace()." => return Some((Family::MemReplace, name.into())),
                 "num/nonzero/impl#[`NonZero<T>`]get()." => return Some((Family::NonZero, name.into())),
+                "ops/range/impl#[`RangeInclusive<Idx>`]contains()." => return Some((Family::InclusiveRange, name.into())),
                 _ => {}
             }
         }

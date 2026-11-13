@@ -261,6 +261,7 @@ pub(crate) enum Family {
     OnceLock,
     NonZero,
     StringInsert,
+    InclusiveRange,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -1784,6 +1785,7 @@ impl Reader<'_, '_> {
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
             Family::StringInsert => self.string_insert(node),
+            Family::InclusiveRange => self.inclusive_range_contains(node),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
             }
@@ -1827,6 +1829,33 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn inclusive_range_contains(&mut self, node: Node<'_>) {
+        let Some((range, receiver_argument)) = receiver(node) else { return };
+        let Some(item) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let item = if item.kind() == "reference_expression"
+            && !children(item).iter().any(|token| token.kind() == "raw")
+        {
+            item.child_by_field_name("value").unwrap_or(item)
+        } else {
+            item
+        };
+        let range = unparen(range);
+        let item = self.written(item, 80);
+        let tokens = children(range);
+        let bounds = tokens.iter().position(|token| token.kind() == "..=").and_then(|position| {
+            if range.kind() != "range_expression" || range.has_error() { return None; }
+            let operand = |token: &&Node<'_>| token.is_named() && !token.is_extra();
+            let start = tokens[..position].iter().find(operand)?;
+            let end = tokens[position + 1..].iter().find(operand)?;
+            Some((self.written(*start, 60), self.written(*end, 60)))
+        });
+        let text = match bounds {
+            Some((start, end)) => format!("Return true if {item} is at least {start} and at most {end}. Both endpoints are included. If either comparison fails, including incomparable values, return false."),
+            None => format!("Return true if the range has not been exhausted and {item} is at or above its current start and at or below its current end. Both endpoints are included. If either comparison fails, including incomparable values, return false."),
+        };
+        self.at(node, true, detail("Check both inclusive bounds", text));
     }
 
     fn string_insert(&mut self, node: Node<'_>) {
