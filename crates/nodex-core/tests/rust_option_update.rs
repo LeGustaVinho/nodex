@@ -165,6 +165,28 @@ fn scip_explains_option_mutation_and_the_conditional_default() {
     };
     assert_eq!(execution(&before), execution(&after));
 
+    let borrowed_contents = |graph: &FlowGraph| {
+        graph.reading.iter().flatten().any(|site| {
+            matches!(&site.content, ReadingContent::Detail { label, borrow: true, .. }
+                if label == "Borrow the stored value to change it")
+        })
+    };
+    assert!(borrowed_contents(&flow(&mut project, "initialize_crew")));
+    assert!(borrowed_contents(&flow(&mut project, "inferred_option")));
+    for name in ["redirected_option", "boxed_option"] {
+        let graph = flow(&mut project, name);
+        assert!(paths_at(&graph, "get_or_insert").is_some());
+        assert!(!borrowed_contents(&graph));
+        assert!(!graph.borrows.iter().flatten().any(|borrow| {
+            borrow.sources.iter().any(|source| {
+                source
+                    .place
+                    .as_deref()
+                    .is_some_and(|place| place.contains("(present contents)"))
+            })
+        }));
+    }
+
     let local = flow(&mut project, "local_calls");
     for method in ["replace", "get_or_insert", "unwrap_or_default"] {
         assert!(paths_at(&local, method).is_none(), "{:?}", local.reading);

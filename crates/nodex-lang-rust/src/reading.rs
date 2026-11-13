@@ -1993,6 +1993,42 @@ impl Reader<'_, '_> {
         })
     }
 
+    fn direct_option_receiver(&self, receiver: Node<'_>) -> Option<bool> {
+        let receiver = unparen(receiver);
+        if receiver.kind() == "field_expression"
+            && !self.evidence.direct_fields.contains_key(&range(receiver))
+            && self.tuple_member(receiver).is_none()
+        {
+            return None;
+        }
+        let info = self.known_type(receiver)?;
+        let (shape, by_reference) = match &info.shape {
+            TypeShape::Indirect { pointer: false, target } => (target.as_ref(), true),
+            shape => (shape, false),
+        };
+        if matches!(shape, TypeShape::Named { name, .. } if name == "core::option::Option") {
+            return Some(by_reference);
+        }
+        if !matches!(shape, TypeShape::Named { name, .. } if name == "Option") {
+            return None;
+        }
+        let mut written = self.cast_binding_origin(receiver)?;
+        if self.op(written).is_some_and(|operation| {
+            operation.family == Family::Option && operation.name == "Some"
+        }) {
+            return Some(by_reference);
+        }
+        if written.kind() == "reference_type" {
+            written = written.child_by_field_name("type")?;
+        }
+        let written = crate::syntax::unparen_type(written);
+        let name = written.child_by_field_name("type").filter(|_| written.kind() == "generic_type")?;
+        self.evidence.type_identities
+            .and_then(|identities| identities.get(&name.start_byte()))
+            .is_some_and(|(end, path)| *end == name.end_byte() && path == "core::option::Option")
+            .then_some(by_reference)
+    }
+
     fn slice_receiver(&self, receiver: Node) -> Option<bool> {
         let receiver = unparen(receiver);
         if receiver.kind() == "field_expression"
@@ -2122,15 +2158,18 @@ impl Reader<'_, '_> {
             argument(node, callback_arg).filter(|node| node.kind() == "closure_expression");
         let eager_insert = family == Family::Option && name == "get_or_insert";
         if family == Family::Option && matches!(name, "get_or_insert" | "get_or_insert_with") {
-            self.fact(node, BorrowRule::Lookup {
-                input: BorrowInput { argument: position, value: self.receiver_is_reference(recv) },
-                projection: " (present contents)".into(),
-            });
-            self.at(node, true, ReadingContent::Detail {
-                label: "Borrow the stored value to change it".into(),
-                text: format!("Both paths give a mutable reference to the contents of {}.", self.short(recv)),
-                definition: None, borrow: true,
-            });
+            let direct = self.direct_option_receiver(recv);
+            if let Some(by_reference) = direct {
+                self.fact(node, BorrowRule::Lookup {
+                    input: BorrowInput { argument: position, value: by_reference },
+                    projection: " (present contents)".into(),
+                });
+                self.at(node, true, ReadingContent::Detail {
+                    label: "Borrow the stored value to change it".into(),
+                    text: format!("Both paths give a mutable reference to the contents of {}.", self.short(recv)),
+                    definition: None, borrow: true,
+                });
+            }
         }
         if matches!(name, "map" | "and_then") && callback.is_some() {
             self.fact(
@@ -3458,7 +3497,7 @@ fn result_paths(name: &str) -> Vec<ReadingBranch> {
         "unwrap_or_default" => (
             "Use the value inside Ok",
             "value",
-            "Discard the error and call Default::default() for the success type",
+            "Call Default::default() for the success type and leave the error unused",
             "default value",
         ),
         "map" => (
