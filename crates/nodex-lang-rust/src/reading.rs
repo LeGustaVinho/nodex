@@ -257,6 +257,7 @@ pub(crate) enum Family {
     Effect,
     ArrayFromFn,
     IterFromFn,
+    MemReplace,
     NumericFrom { source: &'static str, target: &'static str },
     NumericTryFrom { source: &'static str, target: &'static str },
 }
@@ -1603,6 +1604,7 @@ impl Reader<'_, '_> {
             Family::Bool => self.bool_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
+            Family::MemReplace => self.mem_replace(node, &name),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
                 self.numeric_conversion(node, source, target, matches!(family, Family::NumericTryFrom { .. }));
             }
@@ -1646,6 +1648,49 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn mem_replace(&mut self, node: Node<'_>, name: &str) {
+        let Some(callee) = node.child_by_field_name("function") else { return };
+        let callee = if callee.kind() == "generic_function" {
+            let Some(callee) = callee.child_by_field_name("function") else { return };
+            callee
+        } else {
+            callee
+        };
+        let method = callee.child_by_field_name("name").unwrap_or(callee);
+        let Some(destination) = argument(node, 0) else { return };
+        let place = if destination.kind() == "reference_expression" {
+            destination.child_by_field_name("value")
+        } else {
+            None
+        };
+        let target = place.map_or_else(
+            || format!("the place referred to by {}", self.written(destination, 80)),
+            |place| self.written(place, 80),
+        );
+        let (label, action) = if name == "take" {
+            (
+                "Take the previous value and install the default",
+                format!("Compute the type's default value with Default::default(), then put it into {target}."),
+            )
+        } else {
+            let Some(replacement) = argument(node, 1) else { return };
+            (
+                "Replace and return the previous value",
+                format!("Evaluate the destination first, then {}. Once both are ready, put the new value into {target}.", self.written(replacement, 80)),
+            )
+        };
+        let steps = vec![
+            self.step(destination, "Destination if the call returns", action),
+            self.step(node, "Returned value", format!("Return the previous value from {target} without dropping it in this call.")),
+        ];
+        self.push(
+            self.src.span(node),
+            self.src.span(method),
+            true,
+            ReadingContent::Steps { label: label.into(), steps },
+        );
     }
 
     fn from_fn(&mut self, node: Node<'_>, family: Family) {

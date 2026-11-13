@@ -327,6 +327,7 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool) -> Option<(Famil
             match descriptor {
                 "array/from_fn()." => return Some((Family::ArrayFromFn, name.into())),
                 "iter/sources/from_fn/from_fn()." => return Some((Family::IterFromFn, name.into())),
+                "mem/take()." | "mem/replace()." => return Some((Family::MemReplace, name.into())),
                 _ => {}
             }
         }
