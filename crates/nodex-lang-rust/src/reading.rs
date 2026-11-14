@@ -113,6 +113,15 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::type_outlives_explanation::contract(src, node));
     items.extend(crate::lifetime_outlives_explanation::contract(src, node));
     items.extend(crate::hrtb_trait_explanation::contract(src, node));
+    items.extend(crate::generic_clone_bound_explanation::contract(src, node));
+    items.extend(crate::named_generic_function_explanation::explain(src, node));
+    items.extend(crate::for_lifetime_fn_pointer_explanation::contract(src, node));
+    items.extend(crate::where_clause_explanation::contract(src, node));
+    items.extend(crate::combined_generic_bounds_explanation::contract(src, node));
+    items.extend(crate::where_type_requirement_explanation::contract(src, node));
+    items.extend(crate::relaxed_sized_explanation::contract(src, node));
+    items.extend(crate::where_associated_type_explanation::explain(src, node));
+    items.extend(crate::sized_bound_explanation::contract(src, node));
     items.extend(crate::integer_128_explanation::explain(src, node));
     items.extend(crate::signed_integer_explanation::explain(src, node));
     items.extend(crate::float_type_explanation::contract(src, node));
@@ -4167,6 +4176,7 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        for (site, content) in crate::for_lifetime_fn_pointer_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::inferred_type_placeholder_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (span, content) in crate::inferred_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), span, false, content); }
         for (span, content) in crate::static_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), span, false, content); }
