@@ -128,6 +128,8 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::struct_const_parameter_explanation::contract(src, node));
     items.extend(crate::const_generic_default_explanation::explain(src, node));
     items.extend(crate::const_fn_explanation::explain(src, node));
+    items.extend(crate::unsafe_function_declaration_explanation::explain(src, node));
+    items.extend(crate::async_function_explanation::explain(src, node));
     items.extend(crate::associated_type_equality_explanation::contract(src, node));
     items.extend(crate::qualified_assoc_type_explanation::contract(src, node));
     items.extend(crate::precise_capture_explanation::contract(src, node));
@@ -182,6 +184,8 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
         }
     }
     if function {
+        let asynchronous = children(node).into_iter().filter(|part| part.kind() == "function_modifiers")
+            .any(|modifiers| children(modifiers).iter().any(|part| part.kind() == "async"));
         let name = node.child_by_field_name("name").unwrap_or(node);
         let params: Vec<_> = node.child_by_field_name("parameters").map(named_children).unwrap_or_default()
             .into_iter().filter(|param| !param.is_extra() && param.kind() != "attribute_item").collect();
@@ -221,12 +225,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
                 "reference_type" => "A reference to data that must remain available for the required lifetime",
                 _ => "Value returned to the caller",
             };
-            add(result, "Returns", description.into(), Some(result));
+            let description = if asynchronous { format!("The call returns a future; when that future completes, its output has type {}.", src.norm(result)) } else { description.into() };
+            add(result, "Returns", description, Some(result));
             if let Some((at, text)) = reference_lifetime(src, result, &params) {
                 add(at, "Lifetime", text, None);
             }
         } else {
-            add(name, "Returns", "No explicit result (Unit)".into(), None);
+            add(name, "Returns", if asynchronous { "The call returns a future whose output is unit () when it completes." } else { "No explicit result (Unit)" }.into(), None);
         }
     }
     for declaration in owner.into_iter().chain(std::iter::once(node)) {
@@ -1244,6 +1249,11 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::basic_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((arrow, content)) = crate::closure_explicit_return_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(arrow), false, content); }
+        if let Some((site, content)) = crate::async_move_capture_explanation::explain(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::await_postfix_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::async_block_explanation::explain(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((owner, site, content)) = crate::match_wildcard_arm_explanation::explain(node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::labeled_block_value_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::inline_const_block_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -1338,7 +1348,10 @@ impl Reader<'_, '_> {
                 if let Some((site, content)) = crate::loop_binding_result_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
             }
             "while_expression" => self.while_let(node),
-            "closure_expression" => self.closure(node),
+            "closure_expression" => {
+                self.closure(node);
+                if let Some((body, content)) = crate::zero_argument_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(body), false, content); }
+            }
             "return_expression" => self.predicate_return(node),
             "block" => self.block_result(node),
             "base_field_initializer" => self.struct_update(node),
@@ -1352,7 +1365,7 @@ impl Reader<'_, '_> {
                     self.at(node, false, detail("Await a result", "Continue here when the future is ready. If it is pending, this task can suspend."));
                 }
             }
-            "unsafe_block" => self.at(node, false, detail("Operations with extra safety conditions", "Check the contract of each unsafe operation used here. Rust still checks the types.")),
+            "unsafe_block" => { if let Some((site, content)) = crate::unsafe_block_explanation::explain(self.src, node) { self.push(self.src.span(site), self.src.span(site), false, content); } }
             "foreign_mod_item" => self.at(node, false, detail("Foreign interface", "These declarations describe how Rust calls code across an ABI boundary.")),
             "async_block" => {
                 let mut text = "The body makes progress when the future is polled.".to_owned();
@@ -3932,6 +3945,7 @@ impl Reader<'_, '_> {
     }
 
     fn closure(&mut self, node: Node<'_>) {
+        for (site, content) in crate::typed_closure_parameter_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         let Some(parameters) = node.child_by_field_name("parameters") else {
             return;
         };
