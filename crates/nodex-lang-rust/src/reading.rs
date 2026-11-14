@@ -1255,6 +1255,16 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((owner, site, content)) = crate::some_ref_mut_match_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::explicit_field_pattern_explanation::explain(self.src, node) { self.push(anchor, self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::named_field_match_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::named_field_range_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::some_ref_pattern_explanation::explain(self.src, node) { let body = owner.child_by_field_name("body").or_else(|| owner.child_by_field_name("consequence")); self.push(self.src.header_span(owner, body), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::struct_pattern_rest_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::mut_reference_pattern_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        for (anchor, site, content) in crate::at_pattern_binding_explanation::explain(self.src, node) { self.push(anchor, self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::reference_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::inclusive_range_binding_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((owner, site, content)) = crate::half_open_range_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((m, site, content)) = crate::range_to_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(m, m.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::open_lower_range_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
