@@ -127,6 +127,7 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::default_type_parameter_explanation::explain(src, node));
     items.extend(crate::struct_const_parameter_explanation::contract(src, node));
     items.extend(crate::const_generic_default_explanation::explain(src, node));
+    items.extend(crate::const_fn_explanation::explain(src, node));
     items.extend(crate::associated_type_equality_explanation::contract(src, node));
     items.extend(crate::qualified_assoc_type_explanation::contract(src, node));
     items.extend(crate::precise_capture_explanation::contract(src, node));
@@ -1243,6 +1244,14 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((owner, site, content)) = crate::match_wildcard_arm_explanation::explain(node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::labeled_block_value_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::inline_const_block_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::match_guard_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((m, site, content)) = crate::match_arm_syntax_explanation::explain(self.src, node) { self.push(self.src.header_span(m, m.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::match_exhaustiveness_explanation::explain(node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::labeled_break_value_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::labeled_continue_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((label, content)) = crate::loop_label_explanation::explain(self.src, node) { let anchor = node.child_by_field_name("body").map_or_else(|| self.src.span(node), |body| self.src.header_span(node, Some(body))); self.push(anchor, self.src.span(label), false, content); }
         if let Some((label, content)) = crate::labeled_break_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(label), false, content); }
         if let Some((site, content)) = crate::for_iteration_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
@@ -1299,7 +1308,10 @@ impl Reader<'_, '_> {
                 if let Some(content) = content { self.at(node, false, content); }
             }
             "call_expression" => self.call(node),
-            "try_expression" => self.propagation(node),
+            "try_expression" => {
+                if let Some((operand, token, content)) = crate::question_mark_general_explanation::explain(self.src, node) { self.push(self.src.span(operand), self.src.span(token), false, content); }
+                self.propagation(node);
+            }
             "type_cast_expression" => {
                 if let Some(content) = crate::cast_as_explanation::explain(self.src, node) { self.at(node, false, content); }
                 self.numeric_cast(node);
