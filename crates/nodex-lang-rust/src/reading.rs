@@ -268,6 +268,7 @@ pub(crate) enum Family {
     Utf8,
     InclusiveRange,
     VecDrain,
+    VecTruncate,
     VecRetain,
     StrSplit,
     Length,
@@ -1925,6 +1926,7 @@ impl Reader<'_, '_> {
             Family::Utf8 => self.utf8(node, &name),
             Family::InclusiveRange => self.inclusive_range_contains(node),
             Family::VecDrain => self.vec_drain(node),
+            Family::VecTruncate => self.vec_truncate(node),
             Family::VecRetain => self.vec_retain(node, &name),
             Family::StrSplit => self.str_split(node, &name),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
@@ -1934,6 +1936,7 @@ impl Reader<'_, '_> {
                 self.get(node)
             }
             Family::Slice if name == "get_disjoint_mut" => self.disjoint_mut(node),
+            Family::Slice if name == "select_nth_unstable_by" => self.select_nth_unstable_by(node),
             Family::Map if matches!(name.as_str(), "or_default" | "or_insert" | "or_insert_with") => self.map_entry(node, &name),
             Family::Slice if name == "split_at_mut" => {
                 if let Some((base, position)) = receiver(node)
@@ -2178,6 +2181,39 @@ impl Reader<'_, '_> {
             branch("The test returns true", "Stop after consuming the matching item. The next read from the iterator can pick up after it.", result),
             branch("No match in this search", "The iterator reaches a point where it yields no item. The test returned false for every item it saw.", "None"),
         ], self.known_type(node));
+    }
+
+    fn select_nth_unstable_by(&mut self, node: Node<'_>) {
+        let Some((slice, position)) = receiver(node) else { return };
+        let first = usize::from(position.is_some());
+        let (Some(index), Some(compare)) = (argument(node, first), argument(node, first + 1)) else { return };
+        let slice = self.written(slice, 80);
+        let index_text = self.written(index, 80);
+        let result = if expression_result_is_discarded(node) {
+            "This statement ignores the three mutable references. The rearrangement remains in the original slice."
+        } else {
+            "Return three disjoint mutable references into the same slice: the prefix, the element at the index, and the suffix."
+        };
+        let steps = vec![
+            self.step(index, "Index", format!("Choose position {index_text}, counting from zero. An index at or beyond the length panics, including on an empty slice.")),
+            self.step(compare, "Rearrange in place", format!("Use the comparator to rearrange {slice}. On success, the element at the index occupies its position in the comparator's sorted order. The comparator must define a total order. An inconsistent comparator can cause a panic.")),
+            self.step(node, "After rearranging", "The prefix compares less than or equal to the selected element. The suffix compares greater than or equal to it. Neither side has a guaranteed internal order, and ties can change relative order."),
+            self.step(node, "Returned value", result),
+        ];
+        self.push(self.src.span(node), self.src.span(call_member(node).unwrap_or(node)), true,
+            ReadingContent::Steps { label: "Select a position and partition the slice".into(), steps });
+    }
+
+    fn vec_truncate(&mut self, node: Node<'_>) {
+        let Some((vector, position)) = receiver(node) else { return };
+        let Some(length) = argument(node, usize::from(position.is_some())) else { return };
+        let vector = self.written(vector, 80);
+        let length = self.written(length, 80);
+        self.paths(node, self.src.span(call_member(node).unwrap_or(node)), true,
+            format!("Shorten {vector} to at most {length} elements. The vector keeps its allocated capacity. The call returns () (unit)."), vec![
+                branch("Requested length is smaller", format!("Keep the first {length} elements in their current order and drop the rest."), "()"),
+                branch("Requested length is at least the current length", "Keep all the elements without growing the vector.", "()"),
+            ], None);
     }
 
     fn vec_drain(&mut self, node: Node<'_>) {
