@@ -130,6 +130,12 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::const_fn_explanation::explain(src, node));
     items.extend(crate::unsafe_function_declaration_explanation::explain(src, node));
     items.extend(crate::async_function_explanation::explain(src, node));
+    items.extend(crate::shared_fn_bound_explanation::contract(src, node));
+    items.extend(crate::fnmut_bound_explanation::contract(src, node));
+    items.extend(crate::fnonce_bound_explanation::contract(src, node));
+    items.extend(crate::async_fn_once_bound_explanation::contract(src, node));
+    items.extend(crate::async_fn_bound_explanation::contract(src, node));
+    items.extend(crate::async_fn_mut_bound_explanation::contract(src, node));
     items.extend(crate::associated_type_equality_explanation::contract(src, node));
     items.extend(crate::qualified_assoc_type_explanation::contract(src, node));
     items.extend(crate::precise_capture_explanation::contract(src, node));
@@ -1249,6 +1255,8 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (anchor, site, content) in crate::wildcard_pattern_explanation::explain(node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::async_closure_explanation::explain(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::basic_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((arrow, content)) = crate::closure_explicit_return_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(arrow), false, content); }
         if let Some((site, content)) = crate::async_move_capture_explanation::explain(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -3945,6 +3953,8 @@ impl Reader<'_, '_> {
     }
 
     fn closure(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::async_move_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::move_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::typed_closure_parameter_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         let Some(parameters) = node.child_by_field_name("parameters") else {
             return;

@@ -206,12 +206,16 @@ impl FlowGraph {
                 content: fact.content.clone(),
                 borrow_sources: None,
             };
-            // Resolved facts refine the syntax entry for the same occurrence.
+            // Resolved facts refine the syntax entry for the same occurrence and
+            // explanation. Different details can legitimately highlight the same
+            // token, e.g. a borrow and its role as a closure's result.
             if let Some(previous) = entries.iter_mut().find(|previous| {
                 previous.node == site.node
                     && previous.span == site.span
-                    && std::mem::discriminant(&previous.content)
-                        == std::mem::discriminant(&site.content)
+                    && match (&previous.content, &site.content) {
+                        (ReadingContent::Detail { label: left, .. }, ReadingContent::Detail { label: right, .. }) => left == right,
+                        (left, right) => std::mem::discriminant(left) == std::mem::discriminant(right),
+                    }
             }) {
                 *previous = site;
             } else {

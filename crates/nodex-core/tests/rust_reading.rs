@@ -81,6 +81,7 @@ fn rust_pattern_cards_keep_checks_alternative_bindings_and_slice_rest() {
         let graph = ir.flows.iter().find(|graph| graph.name == function).unwrap();
         let site = sites(graph).iter().find(|site| {
             &source[site.span.start_byte as usize..site.span.end_byte as usize] == pattern
+                && matches!(site.content, ReadingContent::Pattern { .. })
         }).unwrap_or_else(|| panic!("missing {pattern} in {:?}", sites(graph)));
         assert_eq!(site.basis, ValueBasis::Syntax, "{site:?}");
         let ReadingContent::Pattern { parts, .. } = &site.content else { panic!("{site:?}") };
@@ -409,7 +410,7 @@ fn let_else_reading_follows_pattern_match_and_mismatch_routes() {
         let node = graph.node(&site.node).unwrap();
         assert_eq!(node.concept, Concept::Destructure);
         assert_eq!(branches[0].label, "Pattern matches");
-        assert!(branches[0].action.contains("Any names bound by the pattern"));
+        assert!(branches[0].action.contains("names are available in the surrounding scope"));
         assert_eq!(branches[1].label, "Pattern mismatch");
         for (branch, pin) in branches.iter().zip(["out", "else"]) {
             assert_eq!(branch.pin.as_deref(), Some(pin));
@@ -417,7 +418,7 @@ fn let_else_reading_follows_pattern_match_and_mismatch_routes() {
         }
         patterns.push(input.as_str());
     }
-    assert_eq!(patterns, ["Check whether input matches Some(value)", "Check whether candidate matches Some(_)"]);
+    assert_eq!(patterns, ["Evaluate input once, then check whether its result matches the pattern Some(value).", "Evaluate candidate once, then check whether its result matches the pattern Some(_)."]);
 
     let parent = flow(&mut project, "reading_let_else_closure");
     assert!(sites(&parent).iter().all(|site| !matches!(site.content, ReadingContent::Paths { .. })));
@@ -450,7 +451,7 @@ fn associated_type_contracts_keep_each_implementation_and_its_source() {
     let mut project = project();
     let graph = project.structure();
     let symbol = |name: &str| graph.symbols.iter().find(|symbol| symbol.name == name).unwrap();
-    assert!(symbol("rust_reading").rust_contract.is_none());
+    assert!(symbol("rust_reading").rust_contract.iter().flatten().all(|item| item.group != "Associated type"));
     let members = |parent: &nodex_ir::Symbol| {
         graph.symbols.iter().filter(|symbol| symbol.parent.as_deref() == Some(parent.id.as_str()) && symbol.name == "Item").collect::<Vec<_>>()
     };
@@ -603,9 +604,9 @@ fn closure_reading_explains_the_borrow_in_the_result_expression() {
         ReadingContent::Detail { label, text, .. } => Some((label.as_str(), text.as_str())),
         _ => None,
     }).collect();
-    assert_eq!(cards.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
-        ["Create function callback()", "Borrow the result for reading"]);
-    assert!(cards[0].1.contains("Captured values are taken by value"));
+    let callback = cards.iter().find(|(label, _)| *label == "Create function callback()").unwrap();
+    assert!(callback.1.contains("Captured values are taken by value"));
+    assert!(cards.iter().any(|(label, _)| *label == "Borrow the result for reading"));
 }
 
 #[test]
