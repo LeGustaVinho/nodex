@@ -33,6 +33,25 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::inline_module_explanation::explain(src, node));
     items.extend(crate::import_item_explanation::explain(src, node));
     items.extend(crate::import_path_explanation::explain(src, node));
+    items.extend(crate::grouped_import_explanation::explain(src, node));
+    items.extend(crate::import_alias_explanation::explain(src, node));
+    items.extend(crate::public_reexport_explanation::explain(src, node));
+    items.extend(crate::extern_crate_explanation::explain_module(src, node));
+    items.extend(crate::public_visibility_explanation::explain(src, node));
+    items.extend(crate::pub_crate_explanation::explain(src, node));
+    items.extend(crate::pub_super_explanation::explain(src, node));
+    items.extend(crate::pub_self_explanation::explain(src, node));
+    let import_container = match node.kind() {
+        "source_file" => Some(node),
+        "mod_item" => node.child_by_field_name("body"),
+        _ => None,
+    };
+    if let Some(container) = import_container {
+        for import in named_children(container) {
+            items.extend(crate::import_self_group_explanation::explain(src, import));
+            items.extend(crate::glob_import_explanation::explain(src, import));
+        }
+    }
     let mut add = |at, group: &str, text: String, ty: Option<Node>| {
         let type_info = ty.map(|ty| {
             let native = src.norm(ty);

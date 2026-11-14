@@ -32,6 +32,16 @@ mod pub_function_explanation;
 mod inline_module_explanation;
 mod import_item_explanation;
 mod import_path_explanation;
+mod grouped_import_explanation;
+mod import_alias_explanation;
+mod import_self_group_explanation;
+mod glob_import_explanation;
+mod public_reexport_explanation;
+mod extern_crate_explanation;
+mod public_visibility_explanation;
+mod pub_crate_explanation;
+mod pub_super_explanation;
+mod pub_self_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;
