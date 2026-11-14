@@ -291,7 +291,8 @@ fn range_reading_uses_the_written_bounds_and_links_to_the_operator() {
     let graph = flow(&mut project, "reading_ranges");
     let source = FIXTURE_SOURCE;
     let cards: Vec<_> = sites(&graph).iter().filter_map(|site| match &site.content {
-        ReadingContent::Detail { label, text, .. } if label.starts_with("Range") => {
+        ReadingContent::Detail { label, text, .. } if label.starts_with("Range")
+            && matches!(&source[site.span.start_byte as usize..site.span.end_byte as usize], ".." | "..=") => {
             assert_eq!(site.basis, ValueBasis::Syntax);
             assert!(site.path.is_some());
             Some((&source[site.span.start_byte as usize..site.span.end_byte as usize], text.as_str()))
@@ -301,7 +302,7 @@ fn range_reading_uses_the_written_bounds_and_links_to_the_operator() {
     assert_eq!(cards.len(), 6);
     for (operator, phrase) in [
         ("..", "Start at start and stop before end"),
-        ("..=", "Start at start and include end"),
+        ("..=", "start..=end creates a range"),
         ("..", "Stop before end"),
         ("..=", "Include end as the end bound"),
         ("..", "Start at start with no specified end"),

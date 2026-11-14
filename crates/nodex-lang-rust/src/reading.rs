@@ -1256,6 +1256,15 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::open_start_slice_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::inclusive_prefix_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::open_ended_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::full_range_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::open_end_range_expression_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::rest_dots_explanation::explain(self.src, node) { let body = owner.child_by_field_name("body").or_else(|| owner.child_by_field_name("consequence")); self.push(self.src.header_span(owner, body), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::half_open_range_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::range_to_expression_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((span, content)) = crate::inclusive_range_to_expression_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((owner, site, content)) = crate::match_middle_slice_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((owner, site, content)) = crate::nested_tuple_variant_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::half_open_range_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -1832,10 +1841,7 @@ impl Reader<'_, '_> {
 
     fn describe_range(&mut self, node: Node, operator: Span, start: Option<Node>, end: Option<Node>, inclusive: bool) {
         let (label, text) = match (start, end, inclusive) {
-            (Some(start), Some(end), true) => (
-                "Range includes the end",
-                format!("Start at {} and include {} as the end bound.", self.short(start), self.short(end)),
-            ),
+            (Some(start), Some(end), true) => crate::inclusive_range_expression_explanation::describe(&self.short(start), &self.short(end)),
             (Some(start), Some(end), false) => (
                 "Range stops before the end",
                 format!("Start at {} and stop before {}.", self.short(start), self.short(end)),
