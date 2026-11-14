@@ -52,6 +52,15 @@ mod raw_identifier_explanation;
 mod absolute_path_explanation;
 mod super_single_path_explanation;
 mod self_explanation;
+mod cast_as_explanation;
+mod named_struct_explanation;
+mod tuple_struct_explanation;
+mod record_construct_explanation;
+mod struct_shorthand_reading;
+mod newtype_explanation;
+mod raw_lifetime_label_explanation;
+mod unit_struct_explanation;
+mod tuple_struct_call_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;

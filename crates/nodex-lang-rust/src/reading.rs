@@ -50,6 +50,11 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::absolute_path_explanation::explain_imports(src, node));
     items.extend(crate::super_single_path_explanation::imports(src, node));
     items.extend(crate::self_explanation::receiver(src, node));
+    items.extend(crate::named_struct_explanation::explain(src, node));
+    items.extend(crate::tuple_struct_explanation::explain(src, node));
+    items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::raw_lifetime_label_explanation::contract(src, node));
+    items.extend(crate::unit_struct_explanation::explain(src, node));
     let import_container = match node.kind() {
         "source_file" => Some(node),
         "mod_item" => node.child_by_field_name("body"),
@@ -1156,6 +1161,7 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some(content) = crate::raw_lifetime_label_explanation::label(self.src, node) { self.at(node, false, content); }
         if let Some((span, content)) = crate::absolute_path_explanation::explain_path(self.src, node) {
             self.push(self.src.span(node), span, false, content);
         }
@@ -1170,8 +1176,14 @@ impl Reader<'_, '_> {
             }
             "call_expression" => self.call(node),
             "try_expression" => self.propagation(node),
-            "type_cast_expression" => self.numeric_cast(node),
+            "type_cast_expression" => {
+                if let Some(content) = crate::cast_as_explanation::explain(self.src, node) { self.at(node, false, content); }
+                self.numeric_cast(node);
+            }
             "array_expression" => self.array_repeat(node),
+            "struct_expression" => {
+                if let Some(content) = crate::struct_shorthand_reading::explain(self.src, node).or_else(|| crate::record_construct_explanation::explain(self.src, node)) { self.at(node, false, content); }
+            }
             "range_expression" => self.range_expression(node),
             "assignment_expression" => {
                 if let Some((equal, end)) = inclusive_range_to(node) {
@@ -1973,6 +1985,9 @@ impl Reader<'_, '_> {
     }
 
     fn call(&mut self, node: Node<'_>) {
+        if let Some((callee, text)) = crate::tuple_struct_call_explanation::explain(self.src, node) {
+            self.push(self.src.span(node), self.src.span(callee), false, detail("Construct a tuple struct", text));
+        }
         self.collect_type_arguments(node);
         let Some(op) = self.op(node) else { return };
         let family = op.family;
