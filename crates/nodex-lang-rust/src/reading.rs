@@ -127,6 +127,10 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::default_type_parameter_explanation::explain(src, node));
     items.extend(crate::struct_const_parameter_explanation::contract(src, node));
     items.extend(crate::const_generic_default_explanation::explain(src, node));
+    items.extend(crate::associated_type_equality_explanation::contract(src, node));
+    items.extend(crate::qualified_assoc_type_explanation::contract(src, node));
+    items.extend(crate::precise_capture_explanation::contract(src, node));
+    items.extend(crate::associated_type_bound_explanation::contract(src, node));
     items.extend(crate::integer_128_explanation::explain(src, node));
     items.extend(crate::signed_integer_explanation::explain(src, node));
     items.extend(crate::float_type_explanation::contract(src, node));
@@ -1239,6 +1243,9 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::dereference_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::shared_borrow_expression_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::mutable_borrow_expression_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::computed_const_generic_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::turbofish_type_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::const_turbofish_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -2084,6 +2091,8 @@ impl Reader<'_, '_> {
     }
 
     fn call(&mut self, node: Node<'_>) {
+        if let Some((site, text)) = crate::qualified_trait_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Call an item through a trait implementation", text)); }
+        if let Some((site, text)) = crate::type_qualified_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Call through a type", text)); }
         if let Some((site, content)) = crate::method_turbofish_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, text)) = crate::turbofish_type_path_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Generic arguments on a type path", text)); }
         if let Some((arguments, text)) = crate::tuple_variant_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(arguments), false, detail("Construct a tuple-style enum variant", text)); }
@@ -4186,6 +4195,8 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::value_binding_transfer_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::qualified_assoc_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::for_lifetime_fn_pointer_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::inferred_type_placeholder_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (span, content) in crate::inferred_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), span, false, content); }
