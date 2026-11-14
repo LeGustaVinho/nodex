@@ -55,6 +55,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::newtype_explanation::explain(src, node));
     items.extend(crate::raw_lifetime_label_explanation::contract(src, node));
     items.extend(crate::unit_struct_explanation::explain(src, node));
+    items.extend(crate::unit_enum_explanation::explain(src, node));
+    items.extend(crate::enum_tuple_payload_explanation::explain(src, node));
+    items.extend(crate::named_enum_variant_explanation::explain(src, node));
+    items.extend(crate::union_declaration_explanation::explain(src, node));
+    items.extend(crate::trait_declaration_explanation::explain(src, node));
+    items.extend(crate::enum_discriminant_explanation::explain(src, node));
+    items.extend(crate::supertrait_explanation::explain(src, node));
     let import_container = match node.kind() {
         "source_file" => Some(node),
         "mod_item" => node.child_by_field_name("body"),
@@ -1182,6 +1189,8 @@ impl Reader<'_, '_> {
             }
             "array_expression" => self.array_repeat(node),
             "struct_expression" => {
+                if let Some((field, text)) = crate::union_initialization_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(field), false, detail("Initialize a union field", text)); }
+                if let Some((path, content)) = crate::enum_named_construction_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(path), false, content); }
                 if let Some(content) = crate::struct_shorthand_reading::explain(self.src, node).or_else(|| crate::record_construct_explanation::explain(self.src, node)) { self.at(node, false, content); }
             }
             "range_expression" => self.range_expression(node),
@@ -1985,6 +1994,7 @@ impl Reader<'_, '_> {
     }
 
     fn call(&mut self, node: Node<'_>) {
+        if let Some((arguments, text)) = crate::tuple_variant_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(arguments), false, detail("Construct a tuple-style enum variant", text)); }
         if let Some((callee, text)) = crate::tuple_struct_call_explanation::explain(self.src, node) {
             self.push(self.src.span(node), self.src.span(callee), false, detail("Construct a tuple struct", text));
         }

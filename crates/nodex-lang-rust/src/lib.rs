@@ -61,6 +61,16 @@ mod newtype_explanation;
 mod raw_lifetime_label_explanation;
 mod unit_struct_explanation;
 mod tuple_struct_call_explanation;
+mod unit_enum_explanation;
+mod enum_tuple_payload_explanation;
+mod named_enum_variant_explanation;
+mod enum_named_construction_explanation;
+mod union_declaration_explanation;
+mod trait_declaration_explanation;
+mod tuple_variant_call_explanation;
+mod union_initialization_explanation;
+mod enum_discriminant_explanation;
+mod supertrait_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;
