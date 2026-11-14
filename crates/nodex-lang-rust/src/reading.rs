@@ -103,6 +103,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::dyn_send_bound_explanation::contract(src, node));
     items.extend(crate::dyn_lifetime_explanation::contract(src, node));
     items.extend(crate::combined_impl_trait_explanation::contract(src, node));
+    items.extend(crate::never_type_explanation::contract(src, node));
+    items.extend(crate::named_shared_lifetime_explanation::contract(src, node));
+    items.extend(crate::mutable_reference_lifetime_explanation::contract(src, node));
+    items.extend(crate::function_lifetime_parameter_explanation::explain(src, node));
+    items.extend(crate::static_lifetime_explanation::contract(src, node));
+    items.extend(crate::inferred_type_placeholder_explanation::contract(src, node));
+    items.extend(crate::inferred_lifetime_explanation::contract(src, node));
+    items.extend(crate::type_outlives_explanation::contract(src, node));
+    items.extend(crate::lifetime_outlives_explanation::contract(src, node));
+    items.extend(crate::hrtb_trait_explanation::contract(src, node));
     items.extend(crate::integer_128_explanation::explain(src, node));
     items.extend(crate::signed_integer_explanation::explain(src, node));
     items.extend(crate::float_type_explanation::contract(src, node));
@@ -1215,6 +1225,7 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (site, content) in crate::inferred_type_placeholder_explanation::generic_arguments(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((keyword, content)) = crate::unsafe_function_pointer_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(keyword), false, content); }
         if let Some((comma, content)) = crate::single_tuple_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(comma), false, content); }
         if let Some((highlight, content)) = crate::float_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(highlight), false, content); }
@@ -4156,6 +4167,12 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        for (site, content) in crate::inferred_type_placeholder_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (span, content) in crate::inferred_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        for (span, content) in crate::static_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        for (site, content) in crate::mutable_reference_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::named_shared_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::never_type_explanation::local(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::dyn_send_bound_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::dyn_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::boxed_dyn_trait_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
