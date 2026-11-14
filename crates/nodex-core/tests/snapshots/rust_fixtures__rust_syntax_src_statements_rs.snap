@@ -29,7 +29,7 @@ Loop.While — while stack.pop() matches Some(top)
   body:
     Assign — add top to total
 Var — found = the value the loop below gives
-Loop.Infinite — repeat forever
+Loop.Infinite — repeat the loop body
   body:
     Loop.ForEach — for each x in items
       body:

@@ -51,7 +51,7 @@ Assign — block = inner + 1
 Var — choice = if a > b then … else …
 Var — matched = match a (2 cases)
 Var — looped = the value the loop below gives
-Loop.Infinite — repeat forever
+Loop.Infinite — repeat the loop body
   body:
     Break — leave the loop with 5 (looped takes it)
 Var — neg = -1

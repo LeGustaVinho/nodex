@@ -1115,7 +1115,7 @@ impl Lowering<'_, '_> {
         let span = src.header_span(e, body);
         let (id, defines) = match e.kind() {
             "loop_expression" => {
-                let spec = NodeSpec::new(Concept::LoopInfinite, "repeat forever", code, span).flavors(flavors);
+                let spec = NodeSpec::new(Concept::LoopInfinite, "repeat the loop body", code, span).flavors(flavors).flavor("rust-loop");
                 (self.place(spec, &cur), Vec::new())
             }
             "while_expression" => {

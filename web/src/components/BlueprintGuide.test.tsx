@@ -319,6 +319,44 @@ it("guides a selected branch and keeps explanations independent of the guide pre
   }
 });
 
+it.each([
+  ["rust", ["rust-loop"], "View loop"],
+  ["rust", [], "View loop condition"],
+  ["csharp", [], "View loop condition"],
+] as const)("uses the enclosing loop label for %s and %j", async (language, flavors, expected) => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const settings = useUi.getState();
+  const loop = { ...step("Repeat the loop body", "Loop.Infinite", [output("body", "Loop body"), output("out", "Completed")]), flavors: [...flavors] };
+  const standby = step("Wait in standby", "Call");
+  const after = step("Use lease", "Call");
+  const example: FlowGraph = {
+    ...flow, language, nodes: [loop, standby, after],
+    edges: [exec(loop.id, "body", standby.id), exec(loop.id, "out", after.id)],
+  };
+  const click = async (label: string) => {
+    const button = [...host.querySelectorAll("button")].find((entry) => entry.textContent === label);
+    expect(button).toBeDefined();
+    await act(async () => button!.click());
+  };
+  function Harness() {
+    const [node, setNode] = useState(loop.id);
+    return <BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode={node} onStep={(_, next) => setNode(next.id)} />;
+  }
+  try {
+    await act(async () => root.render(<Harness />));
+    await click("Loop body");
+    expect(host.textContent).toContain(standby.id);
+    expect(host.textContent).not.toContain("Start the next iteration");
+    await click(expected);
+    await click("Completed");
+    expect(host.textContent).toContain(after.id);
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(settings);
+  }
+});
+
 it("explores a branch inside an expression without advancing to another execution node", () => {
   const host = document.createElement("div");
   const root = createRoot(host);

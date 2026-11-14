@@ -7,7 +7,7 @@ Entry — when block_on(future) is called
 Var — future = Box::pin(future)
 Var — waker = noop_waker()
 Var — cx = Context::from_waker(&waker)
-Loop.Infinite — repeat forever
+Loop.Infinite — repeat the loop body
   body:
     Branch — if future.as_mut().poll(&mut cx) matches Poll::Ready(v)
       true:

@@ -45,13 +45,13 @@ Entry — when show(value) is called
 Return — return format!("{value:?}")
 == crate::modern::never
 Entry — when never() is called
-Loop.Infinite — repeat forever
+Loop.Infinite — repeat the loop body
   body:
     Call — std::thread::park()
 == crate::modern::search
 Entry — when search(grid, target) is called
 Var — found = the value the loop below gives
-Loop.Infinite — repeat forever
+Loop.Infinite — repeat the loop body
   body:
     Loop.ForEach — for each (r, row) in grid → iter() → enumerate()
       body:

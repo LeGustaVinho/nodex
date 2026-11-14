@@ -1103,6 +1103,7 @@ impl Reader<'_, '_> {
             }
             "binary_expression" => self.short_circuit(node),
             "let_chain" => self.let_chain(node),
+            "loop_expression" => self.bare_loop(node),
             "while_expression" => self.while_let(node),
             "closure_expression" => self.closure(node),
             "return_expression" => self.predicate_return(node),
@@ -1609,6 +1610,20 @@ impl Reader<'_, '_> {
                 branch(&format!("Left side is {check}"), format!("Evaluate {}", self.short(right)), "Result of the right side"),
             ],
             None,
+        );
+    }
+
+    fn bare_loop(&mut self, node: Node<'_>) {
+        let Some(body) = node.child_by_field_name("body") else { return };
+        let Some(keyword) = children(node).into_iter().find(|token| token.kind() == "loop" && !token.is_missing()) else { return };
+        self.push(
+            self.src.header_span(node, Some(body)),
+            self.src.span(keyword),
+            false,
+            detail(
+                "Repeat the loop body",
+                "Start the body without checking a condition. If the body reaches its end, start it again. A continue targeting this loop skips the rest of this iteration and goes back to the start. A break targeting this loop ends it, and break with a value supplies the result of the loop expression. A return can leave the enclosing function, closure, or async block before the loop produces a value.",
+            ),
         );
     }
 

@@ -225,7 +225,9 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             })}
             {enclosing && (
               <button onClick={() => visit(flow, enclosing)}>
-                {enclosing.concept.startsWith("Loop.") ? "View loop condition" : "View enclosing block"}
+                {enclosing.concept.startsWith("Loop.")
+                  ? flow.language === "rust" && enclosing.flavors.includes("rust-loop") ? "View loop" : "View loop condition"
+                  : "View enclosing block"}
               </button>
             )}
             {node.outputs.some((p) => p.id === "error" && !choices.some((e) => e.from_pin === p.id)) && (
