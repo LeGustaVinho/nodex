@@ -49,6 +49,18 @@ function continueTarget(flow: FlowGraph, node: FlowNode) {
   }
 }
 
+function normalLoopTarget(flow: FlowGraph, node: FlowNode) {
+  if (node.span.file !== flow.span.file || !node.outputs.some((pin) => pin.kind === "Exec" && pin.id === "out")) return;
+  const repeat = node.flavors.find((flavor) => flavor.startsWith("loop-repeat:"))?.slice("loop-repeat:".length);
+  const cleanup = node.flavors.find((flavor) => flavor.startsWith("loop-cleanup:"))?.slice("loop-cleanup:".length);
+  if (!repeat && !cleanup) return;
+  const target = flow.nodes.find((candidate) => candidate.span.file === flow.span.file && (
+    (candidate.id === repeat && candidate.concept === "Loop.Infinite" && candidate.flavors.includes("rust-loop"))
+    || (candidate.id === cleanup && candidate.flavors.includes("implicit-drop"))
+  ));
+  if (target) return { node: target, action: target.id === cleanup ? "Run loop cleanup" : "Start the next iteration", resumesLoop: target.id === repeat };
+}
+
 function rustBreakResult(node: FlowNode) {
   if (node.concept !== "Break") return;
   const target = node.flavors.includes("break-value-target:block") ? "block"
@@ -136,7 +148,9 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
   const afterBreak = !replaying && currentSource && revision && flow?.language === "rust" && node
     ? sourceAfterBreak(flow, node) : undefined;
   const nextIteration = !replaying && currentSource && continues && flow && node ? continueTarget(flow, node) : undefined;
-  const enclosing = !choices.length && !terminal && flow ? enclosingBlock(flow, visits) : undefined;
+  const normalEnd = !replaying && currentSource && !terminal && !choices.length && flow?.language === "rust" && node
+    ? normalLoopTarget(flow, node) : undefined;
+  const enclosing = !choices.length && !terminal && !normalEnd && flow ? enclosingBlock(flow, visits) : undefined;
 
   const visit = (nextFlow: FlowGraph, target: FlowNode, transition?: Pick<Visit, "via" | "resumesLoop">) => {
     const trail = visits.length ? visits : flow && node ? [{ flow: flow.symbol, node: node.id }] : [];
@@ -240,7 +254,11 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             {continues ? <span>Skip the rest of this iteration</span> : terminal && !breakResult && !afterBreak && <span>End of this path</span>}
             {afterBreak && <button type="button" onClick={() => focusCode(afterBreak, revision)}>Show code after the loop</button>}
             {nextIteration && <button type="button" onClick={() => visit(flow, nextIteration.node, { resumesLoop: true })}>{nextIteration.action}</button>}
-            {(!terminal || breakResult || afterBreak) && !choices.length && !enclosing && <span>End of the mapped path</span>}
+            {normalEnd && <>
+              <span>If this step finishes normally</span>
+              <button type="button" onClick={() => visit(flow, normalEnd.node, normalEnd.resumesLoop ? { resumesLoop: true } : undefined)}>{normalEnd.action}</button>
+            </>}
+            {(!terminal || breakResult || afterBreak) && !choices.length && !enclosing && !normalEnd && <span>End of the mapped path</span>}
           </div>
         </>
       )}

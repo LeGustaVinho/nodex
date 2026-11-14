@@ -2,11 +2,12 @@ use nodex_ir::{Concept, FlowEdgeKind, ValueBasis, reading::ReadingContent};
 use nodex_lang_rust::lower_source;
 
 #[test]
-fn loop_header_explains_claim_retry_without_adding_a_retry_edge() {
+fn loop_header_explains_claim_retry_without_adding_an_execution_edge() {
     let source = r#"
 enum ClaimError { Held, Other }
 
 async fn claim(standby: bool) -> Result<u64, ClaimError> {
+    let owner = format!("claim");
     let lease = 'claim: loop {
         match store_claim().await {
             Ok(lease) => break 'claim lease,
@@ -52,6 +53,8 @@ fn while_control() {
     assert!(exec(&decision.id, "case:2", &failure.id));
     assert!(exec(&loop_node.id, "out", &after.id));
     assert!(!flow.edges.iter().any(|edge| edge.kind == FlowEdgeKind::Exec && edge.from == standby.id));
+    assert!(standby.flavors.contains(&format!("loop-repeat:{}", loop_node.id)));
+    assert!(!success.flavors.iter().chain(&failure.flavors).any(|flavor| flavor.starts_with("loop-repeat:")));
 
     let control = ir.flows.iter().find(|flow| flow.name == "while_control").unwrap();
     let while_node = control.nodes.iter().find(|node| node.concept == Concept::LoopInfinite).unwrap();
@@ -59,4 +62,139 @@ fn while_control() {
     assert!(!while_node.flavors.iter().any(|flavor| flavor == "rust-loop"));
     assert!(!control.reading.iter().flatten().any(|site| matches!(&site.content,
         ReadingContent::Detail { label, .. } if label == "Repeat the loop body")));
+}
+
+#[test]
+fn loop_retry_follows_normal_completion_and_preserves_cleanup() {
+    let source = r#"
+struct Tracked;
+impl Drop for Tracked {
+    fn drop(&mut self) { log("drop"); }
+}
+
+async fn commit(mut wait: u64) -> bool {
+    loop {
+        match flush().await {
+            Ok(()) => return true,
+            Err(Error::Fenced) => return false,
+            Err(error) => {
+                eprintln!("retry: {error}");
+                sleep(wait).await;
+                wait = (wait * 2).min(100);
+            }
+        }
+    }
+}
+
+fn cleanup(flag: bool) {
+    loop {
+        let _iteration: Tracked = Tracked;
+        match flag {
+            true => {
+                let _branch: Tracked = Tracked;
+                work();
+            }
+            false => return,
+        }
+    }
+}
+
+fn later(flag: bool) {
+    loop {
+        match flag {
+            true => work(),
+            false => break,
+        }
+        later_work();
+    }
+}
+
+fn dead_join(flag: bool) {
+    loop {
+        match flag {
+            true => { return; dead_one(); dead_two(); }
+            false => { break; dead_one(); dead_two(); }
+        }
+        dead_three();
+    }
+}
+
+fn dead_loop() {
+    return;
+    loop { dead(); }
+}
+
+fn inner_loop() {
+    loop { loop {} }
+}
+
+fn hidden_return() {
+    loop { let _ = return; }
+}
+
+fn unsafe_return() {
+    loop { unsafe { return; } }
+}
+
+fn hidden_block() {
+    loop { let _ = { return; }; }
+}
+
+fn diverging_guard(flag: bool) {
+    loop { match flag { _ if { return; } => work(), _ => work() } }
+}
+
+fn dead_branch() {
+    loop { if false { work(); } else { return; } }
+}
+
+fn deferred_async_value() {
+    loop { let _future = async { return; }; }
+}
+
+"#;
+    let ir = lower_source("src/lib.rs", source);
+    let find = |name| ir.flows.iter().find(|flow| flow.name == name).unwrap();
+    let commit = find("commit");
+    let header = commit.nodes.iter().find(|node| node.concept == Concept::LoopInfinite).unwrap();
+    let backoff = commit.nodes.iter().find(|node| node.code.starts_with("wait =")).unwrap();
+    assert!(backoff.flavors.contains(&format!("loop-repeat:{}", header.id)));
+    assert!(commit.nodes.iter().filter(|node| node.concept == Concept::Return)
+        .all(|node| !node.flavors.iter().any(|flavor| flavor.starts_with("loop-repeat:"))));
+
+    let cleanup = find("cleanup");
+    let header = cleanup.nodes.iter().find(|node| node.concept == Concept::LoopInfinite).unwrap();
+    let body_drop = cleanup.nodes.iter().find(|node| node.code == "} // drop(_iteration)"
+        && node.flavors.contains(&format!("loop-repeat:{}", header.id))).unwrap();
+    let branch_drop = cleanup.nodes.iter().find(|node| node.code == "} // drop(_branch)").unwrap();
+    assert!(branch_drop.flavors.contains(&format!("loop-cleanup:{}", body_drop.id)));
+    assert!(!cleanup.nodes.iter().find(|node| node.code.starts_with("work()")).unwrap()
+        .flavors.iter().any(|flavor| flavor.starts_with("loop-")));
+
+    let later = find("later");
+    let repeats: Vec<_> = later.nodes.iter().filter(|node| node.flavors.iter().any(|flavor| flavor.starts_with("loop-repeat:"))).collect();
+    assert_eq!(repeats.len(), 1);
+    assert!(repeats[0].code.starts_with("later_work()"));
+    assert!(find("deferred_async_value").nodes.iter().any(|node| node.flavors.iter().any(|flavor| flavor.starts_with("loop-repeat:"))));
+    for name in ["dead_join", "dead_loop", "inner_loop", "hidden_return", "unsafe_return", "hidden_block", "diverging_guard", "dead_branch"] {
+        assert!(find(name).nodes.iter().all(|node| !node.flavors.iter().any(|flavor|
+            flavor.starts_with("loop-repeat:") || flavor.starts_with("loop-cleanup:"))), "{name}");
+    }
+}
+
+#[test]
+fn loop_retry_omits_opaque_macro_endpoints() {
+    let source = r#"
+macro_rules! escape { () => { return } }
+macro_rules! eprintln { ($($tt:tt)*) => { return } }
+fn macro_initializer() {
+    loop { let _ = escape!(); }
+}
+fn macro_shadow() {
+    loop { eprintln!("escape"); }
+}
+"#;
+    let ir = lower_source("src/lib.rs", source);
+    assert!(ir.flows.iter().flat_map(|flow| &flow.nodes).all(|node| !node.flavors.iter().any(|flavor|
+        flavor.starts_with("loop-repeat:") || flavor.starts_with("loop-cleanup:"))));
 }

@@ -357,6 +357,51 @@ it.each([
   }
 });
 
+it("follows a proven normal loop ending through cleanup and keeps Back available", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const header = { ...step("Repeat", "Loop.Infinite", [output("body", "Loop body")]), flavors: ["rust-loop"] };
+  const standby = { ...step("Wait in standby", "Await", [output("out", "")]), flavors: ["loop-cleanup:Release guard"] };
+  const cleanup = { ...step("Release guard", "Call", [output("out", "")]), flavors: ["implicit-drop", "loop-repeat:Repeat"] };
+  const stop = { ...step("Return", "Return"), flavors: ["loop-repeat:Repeat"] };
+  const example: FlowGraph = {
+    ...flow, source_revision: "current",
+    nodes: [header, standby, cleanup, stop],
+    edges: [exec(header.id, "body", standby.id)],
+  };
+  const find = (label: string) => [...host.querySelectorAll("button")].find((entry) => entry.textContent === label);
+  const click = async (label: string) => {
+    const button = find(label);
+    expect(button, label).toBeDefined();
+    await act(async () => button!.click());
+  };
+  function Harness({ revision = "current", replaying = false, initial = standby.id }: { revision?: string; replaying?: boolean; initial?: string }) {
+    const [node, setNode] = useState(initial);
+    return <BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode={node} replaying={replaying}
+      sources={{ [span.file]: { bytes: new Uint8Array(30), revision } }} onStep={(_, next) => setNode(next.id)} />;
+  }
+  try {
+    await act(async () => root.render(<Harness />));
+    expect(find("Start the next iteration")).toBeUndefined();
+    await click("Run loop cleanup");
+    await click("Start the next iteration");
+    expect(find("Loop body")).toBeDefined();
+    await click("Back");
+    expect(find("Start the next iteration")).toBeDefined();
+    await click("Back");
+    expect(find("Run loop cleanup")).toBeDefined();
+
+    await act(async () => root.render(<Harness revision="edited" />));
+    expect(find("Run loop cleanup")).toBeUndefined();
+    await act(async () => root.render(<Harness replaying />));
+    expect(find("Run loop cleanup")).toBeUndefined();
+    await act(async () => root.render(<Harness key="return" initial={stop.id} />));
+    expect(find("Start the next iteration")).toBeUndefined();
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
 it("explores a branch inside an expression without advancing to another execution node", () => {
   const host = document.createElement("div");
   const root = createRoot(host);

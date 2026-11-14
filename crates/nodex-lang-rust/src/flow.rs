@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use icu_normalizer::ComposingNormalizer;
-use nodex_ir::{Access, BindingForm, CallTarget, Concept, FlowEdgeKind, FlowGraph, Focus, Language, SymbolId, TypeRef, TypeRelation};
+use nodex_ir::{Access, BindingForm, CallTarget, Concept, Expr, FlowEdgeKind, FlowGraph, FlowNode, Focus, Language, SymbolId, TypeRef, TypeRelation};
 use nodex_lang_api::kit::{ExecCursor, FlowBuilder, NodeSpec, callback_entry_label, truncate};
 use tree_sitter::Node;
 
@@ -40,6 +40,9 @@ struct Lowering<'a, 'f> {
     drop_types: &'f HashMap<String, SymbolId>,
     /// Lexically enclosing loops and labeled blocks, innermost last.
     break_scopes: Vec<BreakScope>,
+    normal_joins: HashMap<String, Vec<ExecCursor>>,
+    loop_body_ends: Vec<(String, ExecCursor)>,
+    guarded_matches_with_exits: HashSet<String>,
     propagation_label: &'static str,
 }
 
@@ -179,6 +182,9 @@ pub fn lower_body(
         drops: Vec::new(),
         drop_types,
         break_scopes: Vec::new(),
+        normal_joins: HashMap::new(),
+        loop_body_ends: Vec::new(),
+        guarded_matches_with_exits: HashSet::new(),
         propagation_label,
     };
     let params: Vec<&str> = job.params.iter().map(|(n, _)| n.as_str()).collect();
@@ -256,8 +262,185 @@ pub fn lower_body(
         .map(|n| TypeRef { from: job.symbol.clone(), name: n.clone(), relation: TypeRelation::Instantiates })
         .collect();
     let mut graph = l.b.finish(job.name.clone(), Language::Rust, src.span(job.decl));
+    mark_loop_repetitions(&mut graph, &l.normal_joins, &l.loop_body_ends, &l.guarded_matches_with_exits, &entry);
     classify_value_access(&mut graph, copy_types, drop_types);
     Lowered { graph, type_refs }
+}
+
+/// Joins and loop completions are retained for the Guide without adding execution edges.
+fn mark_loop_repetitions(
+    graph: &mut FlowGraph,
+    joins: &HashMap<String, Vec<ExecCursor>>,
+    loops: &[(String, ExecCursor)],
+    guarded_matches_with_exits: &HashSet<String>,
+    entry: &str,
+) {
+    if loops.is_empty() {
+        return;
+    }
+    let proof = NormalPaths::new(graph, joins, guarded_matches_with_exits);
+    let mut marks = Vec::new();
+    let loop_entry = (entry.to_owned(), "out".to_owned());
+    for (header, end) in loops {
+        let body_entry = (header.clone(), "body".to_owned());
+        if !proof.reaches(&body_entry, &loop_entry) {
+            continue;
+        }
+        for end in proof.concrete_ends(end) {
+            if !proof.is_action(&end) || !proof.reaches(&end, &body_entry) {
+                continue;
+            }
+            let mut start_cleanup = None;
+            let mut cursor = end.clone();
+            while cursor.1 == "out" && proof.nodes.get(cursor.0.as_str())
+                .is_some_and(|node| node.flavors.iter().any(|flavor| flavor == "implicit-drop"))
+                && let Some(predecessor) = proof.predecessors.get(cursor.0.as_str()).and_then(Option::as_ref)
+            {
+                start_cleanup = Some(cursor.0);
+                cursor = predecessor.clone();
+            }
+            if let Some(cleanup) = start_cleanup && cursor.1 == "out" && joins.contains_key(&cursor.0) {
+                for arm in proof.concrete_ends(&cursor) {
+                    if proof.is_action(&arm) && proof.reaches(&arm, &body_entry) {
+                        marks.push((arm.0, format!("loop-cleanup:{cleanup}")));
+                    }
+                }
+            }
+            marks.push((end.0, format!("loop-repeat:{header}")));
+        }
+    }
+    let mut marks_by_node: HashMap<_, Vec<_>> = HashMap::new();
+    for (node, flavor) in marks {
+        marks_by_node.entry(node).or_default().push(flavor);
+    }
+    for node in &mut graph.nodes {
+        if let Some(flavors) = marks_by_node.remove(&node.id) {
+            let mut unique = flavors.into_iter().collect::<HashSet<_>>();
+            if unique.len() == 1 {
+                node.flavors.extend(unique.drain());
+            }
+        }
+    }
+}
+
+struct NormalPaths<'a> {
+    nodes: HashMap<&'a str, &'a FlowNode>,
+    predecessors: HashMap<&'a str, Option<ExecCursor>>,
+    successors: HashSet<ExecCursor>,
+    joins: &'a HashMap<String, Vec<ExecCursor>>,
+    guarded_matches_with_exits: &'a HashSet<String>,
+}
+
+impl<'a> NormalPaths<'a> {
+    fn new(graph: &'a FlowGraph, joins: &'a HashMap<String, Vec<ExecCursor>>, guarded_matches_with_exits: &'a HashSet<String>) -> Self {
+        let mut predecessors = HashMap::new();
+        let mut successors = HashSet::new();
+        for edge in graph.edges.iter().filter(|edge| edge.kind == FlowEdgeKind::Exec) {
+            let from = (edge.from.clone(), edge.from_pin.clone());
+            predecessors.entry(edge.to.as_str()).and_modify(|previous| *previous = None).or_insert(Some(from.clone()));
+            successors.insert(from);
+        }
+        Self { nodes: graph.nodes.iter().map(|node| (node.id.as_str(), node)).collect(), predecessors, successors, joins,
+            guarded_matches_with_exits }
+    }
+
+    fn concrete_ends(&self, end: &ExecCursor) -> Vec<ExecCursor> {
+        let mut pending = vec![end];
+        let mut ends = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(cursor) = pending.pop() {
+            if !seen.insert(cursor) {
+                continue;
+            }
+            if cursor.1 == "out" && let Some(arms) = self.joins.get(&cursor.0) {
+                pending.extend(arms);
+            } else {
+                ends.push(cursor.clone());
+            }
+        }
+        ends
+    }
+
+    fn is_action(&self, cursor: &ExecCursor) -> bool {
+        cursor.1 == "out" && !self.successors.contains(cursor)
+            && self.nodes.get(cursor.0.as_str()).is_some_and(|node| {
+                node.outputs.iter().any(|pin| pin.kind == nodex_ir::PinKind::Exec && pin.id == "out")
+                    && !node.outputs.iter().any(|pin| pin.kind == nodex_ir::PinKind::Exec && !matches!(pin.id.as_str(), "out" | "error"))
+                    && !node.flavors.iter().any(|flavor| flavor == "macro")
+                    && !node.expr.as_ref().is_some_and(has_opaque_macro)
+            })
+    }
+
+    fn reaches(&self, from: &ExecCursor, target: &ExecCursor) -> bool {
+        let mut pending = vec![from];
+        let mut seen = HashSet::new();
+        while let Some(cursor) = pending.pop() {
+            if cursor == target {
+                return true;
+            }
+            if !seen.insert(cursor) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(cursor.0.as_str()) else { continue };
+            if node.concept.is_terminal()
+                || node.flavors.iter().any(|flavor| matches!(flavor.as_str(), "unreachable" | "return-value"))
+                || self.guarded_matches_with_exits.contains(&node.id)
+                || node.expr.as_ref().is_some_and(has_hidden_exit)
+            {
+                continue;
+            }
+            if matches!(cursor.1.as_str(), "true" | "false") && node.concept == Concept::Branch
+                && let Some(condition) = node.expr.as_ref().filter(|expr| expr.concept == Concept::Literal)
+                && matches!(condition.label.as_str(), "true" | "false") && condition.label != cursor.1
+            {
+                continue;
+            }
+            if cursor.1 == "out" {
+                if let Some(arms) = self.joins.get(&cursor.0) {
+                    pending.extend(arms);
+                    continue;
+                }
+                if matches!(node.concept, Concept::LoopInfinite | Concept::LoopWhile | Concept::LoopForEach
+                    | Concept::Scope | Concept::Opaque)
+                {
+                    continue;
+                }
+            }
+            if let Some(Some(predecessor)) = self.predecessors.get(cursor.0.as_str()) {
+                pending.push(predecessor);
+            }
+        }
+        false
+    }
+
+}
+
+fn deferred_expression(expr: &Expr) -> bool {
+    expr.concept == Concept::Lambda || expr.flavors.iter().any(|flavor| flavor == "async")
+}
+
+fn has_hidden_exit(expr: &Expr) -> bool {
+    !deferred_expression(expr) && (expr.concept.is_terminal()
+        || expr.flavors.iter().any(|flavor| matches!(flavor.as_str(), "loop-value" | "block"))
+        || expr.children.iter().any(has_hidden_exit))
+}
+
+fn has_opaque_macro(expr: &Expr) -> bool {
+    !deferred_expression(expr) && (expr.flavors.iter().any(|flavor| flavor == "macro")
+        || expr.children.iter().any(has_opaque_macro))
+}
+
+fn guard_has_hidden_exit(guard: Node<'_>) -> bool {
+    let mut pending = vec![guard];
+    while let Some(node) = pending.pop() {
+        match node.kind() {
+            "return_expression" | "break_expression" | "continue_expression" | "loop_expression"
+            | "macro_invocation" => return true,
+            "closure_expression" | "async_block" | "gen_block" | "const_block" => continue,
+            _ => pending.extend(named_children(node)),
+        }
+    }
+    false
 }
 
 /// A move of a `Copy` value is a copy.
@@ -1007,6 +1190,7 @@ impl Lowering<'_, '_> {
         if alt.is_some() && t_end.is_none() && f_end.is_none() {
             return None;
         }
+        self.normal_joins.insert(id.clone(), t_end.into_iter().chain(f_end).collect());
         Some(self.b.exec_out(&id, "out", "Then"))
     }
 
@@ -1023,7 +1207,8 @@ impl Lowering<'_, '_> {
         self.read_all(&id, value);
         self.propagate(&id, value);
         let arms: Vec<Node> = body.map(|b| named_children(b).into_iter().filter(|a| a.kind() == "match_arm").collect()).unwrap_or_default();
-        let mut any_continues = arms.is_empty();
+        let mut ends = Vec::new();
+        let empty = arms.is_empty();
         for (i, arm) in arms.iter().enumerate() {
             let pattern = arm.child_by_field_name("pattern");
             let pin_label = truncate(&pattern.map(|p| src.norm(p)).unwrap_or_default(), 40);
@@ -1049,6 +1234,9 @@ impl Lowering<'_, '_> {
                         self.b.add_flavor_at(index, &format!("match-guard:{i}"));
                     }
                     self.read_all(&id, Some(g));
+                    if guard_has_hidden_exit(g) {
+                        self.guarded_matches_with_exits.insert(id.clone());
+                    }
                 }
             }
             let end = match arm.child_by_field_name("value") {
@@ -1058,11 +1246,12 @@ impl Lowering<'_, '_> {
                 None => Some(pin),
             };
             self.b.pop_scope();
-            any_continues |= end.is_some();
+            ends.extend(end);
         }
-        if !any_continues {
+        if ends.is_empty() && !empty {
             return None;
         }
+        self.normal_joins.insert(id.clone(), ends);
         Some(self.b.exec_out(&id, "out", "Then"))
     }
 
@@ -1179,8 +1368,11 @@ impl Lowering<'_, '_> {
                 kind,
                 tail: tail.clone(),
             });
-            self.block(body, Some(b), &Tail::No);
+            let end = self.block(body, Some(b), &Tail::No);
             self.break_scopes.pop();
+            if e.kind() == "loop_expression" && let Some(end) = end {
+                self.loop_body_ends.push((id.clone(), end));
+            }
         }
         self.b.pop_scope();
         Some(self.b.exec_out(&id, "out", "Completed"))
