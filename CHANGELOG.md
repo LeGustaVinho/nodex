@@ -12,6 +12,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints show how slice sorting calls a comparator or extracts keys, updates the original collection, and handles ties.
 - Rust Blueprints show when a Tokio broadcast subscription starts receiving messages and what a successful send counts.
 - Rust Blueprints explain when a Tokio broadcast receive gets a message, falls behind, or finds the channel closed, including inside `select!`.
 - Rust Blueprints explain which elements move when a vector removes an item and why `dedup` only removes adjacent duplicates.

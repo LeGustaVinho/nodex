@@ -1956,6 +1956,7 @@ impl Reader<'_, '_> {
                 self.get(node)
             }
             Family::Slice if name == "get_disjoint_mut" => self.disjoint_mut(node),
+            Family::Slice if matches!(name.as_str(), "sort_by" | "sort_by_key" | "sort_unstable_by") => self.sort_slice(node, &name),
             Family::Slice if name == "select_nth_unstable_by" => self.select_nth_unstable_by(node),
             Family::Map if matches!(name.as_str(), "or_default" | "or_insert" | "or_insert_with") => self.map_entry(node, &name),
             Family::Slice if name == "split_at_mut" => {
@@ -2093,6 +2094,41 @@ impl Reader<'_, '_> {
         let input = format!("{goal}. {timing} Tokio checks the wrapped future first, so a ready result wins even at an expired deadline. While waiting, the task can suspend. The timeout cannot interrupt work during a poll, and work started elsewhere may continue.");
         branches.push(branch("Deadline elapsed", "If the future is still pending when Tokio observes the expired timer, stop waiting.", "Err(Elapsed)"));
         self.paths(wait, self.src.span(call), true, input, branches, None);
+    }
+
+    fn sort_slice(&mut self, node: Node<'_>, name: &str) {
+        let Some((slice, receiver_argument)) = receiver(node) else { return };
+        let Some(compare) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let Some(member) = call_member(node) else { return };
+        let (label, compare_action, equal, order_requirement) = if name == "sort_by_key" {
+            (
+                "Sort the original slice by keys",
+                "Call this function with a shared reference to an element and use its returned key to order the elements. The sort may call it more than once for the same element.",
+                "Elements with equal keys keep their original relative order.",
+                "The keys must define a consistent total order.",
+            )
+        } else {
+            let equal = if name == "sort_by" {
+                "Elements that compare Equal keep their original relative order."
+            } else {
+                "Elements that compare Equal may change their relative order."
+            };
+            (
+                "Sort the original slice with a comparison function",
+                "Call this comparison function with shared references to two elements. Less places the first before the second. Greater places it after the second. Equal ties them.",
+                equal,
+                "The comparison must define a consistent total order.",
+            )
+        };
+        let steps = vec![
+            self.step(compare, "During the sort", compare_action),
+            self.step(slice, "Reorder the elements", format!("Reorder the original slice. {equal} {order_requirement} An inconsistent order may cause a panic or leave the resulting order unspecified.")),
+            self.step(member, "On normal completion", "Return (). The caller can read the new order from the original collection."),
+        ];
+        self.push(self.src.span(node), self.src.span(member), true, ReadingContent::Steps {
+            label: label.into(),
+            steps,
+        });
     }
 
     fn disjoint_mut(&mut self, node: Node<'_>) {
@@ -3696,6 +3732,7 @@ impl Reader<'_, '_> {
         if !async_ {
             self.fold_callback_entry(node, parameters);
             self.ordering_callback_entry(node, parameters);
+            self.sort_callback_entry(node, parameters);
         }
         if !async_ && moves {
             self.closure_result_borrow(node);
@@ -3756,6 +3793,24 @@ impl Reader<'_, '_> {
             span: self.src.span(parameters),
             basis: ValueBasis::TypeAnalysis,
             content: detail(label, text),
+            expression_target: Some(Concept::Entry),
+        });
+    }
+
+    fn sort_callback_entry(&mut self, closure: Node<'_>, parameters: Node<'_>) {
+        let Some(call) = direct_argument_call(closure) else { return };
+        if !self.op(call).is_some_and(|op| op.family == Family::Slice && matches!(op.name.as_str(), "sort_by" | "sort_unstable_by")) {
+            return;
+        }
+        let Some((_, receiver_argument)) = receiver(call) else { return };
+        if argument(call, usize::from(receiver_argument.is_some())) != Some(closure) {
+            return;
+        }
+        self.readings.push(ReadingFact {
+            anchor: self.src.header_span(closure, closure.child_by_field_name("body")),
+            span: self.src.span(parameters),
+            basis: ValueBasis::TypeAnalysis,
+            content: detail("Compare two elements during sorting", "The sort supplies shared references to two elements. Return Less to place the first before the second, Greater to place it after the second, or Equal to tie them."),
             expression_target: Some(Concept::Entry),
         });
     }

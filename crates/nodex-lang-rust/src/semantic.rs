@@ -392,8 +392,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
         {
             return Some((Family::Ordering, name.into()));
         }
-        if sym.package == "core"
-            && let Some(method) = descriptor.strip_prefix("slice/impl#[`[T]`]").and_then(|name| name.strip_suffix("()."))
+        if let Some(method) = descriptor.strip_prefix("slice/impl#[`[T]`]").and_then(|name| name.strip_suffix("()."))
+            && (sym.package == "core" || sym.package == "alloc" && matches!(method, "sort_by" | "sort_by_key"))
         {
             let family = if matches!(method, "iter" | "iter_mut") { Family::Iter } else { Family::Slice };
             return Some((family, method.into()));
