@@ -1243,6 +1243,11 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((label, content)) = crate::loop_label_explanation::explain(self.src, node) { let anchor = node.child_by_field_name("body").map_or_else(|| self.src.span(node), |body| self.src.header_span(node, Some(body))); self.push(anchor, self.src.span(label), false, content); }
+        if let Some((label, content)) = crate::labeled_break_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(label), false, content); }
+        if let Some((site, content)) = crate::for_iteration_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::while_let_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::if_let_chain_explanation::explain(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::if_else_value_explanation::explain(self.src, node) { self.push(self.src.span(site), self.src.span(site), false, content); }
         if let Some((statement, site, content)) = crate::semicolon_block_result_explanation::explain(self.src, node) { self.push(self.src.span(statement), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::mutable_pattern_binding_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -1316,7 +1321,10 @@ impl Reader<'_, '_> {
             }
             "binary_expression" => self.short_circuit(node),
             "let_chain" => self.let_chain(node),
-            "loop_expression" => self.bare_loop(node),
+            "loop_expression" => {
+                self.bare_loop(node);
+                if let Some((site, content)) = crate::loop_binding_result_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
+            }
             "while_expression" => self.while_let(node),
             "closure_expression" => self.closure(node),
             "return_expression" => self.predicate_return(node),
@@ -1842,7 +1850,7 @@ impl Reader<'_, '_> {
             false,
             detail(
                 "Repeat the loop body",
-                "Start the body without checking a condition. If the body reaches its end, start it again. A continue targeting this loop skips the rest of this iteration and goes back to the start. A break targeting this loop ends it, and break with a value supplies the result of the loop expression. A return can leave the enclosing function, closure, or async block before the loop produces a value.",
+                "Start the body without checking a condition. If the body reaches its end, start it again. A continue targeting this loop skips the rest of this iteration and goes back to the start. A break targeting this loop ends it, and break with a value supplies the result of the loop expression. A break without a value supplies () (unit). A loop with no break targeting it has the never type !; it can still exit the enclosing function by return or terminate abnormally. A return can leave the enclosing function, closure, or async block before the loop produces a value.",
             ),
         );
     }
@@ -4209,6 +4217,7 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::for_tuple_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((anchor, site, content)) = crate::let_block_value_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::value_binding_transfer_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::qualified_assoc_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
