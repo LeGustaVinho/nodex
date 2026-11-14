@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints show how `Mutex::into_inner`, `Arc::try_unwrap`, and `OnceLock::into_inner` return the values they hold.
 - Rust Blueprints explain when a `loop` repeats and how `break` can supply the value of the loop expression.
 - Rust Blueprints explain when a future added to `FuturesOrdered` starts to make progress and why its result may wait behind earlier entries.
 - Rust Blueprints show how `get_disjoint_mut` checks indices and ranges before lending several parts of a slice for editing.

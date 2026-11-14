@@ -387,13 +387,15 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
         if sym.package == "std" && matches!(descriptor,
             "sync/once_lock/impl#[`OnceLock<T>`]take()."
             | "sync/once_lock/impl#[`OnceLock<T>`]get_mut()."
-            | "sync/once_lock/impl#[`OnceLock<T>`]get_or_init().")
+            | "sync/once_lock/impl#[`OnceLock<T>`]get_or_init()."
+            | "sync/once_lock/impl#[`OnceLock<T>`]into_inner().")
         {
             Family::OnceLock
         } else if sym.package == "core" && matches!(descriptor, "bool/impl#[bool]then()." | "bool/impl#[bool]then_some().") {
             Family::Bool
         } else if sym.package == "alloc" && (matches!(descriptor,
-            "sync/impl#[`Arc<T, A>`]make_mut()." | "sync/impl#[`Arc<T, A>`]unwrap_or_clone().")
+            "sync/impl#[`Arc<T, A>`]make_mut()." | "sync/impl#[`Arc<T, A>`]unwrap_or_clone()."
+            | "sync/impl#[`Arc<T, A>`]try_unwrap().")
             || descriptor.starts_with("sync/impl#[`Arc<") && name == "clone")
         {
             Family::Arc
@@ -437,6 +439,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
             && (name == "spawn" || name == "join" && path.contains("::JoinHandle::"))
         {
             Family::Thread
+        } else if sym.package == "std" && descriptor == "sync/poison/mutex/impl#[`Mutex<T>`]into_inner()." {
+            return Some((Family::Lock, "mutex_into_inner".into()));
         } else if sym.package == "std" && descriptor.starts_with("sync/")
             && (path.contains("::Mutex::") || path.contains("::RwLock::"))
         {

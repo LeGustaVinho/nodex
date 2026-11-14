@@ -687,6 +687,15 @@ fn reference_access(ty: &str) -> Access {
     }
 }
 
+fn call_member(call: Node<'_>) -> Option<Node<'_>> {
+    if let Some((_, member)) = method_call(call) {
+        return Some(member);
+    }
+    let callee = call.child_by_field_name("function")?;
+    let callee = if callee.kind() == "generic_function" { callee.child_by_field_name("function")? } else { callee };
+    Some(callee.child_by_field_name("name").unwrap_or(callee))
+}
+
 /// The logical receiver and arguments of a method, in either call syntax.
 fn receiver(call: Node<'_>) -> Option<(Node<'_>, Option<usize>)> {
     method_call(call)
@@ -1893,6 +1902,8 @@ impl Reader<'_, '_> {
             Family::Bool => self.bool_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::Arc if matches!(name.as_str(), "make_mut" | "unwrap_or_clone") => self.arc_value(node, &name),
+            Family::Arc if name == "try_unwrap" => self.arc_try_unwrap(node),
+            Family::Lock if name == "mutex_into_inner" => self.mutex_into_inner(node),
             Family::Peekable => self.peekable(node, &name),
             Family::Iter if name == "zip" => self.iterator_zip(node),
             Family::Iter if name == "fold" => self.iterator_fold(node),
@@ -2021,6 +2032,24 @@ impl Reader<'_, '_> {
             )
         };
         self.paths(node, self.src.span(node), true, input, branches, self.known_type(node));
+    }
+
+    fn arc_try_unwrap(&mut self, node: Node<'_>) {
+        let Some(pointer) = argument(node, 0) else { return };
+        self.paths(node, self.src.span(call_member(node).unwrap_or(node)), true,
+            format!("Take ownership of the Arc at {} and try to extract its value.", self.written(pointer, 120)), vec![
+                branch("This Arc is the only strong owner", "Move the value out without cloning. Weak references may still exist, but can no longer be upgraded.", "Ok(value)"),
+                branch("Another strong owner exists during the attempt", "Return the input Arc so it can still be used.", "Err(original Arc)"),
+            ], self.known_type(node));
+    }
+
+    fn mutex_into_inner(&mut self, node: Node<'_>) {
+        let Some((receiver, _)) = receiver(node) else { return };
+        self.paths(node, self.src.span(call_member(node).unwrap_or(node)), true,
+            format!("Consume {} and extract the protected value without acquiring the lock.", self.written(receiver, 120)), vec![
+                branch("The mutex is not poisoned", "Move the protected value to the caller.", "Ok(value)"),
+                branch("The mutex is poisoned", "Return the protected value inside PoisonError. Calling into_inner() on that error recovers the value.", "Err(PoisonError containing the value)"),
+            ], self.known_type(node));
     }
 
     fn arc_value(&mut self, node: Node<'_>, name: &str) {
@@ -2341,10 +2370,7 @@ impl Reader<'_, '_> {
 
     fn once_lock_call(&mut self, node: Node<'_>, name: &str) {
         let Some((receiver, _)) = receiver(node) else { return };
-        let member = method_call(node).map(|(_, member)| member).or_else(|| {
-            let callee = node.child_by_field_name("function")?;
-            callee.child_by_field_name("name")
-        }).unwrap_or(node);
+        let member = call_member(node).unwrap_or(node);
         let receiver = self.short(receiver);
         let (input, branches) = match name {
             "take" => {
@@ -2362,6 +2388,10 @@ impl Reader<'_, '_> {
                     branch("Uninitialized", "Leave the cell uninitialized.", output("None")),
                 ])
             }
+            "into_inner" => (format!("Consume the cell {receiver} and take any stored value."), vec![
+                branch("Initialized", "Move the stored value out of the cell.", "Some(value)"),
+                branch("Uninitialized", "The cell contains no value to move out.", "None"),
+            ]),
             "get_mut" => (format!("Try to borrow the contents of {receiver} for writing"), vec![
                 branch("Initialized", "Borrow the stored value mutably so the caller can change it.", "Some(mutable reference)"),
                 branch("Uninitialized", "Leave the cell empty.", "None"),
