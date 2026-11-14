@@ -83,6 +83,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::str_type_explanation::contract(src, node));
     items.extend(crate::unit_type_explanation::contract(src, node));
     items.extend(crate::unsigned_integer_type_explanation::explain(src, node));
+    items.extend(crate::tuple_type_explanation::contract(src, node));
+    items.extend(crate::array_type_explanation::contract(src, node));
+    items.extend(crate::single_tuple_type_explanation::contract(src, node));
+    items.extend(crate::slice_type_explanation::contract(src, node));
+    items.extend(crate::shared_reference_type_explanation::contract(src, node));
+    items.extend(crate::shared_slice_reference_explanation::contract(src, node));
+    items.extend(crate::mutable_reference_type_explanation::contract(src, node));
+    items.extend(crate::mutable_slice_reference_explanation::contract(src, node));
+    items.extend(crate::raw_const_pointer_explanation::contract(src, node));
+    items.extend(crate::raw_mut_pointer_explanation::contract(src, node));
     items.extend(crate::integer_128_explanation::explain(src, node));
     items.extend(crate::signed_integer_explanation::explain(src, node));
     items.extend(crate::float_type_explanation::contract(src, node));
@@ -1195,6 +1205,7 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((comma, content)) = crate::single_tuple_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(comma), false, content); }
         if let Some((highlight, content)) = crate::float_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(highlight), false, content); }
         for (ty, content) in crate::char_type_explanation::local(self.src, node) {
             let span = if node.child_by_field_name("type") == Some(ty) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(ty), |part| self.src.span(part)) } else { self.src.span(ty) };
@@ -4134,6 +4145,21 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        for (site, content) in crate::raw_mut_pointer_explanation::local(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::raw_const_pointer_explanation::local(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::shared_slice_reference_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::mutable_reference_type_explanation::local(node) {
+            let span = site.parent().and_then(|parent| children(parent).into_iter().find(|part| part.kind() == "&")).map_or_else(|| self.src.span(site), |part| self.src.span(part));
+            self.push(self.src.span(node), span, false, content);
+        }
+        for (site, content) in crate::mutable_slice_reference_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::slice_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::shared_reference_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (highlight, content) in crate::array_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(highlight), false, content); }
+        for (ty, content) in crate::tuple_type_explanation::local(self.src, node) {
+            let span = if node.child_by_field_name("type") == Some(ty) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(ty), |part| self.src.span(part)) } else { self.src.span(ty) };
+            self.push(self.src.span(node), span, false, content);
+        }
         for (span, content) in crate::integer_128_explanation::local(self.src, node) { self.push(self.src.span(node), span, false, content); }
         for (site, content) in crate::str_reference_explanation::local(self.src, node) {
             let span = if node.child_by_field_name("type") == Some(site) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(site), |part| self.src.span(part)) } else { self.src.span(site) };
