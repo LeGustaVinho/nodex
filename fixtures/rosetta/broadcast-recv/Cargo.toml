@@ -1,0 +1,10 @@
+[package]
+name = "rust-broadcast-recv-reading"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "=0.8.4", default-features = false, features = ["ws"] }
+tokio = { version = "=1.47.1", features = ["macros", "rt", "sync"] }
+
+[workspace]

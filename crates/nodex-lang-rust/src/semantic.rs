@@ -486,6 +486,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
             (true, "axum", "extract/ws/impl#[WebSocket]recv().") if sym.from_registry(registry) => return Some((Family::Effect, "recv_websocket".into())),
             (true, "tokio", "sync/mpsc/bounded/impl#[`Receiver<T>`]recv()." | "sync/mpsc/unbounded/impl#[`UnboundedReceiver<T>`]recv().")
                 if sym.from_registry(registry) => return Some((Family::Effect, "recv_mpsc".into())),
+            (true, "tokio", "sync/broadcast/impl#[`Receiver<T>`]recv().")
+                if sym.from_registry(registry) => Family::BroadcastRecv,
             (true, "tokio", descriptor) if (descriptor.starts_with("time/") && name == "sleep")
                 || (descriptor.starts_with("sync/mpsc/") || descriptor.starts_with("sync/broadcast/") || descriptor.starts_with("sync/oneshot/"))
                     && matches!(name, "send" | "recv")
@@ -1525,7 +1527,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                 } else if family == Family::OneShot && operation == "poll" {
                     name.parent().filter(|parent| name.kind() == "await" && name.start_byte() == s
                         && name.end_byte() == e && parent.kind() == "await_expression")
-                } else if matches!(family, Family::FuturesOrderedPush | Family::StreamNext) && name.start_byte() == s && name.end_byte() == e
+                } else if matches!(family, Family::FuturesOrderedPush | Family::StreamNext | Family::BroadcastRecv) && name.start_byte() == s && name.end_byte() == e
                     && name.parent().is_some_and(|parent| parent.kind() == "token_tree")
                 {
                     // A proven select handler can recover the call from its original tokens.

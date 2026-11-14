@@ -264,6 +264,7 @@ pub(crate) enum Family {
     BoxPin,
     FuturesOrderedPush,
     StreamNext,
+    BroadcastRecv,
     MemReplace,
     OnceLock,
     NonZero,
@@ -1971,6 +1972,7 @@ impl Reader<'_, '_> {
                 }
             }
             Family::Effect if matches!(name.as_str(), "timeout" | "timeout_at") => self.timeout(node, &name),
+            Family::BroadcastRecv => self.broadcast_receive(node),
             Family::Iter | Family::ParIter if matches!(name.as_str(), "collect" | "sum" | "count" | "for_each") => {
                 self.sequence(node, &name);
             }
@@ -2014,6 +2016,31 @@ impl Reader<'_, '_> {
             branch("The channel delivers a value", "Use the value the sender sent, including false or an error if that is the value.", "Ok(value)"),
             branch("The channel closes without delivering a value", "The receiver completes with an error because there is no message to read.", "Err(RecvError)"),
         ], self.known_type(node));
+    }
+
+    fn broadcast_receive(&mut self, call: Node<'_>) {
+        let mut operand = call;
+        while let Some(group) = operand.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+            operand = group;
+        }
+        let Some(wait) = operand.parent().filter(|parent| parent.kind() == "await_expression") else {
+            self.at(call, true, detail("Prepare to receive a broadcast", "Create a future for this receiver's next message. The receive runs when the future is polled."));
+            return;
+        };
+        self.broadcast_receive_paths(wait, self.src.span(call), self.written(call, 80), false);
+    }
+
+    fn broadcast_receive_paths(&mut self, anchor: Node<'_>, call: Span, written: String, in_select: bool) {
+        let start = if in_select { "When this branch is enabled and polled, wait" } else { "Wait" };
+        let mut input = format!("{start} for this broadcast receiver through {written}. If there is no unread message and senders remain, the receive can stay pending.");
+        if in_select {
+            input.push_str(" If this receive is still pending when another branch wins, canceling this wait consumes no message.");
+        }
+        self.paths(anchor, call, true, input, vec![
+            branch("Message received", "Read the next message for this receiver.", "Ok(message)"),
+            branch("Receiver lagged", "The channel overwrote n messages before this receiver read them. Move this receiver's read position to the oldest message still retained.", "Err(RecvError::Lagged(n))"),
+            branch("Channel closed", "All senders are gone and this receiver has no buffered messages left to read.", "Err(RecvError::Closed)"),
+        ], None);
     }
 
     fn timeout(&mut self, call: Node<'_>, name: &str) {
@@ -3436,11 +3463,19 @@ impl Reader<'_, '_> {
         }
         let tokens: Vec<_> = children(tree).into_iter().filter(|token| !token.is_extra()).collect();
         let loop_body = select_loop_body(node);
-        let queue_calls: HashSet<_> = self.evidence.operations.iter().filter_map(|(&range, operation)| {
-            (tree.start_byte() <= range.0 && range.1 <= tree.end_byte()
-                && operation.as_ref().is_some_and(|op| op.family == Family::FuturesOrderedPush)).then_some(range)
-        }).collect();
-        let link_poll = !queue_calls.is_empty() && self.evidence.registry_selects.contains(&range(node));
+        let registry_select = self.evidence.registry_selects.contains(&range(node));
+        let mut queue_calls = HashSet::new();
+        let mut wait_calls = Vec::new();
+        for (&range, operation) in &self.evidence.operations {
+            if tree.start_byte() <= range.0 && range.1 <= tree.end_byte() {
+                match operation.as_ref().map(|op| op.family) {
+                    Some(Family::FuturesOrderedPush) => { queue_calls.insert(range); }
+                    Some(Family::BroadcastRecv | Family::StreamNext) if registry_select => wait_calls.push(range),
+                    _ => {}
+                }
+            }
+        }
+        let link_poll = !queue_calls.is_empty() && registry_select;
         let mut start = if let [_, bias, separator, ..] = tokens.as_slice()
             && self.src.text(*bias) == "biased" && separator.kind() == ";"
         {
@@ -3451,6 +3486,7 @@ impl Reader<'_, '_> {
         let mut steps = Vec::new();
         let mut handlers = Vec::new();
         let mut polls = HashMap::new();
+        let mut broadcasts = Vec::new();
         let mut handlers_complete = true;
         for (arrow, token) in tokens.iter().enumerate().filter(|(_, token)| self.src.text(**token) == "=>") {
             if arrow < start {
@@ -3465,8 +3501,22 @@ impl Reader<'_, '_> {
                 && select_branch_pattern(self.src, &before[..equal])
             {
                 let wait = self.src.text.get(first.start_byte()..last.end_byte()).unwrap_or("");
-                if link_poll && let Some((binding, span)) = self.select_queue_poll(&before[equal + 1..]) {
-                    polls.entry(binding).and_modify(|previous| *previous = None).or_insert(Some(span));
+                if wait_calls.iter().any(|&(start, end)| first.start_byte() <= start && end <= last.end_byte())
+                    && let Some((start, parsed)) = self.parse_select_wait(&before[equal + 1..])
+                    && let Some(call) = macro_operand(&parsed).map(unparen).filter(|call| call.kind() == "call_expression")
+                    && let Some(member) = call_member(call)
+                    && let Some(proof) = self.evidence.operations.get(&macro_operand_range(start, member)).and_then(Option::as_ref)
+                {
+                    let (first, last) = macro_operand_range(start, call);
+                    let span = self.src.index.span(self.src.file, first, last);
+                    if link_poll && proof.family == Family::StreamNext
+                        && let Some((receiver, _)) = select_queue_call(call)
+                        && let Some(binding) = self.ordered_queue_binding(macro_operand_range(start, receiver))
+                    {
+                        polls.entry(binding).and_modify(|previous| *previous = None).or_insert(Some(span));
+                    } else if proof.family == Family::BroadcastRecv {
+                        broadcasts.push(span);
+                    }
                 }
                 let (at, action) = exit.unwrap_or((*token, "run this branch"));
                 steps.push(self.step(at, "When ready and the pattern matches", format!("{wait} → {action}")));
@@ -3486,7 +3536,7 @@ impl Reader<'_, '_> {
                 (body[comma].start_byte(), comma + 1)
             } else {
                 let end = tree.end_byte().saturating_sub(1);
-                if link_poll {
+                if !wait_calls.is_empty() {
                     handlers_complete &= body.first().and_then(|first| self.src.text.get(first.start_byte()..end))
                         .and_then(parse_macro_operand).is_some();
                 }
@@ -3505,7 +3555,12 @@ impl Reader<'_, '_> {
         if !steps.is_empty() {
             self.steps(node, "Wait for one eligible branch", steps);
         }
-        if !handlers_complete || start < tokens.len().saturating_sub(1) {
+        if handlers_complete && start >= tokens.len().saturating_sub(1) {
+            for call in broadcasts {
+                let written = truncate(&self.src.text[call.start_byte as usize..call.end_byte as usize], 80);
+                self.broadcast_receive_paths(node, call, written, true);
+            }
+        } else {
             polls.clear();
         }
         for (start, end) in handlers {
@@ -3513,7 +3568,7 @@ impl Reader<'_, '_> {
         }
     }
 
-    fn select_queue_poll(&self, tokens: &[Node<'_>]) -> Option<(Range, Span)> {
+    fn parse_select_wait(&self, tokens: &[Node<'_>]) -> Option<(usize, tree_sitter::Tree)> {
         let start = tokens.first()?.start_byte();
         let end = match tokens.windows(2).position(|pair| pair[0].kind() == "," && self.src.text(pair[1]) == "if") {
             Some(index) => {
@@ -3523,20 +3578,7 @@ impl Reader<'_, '_> {
             }
             None => tokens.last()?.end_byte(),
         };
-        let parsed = parse_macro_operand(self.src.text.get(start..end)?)?;
-        let call = unparen(macro_operand(&parsed)?);
-        if call.kind() != "call_expression" {
-            return None;
-        }
-        let (receiver, member) = select_queue_call(call)?;
-        let method = macro_operand_range(start, member);
-        let proof = self.evidence.operations.get(&method)?.as_ref()?;
-        if proof.family != Family::StreamNext {
-            return None;
-        }
-        let binding = self.ordered_queue_binding(macro_operand_range(start, receiver))?;
-        let (start, end) = macro_operand_range(start, call);
-        Some((binding, self.src.index.span(self.src.file, start, end)))
+        Some((start, parse_macro_operand(self.src.text.get(start..end)?)?))
     }
 
     fn ordered_queue_binding(&self, site: Range) -> Option<Range> {
