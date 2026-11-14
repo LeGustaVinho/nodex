@@ -67,6 +67,34 @@ fn flow_names(ir: &FileIr) -> Vec<String> {
     ir.flows.iter().map(|f| f.symbol.clone()).collect()
 }
 
+#[test]
+fn module_initializer_callbacks_get_blueprints_without_top_level_statements() {
+    let source = r#"
+        import {defineEndpoint} from "../middleware/endpoint";
+        export const creatureLevelUp = defineEndpoint(
+            "creatureLevelUp", { auth: true }, async (request, response) => {
+                if (!request.body) { response.status(400); return; }
+                await runTransaction(async (transaction) => { await transaction.save(); });
+            }
+        );
+        const convert = register((value: number) => value + 1);
+    "#;
+    for suffix in ["", "\nconsole.log(creatureLevelUp);"] {
+        let ir = nodex_lang_typescript::lower_source("creatures/creatureLevelUp.ts", &format!("{source}{suffix}"));
+        let handlers: Vec<_> = ir.symbols.iter().filter(|s| s.flavors.iter().any(|f| f == "initializer-callback")).collect();
+        assert_eq!(handlers.len(), 2);
+        let handler = handlers.iter().find(|s| s.name == "defineEndpoint callback").unwrap();
+        assert_eq!(handler.parent.as_deref(), Some("creatures/creatureLevelUp.(module)"));
+        assert!(handler.has_flow && handler.flavors.iter().any(|f| f == "async"));
+        let flow = ir.flows.iter().find(|flow| flow.symbol == handler.id).unwrap();
+        assert!(flow.nodes[0].outputs.iter().any(|pin| pin.label == "request"));
+        assert!(flow.nodes.iter().any(|node| node.concept == Concept::Branch));
+        let names = flow_names(&ir);
+        assert_eq!(names.iter().filter(|name| name.ends_with(".defineEndpoint callback")).count(), 1);
+        assert!(names.iter().any(|name| name.ends_with(".defineEndpoint callback.runTransaction callback")));
+    }
+}
+
 /// A block-bodied lambda handed to a call gets a Blueprint of its own; the call links to it.
 #[test]
 fn block_lambdas_get_their_own_blueprint() {

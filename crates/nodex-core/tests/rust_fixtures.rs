@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use nodex_core::{Project, canon};
 use nodex_ir::{Access, Concept, Expr, FileIr, FlowEdgeKind, StructEdgeKind, SymbolKind};
-use nodex_lang_api::LanguageFrontend;
+use nodex_lang_api::{LanguageFrontend, RunEnv};
 use nodex_lang_rust::{RustFrontend, lower_source};
 
 fn fixtures() -> PathBuf {
@@ -76,6 +76,85 @@ fn fixtures_are_fully_mapped() {
             assert!(problems.is_empty(), "{file}:\n{}", problems.join("\n"));
         }
     }
+}
+
+#[test]
+fn implicit_cargo_binaries_open_run_and_prepare_for_debug() {
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let scratch = Scratch(std::env::temp_dir().join(format!("nodex-rust-bins-{}", std::process::id())));
+    let root = scratch.0.join("project");
+    std::fs::create_dir_all(root.join("src/bin/nested")).unwrap();
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"tools\"\nversion = \"0.1.0\"\nedition = \"2024\"\ndefault-run = \"tool\"\n").unwrap();
+    std::fs::write(root.join("src/bin/nested/main.rs"), "mod helper; fn main() { helper::work(); }").unwrap();
+    std::fs::write(root.join("src/bin/nested/helper.rs"), "pub fn work() {}").unwrap();
+    let tool = root.join("src/bin/tool.rs");
+    std::fs::write(&tool, r#"
+use std::{collections::HashMap, fmt::Display};
+
+fn choose(flag: bool) -> &'static dyn Display {
+    if flag { &42 } else { &"hello" }
+}
+
+fn find(map: &HashMap<&str, i32>, key: &str) -> Option<i32> {
+    let lookup = |key| {
+        let value = map.get(key)?;
+        Some(*value + 1)
+    };
+    lookup(key)
+}
+
+fn main() {
+    #![allow(unused_parens)]
+    #[cfg(any())]
+    // The attribute applies to the declaration across a comment.
+    let _hidden = unavailable_on_this_build();
+    let f = (|value: Option<i32>| {
+        let n = value?;
+        Some(n + 1)
+    });
+    assert_eq!(f(None), None);
+    assert_eq!(f(Some(41)), Some(42));
+    assert_eq!(find(&HashMap::from([("a", 41)]), "a"), Some(42));
+    assert_eq!(choose(true).to_string(), "42");
+    assert_eq!(choose(false).to_string(), "hello");
+}
+"#).unwrap();
+
+    let packages = nodex_lang_rust::project::cargo_packages(&root);
+    assert_eq!(packages[0].bins, [("tool".into(), "src/bin/tool.rs".into()), ("nested".into(), "src/bin/nested/main.rs".into())]);
+    let mut project = Project::open(&root, vec![Arc::new(RustFrontend)]).unwrap();
+    let symbol = |name: &str, file: &str| {
+        project.files().find(|(path, _)| *path == file).unwrap().1.symbols.iter()
+            .find(|s| s.name == name && s.has_flow).unwrap().id.clone()
+    };
+    assert_eq!(symbol("main", "src/bin/nested/main.rs"), "crate::bin::nested::main");
+    let main = symbol("main", "src/bin/tool.rs");
+    let closure = symbol("f closure", "src/bin/tool.rs");
+    let main = project.flow(&main).unwrap();
+    assert!(main.nodes.iter().any(|n| n.expr.as_ref().and_then(|e| e.symbol.as_ref()) == Some(&closure)));
+    let propagates = |flow: &nodex_ir::FlowGraph| flow.reading.iter().flatten().any(|site| {
+        matches!(&site.content, nodex_ir::reading::ReadingContent::Paths { branches, .. }
+            if branches.iter().any(|branch| branch.action == "Return from this closure"))
+    });
+    assert!(!propagates(&main));
+    assert!(propagates(&project.flow(&closure).unwrap()));
+    let revised = std::fs::read_to_string(&tool).unwrap() + "\n// File changed on disk.\n";
+    std::fs::write(&tool, revised).unwrap();
+    assert_eq!(project.refresh_path(&tool).as_deref(), Some("src/bin/tool.rs"));
+
+    let out = scratch.0.join("out");
+    let env = RunEnv { tcp: String::new(), ws_url: String::new(), token: String::new() };
+    let mut logs = Vec::new();
+    let run = RustFrontend.instrumenter(&root).unwrap().prepare(&root, &out, &env, &mut |line| logs.push(line.to_owned()))
+        .unwrap_or_else(|error| panic!("{error}\n{}", logs.join("\n")));
+    assert!(std::process::Command::new(run.program).current_dir(run.cwd).env_remove("NODEX_TRACE").status().unwrap().success());
+    let debug = RustFrontend.debugger(&root).unwrap().prepare(&root, &out, &mut |_| {}).unwrap();
+    assert!(std::path::Path::new(debug.launch["program"].as_str().unwrap()).is_file());
 }
 
 #[test]

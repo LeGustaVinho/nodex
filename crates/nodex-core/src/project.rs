@@ -389,7 +389,13 @@ impl Project {
             .hidden(false)
             .parents(false)
             .git_global(false)
-            .filter_entry(|e| !(e.depth() > 0 && e.file_type().is_some_and(|t| t.is_dir()) && is_ignored_dir(e.file_name().to_str().unwrap_or(""))))
+            .filter_entry(|e| {
+                if e.depth() == 0 || !e.file_type().is_some_and(|t| t.is_dir()) {
+                    return true;
+                }
+                let name = e.file_name().to_str().unwrap_or("");
+                !is_ignored_dir(name) || (name == "bin" && e.path().parent().is_some_and(|p| p.ends_with("src")))
+            })
             .build_parallel()
             .run(|| {
                 let (found, count) = (&found, &count);
@@ -475,7 +481,10 @@ impl Project {
     /// True if `rel` lies under an ignored directory.
     pub fn is_ignored(rel: &str) -> bool {
         let parts: Vec<&str> = rel.split('/').collect();
-        parts[..parts.len().saturating_sub(1)].iter().any(|p| is_ignored_dir(p))
+        let rust_source = Path::new(rel).extension().is_some_and(|ext| ext == "rs");
+        parts[..parts.len().saturating_sub(1)].iter().enumerate().any(|(i, p)| {
+            is_ignored_dir(p) && !(*p == "bin" && i > 0 && parts[i - 1] == "src" && rust_source)
+        })
     }
 
     fn lower_path(&self, path: &Path) -> Option<(String, FileEntry)> {
@@ -920,5 +929,8 @@ mod tests {
         assert!(Project::is_ignored("Library/PackageCache/a/b.cs"));
         assert!(!Project::is_ignored("Assets/Scripts/Player.cs"));
         assert!(!Project::is_ignored("bin.cs"));
+        assert!(!Project::is_ignored("crates/tools/src/bin/cli/main.rs"));
+        assert!(Project::is_ignored("src/bin/generated.cs"));
+        assert!(Project::is_ignored("bin/tool.rs"));
     }
 }

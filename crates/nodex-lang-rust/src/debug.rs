@@ -77,7 +77,7 @@ impl DebugLauncher for RustDebugger {
         let (package, (bin, _)) = packages
             .iter()
             .find_map(|p| p.bins.first().map(|b| (p, b.clone())))
-            .ok_or("no binary to debug: add src/main.rs or a [[bin]] target")?;
+            .ok_or("no binary to debug: add src/main.rs, a src/bin target, or a [[bin]] target")?;
         let target = out_dir.join("debug-target");
         log(&format!("cargo build --bin {bin} …"));
         let mut child = nodex_lang_api::process::command("cargo")

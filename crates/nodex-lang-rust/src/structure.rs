@@ -67,7 +67,9 @@ pub fn module_of(rel: &str) -> (String, Vec<String>) {
         let mut module: Vec<String> = segs[i + 1..].iter().map(|s| strip(s)).collect();
         if module.len() == 1 && matches!(module[0].as_str(), "main" | "lib") {
             module.clear();
-        } else if module.last().is_some_and(|l| l == "mod") {
+        } else if module.last().is_some_and(|l| l == "mod")
+            || matches!(module.as_slice(), [bin, _, main] if bin == "bin" && main == "main")
+        {
             module.pop();
         }
         return (crate_name(i), module);

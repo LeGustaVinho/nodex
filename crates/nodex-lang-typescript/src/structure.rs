@@ -533,7 +533,7 @@ impl<'a, 't> Collector<'a, 't> {
             "interface_declaration" => self.interface(decl, parent, qual, flavors),
             "type_alias_declaration" => self.type_alias(decl, parent, qual, flavors),
             "enum_declaration" => self.enumeration(decl, parent, qual, flavors),
-            "lexical_declaration" | "variable_declaration" => self.variables(decl, parent, qual, flavors, top),
+            "lexical_declaration" | "variable_declaration" => self.variables(decl, parent, qual, flavors, top, effectful),
             // Overload signatures merge into the implementation.
             "function_signature" => {
                 if let Some(name) = decl.child_by_field_name("name") {
@@ -568,7 +568,7 @@ impl<'a, 't> Collector<'a, 't> {
     }
 
     /// `const a = 1, f = () => …`: functions become Blueprints, values become fields.
-    fn variables(&mut self, decl: Node<'t>, parent: &str, qual: &str, flavors: Vec<String>, top: &mut Vec<Node<'t>>) {
+    fn variables(&mut self, decl: Node<'t>, parent: &str, qual: &str, flavors: Vec<String>, top: &mut Vec<Node<'t>>, effectful: &mut bool) {
         let src = self.src;
         let keyword = children(decl).into_iter().find(|c| !c.is_named()).map(|c| src.text(c).to_owned()).unwrap_or_default();
         let mut has_values = false;
@@ -608,6 +608,13 @@ impl<'a, 't> Collector<'a, 't> {
                 continue;
             }
             has_values = true;
+            if !*effectful && !src.file.ends_with(".vue") && !flavors.iter().any(|flavor| flavor == "declare")
+                && value.is_some_and(|v| v.kind() == "call_expression" && v.child_by_field_name("arguments")
+                    .is_some_and(|args| named_children(args).into_iter()
+                        .any(|arg| is_function_value(crate::expr::unparen(arg).kind()))))
+            {
+                *effectful = true;
+            }
             let Some(n) = name else { continue };
             let mut names = Vec::new();
             crate::syntax::pattern_names(src, n, &mut names);
@@ -863,6 +870,44 @@ impl<'a, 't> Collector<'a, 't> {
         }
     }
 
+    fn call_callbacks(&mut self, call: Node<'t>, owner: &str, initializer: bool) {
+        if let Some(reg) = frameworks::registration(self.src, self.fw, call)
+            && reg.callback.child_by_field_name("body").is_some_and(|body| initializer || body.kind() == "statement_block")
+            && !self.function_ids.contains_key(&reg.callback.start_byte())
+        {
+            self.pending_name = Some(reg.name);
+            self.pending_event = Some(reg.event);
+            let mut flavors = vec![reg.flavor.to_owned()];
+            if initializer {
+                flavors.push("initializer-callback".into());
+            }
+            self.function(reg.callback, None, reg.callback, owner, owner, flavors, BodyKind::LocalFunction);
+            self.pending_name = None;
+            self.pending_event = None;
+        }
+        let Some(args) = call.child_by_field_name("arguments").filter(|a| a.kind() == "arguments") else { return };
+        let callee = call.child_by_field_name("function").and_then(|f| match f.kind() {
+            "member_expression" => f.child_by_field_name("property"),
+            "identifier" => Some(f),
+            _ => None,
+        }).map(|f| self.src.norm(f)).unwrap_or_else(|| "call".into());
+        for arg in named_children(args).into_iter().map(crate::expr::unparen) {
+            if is_function_value(arg.kind())
+                && arg.child_by_field_name("body").is_some_and(|body| initializer ||
+                    body.kind() == "statement_block" && named_children(body).iter().any(|s| s.kind() != "comment"))
+                && !self.function_ids.contains_key(&arg.start_byte())
+            {
+                self.pending_name = Some(format!("{callee} callback"));
+                let mut flavors = vec!["callback".into()];
+                if initializer {
+                    flavors.push("initializer-callback".into());
+                }
+                self.function(arg, None, arg, owner, owner, flavors, BodyKind::LocalFunction);
+                self.pending_name = None;
+            }
+        }
+    }
+
     /// Named functions declared inside a body: `function helper() {}` and
     /// `const onClick = () => { … }`. Each gets its own Blueprint.
     fn local_functions(&mut self, body: Node<'t>, owner: &str) {
@@ -876,40 +921,17 @@ impl<'a, 't> Collector<'a, 't> {
                         }
                     }
                     "call_expression" => {
-                        // `useEffect(() => { … })`, `app.get('/x', (req, res) => { … })`: the
-                        // framework calls the callback; it gets a Blueprint of its own.
-                        if let Some(reg) = frameworks::registration(self.src, self.fw, c)
-                            && reg.callback.child_by_field_name("body").is_some_and(|b| b.kind() == "statement_block")
-                            && !self.function_ids.contains_key(&reg.callback.start_byte())
-                        {
-                            self.pending_name = Some(reg.name.clone());
-                            self.pending_event = Some(reg.event.clone());
-                            self.function(reg.callback, None, reg.callback, owner, owner, vec![reg.flavor.to_owned()], BodyKind::LocalFunction);
-                            self.pending_name = None;
-                            self.pending_event = None;
+                        let mut initializer = c;
+                        while let Some(parent) = initializer.parent().filter(|p| p.kind() == "parenthesized_expression") {
+                            initializer = parent;
                         }
-                        // Any other callback with a block body (`items.forEach(item => { … })`,
-                        // `new Promise`-less `then(r => { … })`): a Blueprint `<callee> callback`.
-                        let callee = c.child_by_field_name("function").map(|f| match f.kind() {
-                            "member_expression" => f.child_by_field_name("property").map(|p| self.src.norm(p)).unwrap_or_default(),
-                            "identifier" => self.src.norm(f),
-                            _ => String::new(),
+                        let module_initializer = !self.src.file.ends_with(".vue") && initializer.parent().is_some_and(|declarator| {
+                            declarator.kind() == "variable_declarator"
+                                && declarator.child_by_field_name("value") == Some(initializer)
+                                && declarator.parent() == Some(body)
+                                && matches!(body.kind(), "lexical_declaration" | "variable_declaration")
                         });
-                        if let Some(args) = c.child_by_field_name("arguments").filter(|a| a.kind() == "arguments") {
-                            for arg in named_children(args) {
-                                if is_function_value(arg.kind())
-                                    && arg.child_by_field_name("body").is_some_and(|b| {
-                                        b.kind() == "statement_block" && named_children(b).iter().any(|s| s.kind() != "comment")
-                                    })
-                                    && !self.function_ids.contains_key(&arg.start_byte())
-                                {
-                                    let callee = callee.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| "call".into());
-                                    self.pending_name = Some(format!("{callee} callback"));
-                                    self.function(arg, None, arg, owner, owner, vec!["callback".into()], BodyKind::LocalFunction);
-                                    self.pending_name = None;
-                                }
-                            }
-                        }
+                        self.call_callbacks(c, owner, module_initializer);
                         stack.push(c);
                     }
                     "variable_declarator" => {

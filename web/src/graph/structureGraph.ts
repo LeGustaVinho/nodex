@@ -115,9 +115,18 @@ export class StructureIndex {
     return named.length === 1 ? named[0] : undefined;
   }
 
-  /** In Blueprint view prefer a clear type match. Files with a module can also open as a whole. */
+  /** Open a file's sole initializer callback directly. A module can show several callbacks. */
   fileBlueprint(file: string, inBlueprintView: boolean): Symbol | undefined {
-    return (inBlueprintView ? this.primaryTypeInFile(file) : undefined) ?? this.modulesByFile.get(file);
+    const module = this.modulesByFile.get(file);
+    if (module?.language === "typescript") {
+      const callbacks = (this.children.get(module.id) ?? [])
+        .filter((symbol) => symbol.flavors.includes("top-level"))
+        .flatMap((initializer) => this.children.get(initializer.id) ?? [])
+        .filter((symbol) => symbol.has_flow && symbol.flavors.includes("initializer-callback") &&
+          symbol.origins.some((origin) => origin.file === file));
+      if (callbacks.length) return callbacks.length === 1 ? callbacks[0] : module;
+    }
+    return (inBlueprintView ? this.primaryTypeInFile(file) : undefined) ?? module;
   }
 }
 

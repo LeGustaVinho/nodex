@@ -414,6 +414,12 @@ macro_rules! nx_local {
     };
 }
 
+/// Observe a tail value while preserving the expected type of the enclosing expression.
+pub fn returning<T>(value: T, inspect: impl FnOnce(&T)) -> T {
+    inspect(&value);
+    value
+}
+
 /// `ret(method, value!(x))` when tracing.
 #[macro_export]
 macro_rules! nx_ret {

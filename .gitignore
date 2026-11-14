@@ -1,4 +1,5 @@
 /target
+/fixtures/rosetta/numeric-conversions/target/
 node_modules/
 /web/dist
 .nodex/

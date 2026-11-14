@@ -86,21 +86,53 @@ fn read_package(manifest: &Path) -> Option<CargoPackage> {
     let doc: toml::Table = toml::from_str(&text).ok()?;
     let package = doc.get("package")?.as_table()?;
     let name = package.get("name")?.as_str()?.to_owned();
+    let dir = manifest.parent()?;
     let edition = match package.get("edition") {
         Some(toml::Value::String(e)) => Some(e.clone()),
+        Some(value) if value.get("workspace").and_then(toml::Value::as_bool) == Some(true) => {
+            if let Some(workspace) = package.get("workspace").and_then(toml::Value::as_str) {
+                std::fs::read_to_string(dir.join(workspace).join("Cargo.toml")).ok()
+                    .and_then(|text| toml::from_str::<toml::Table>(&text).ok())
+                    .and_then(|workspace| workspace_edition(&workspace))
+            } else if doc.contains_key("workspace") {
+                workspace_edition(&doc)
+            } else {
+                dir.ancestors().skip(1).filter_map(|ancestor| {
+                    let text = std::fs::read_to_string(ancestor.join("Cargo.toml")).ok()?;
+                    let workspace = toml::from_str::<toml::Table>(&text).ok()?;
+                    workspace.contains_key("workspace").then_some(workspace)
+                }).next().and_then(|workspace| workspace_edition(&workspace))
+            }
+        }
         _ => None,
     };
-    let dir = manifest.parent()?;
+    let conventional_bins = conventional_bins(dir, &name);
     let mut bins = Vec::new();
     if let Some(list) = doc.get("bin").and_then(|b| b.as_array()) {
         for b in list.iter().filter_map(|b| b.as_table()) {
             let bin_name = b.get("name").and_then(|n| n.as_str()).unwrap_or(&name).to_owned();
-            let path = b.get("path").and_then(|p| p.as_str()).map(str::to_owned).unwrap_or_else(|| format!("src/bin/{bin_name}.rs"));
+            let path = b.get("path").and_then(|p| p.as_str()).map(str::to_owned).unwrap_or_else(|| {
+                conventional_bins.iter().find(|(name, _)| *name == bin_name).map(|(_, path)| path.clone())
+                    .unwrap_or_else(|| format!("src/bin/{bin_name}.rs"))
+            });
             bins.push((bin_name, path));
         }
     }
-    if bins.is_empty() && dir.join("src/main.rs").is_file() {
-        bins.push((name.clone(), "src/main.rs".into()));
+    let modern_edition = edition.as_deref().is_some_and(|e| e != "2015") || package.get("edition").is_some_and(toml::Value::is_table);
+    let auto_bins = package.get("autobins").and_then(toml::Value::as_bool)
+        .unwrap_or(modern_edition || ["lib", "bin", "example", "test", "bench"].iter().all(|key| !doc.contains_key(*key)));
+    if auto_bins {
+        for (name, path) in conventional_bins {
+            if !bins.iter().any(|(existing_name, existing_path)| *existing_name == name || *existing_path == path) {
+                bins.push((name, path));
+            }
+        }
+    }
+    if let Some(default) = package.get("default-run").and_then(toml::Value::as_str)
+        && let Some(index) = bins.iter().position(|(name, _)| name == default)
+    {
+        let target = bins.remove(index);
+        bins.insert(0, target);
     }
     let lib = doc.get("lib").is_some() || dir.join("src/lib.rs").is_file();
     let mut dependencies = Vec::new();
@@ -120,6 +152,33 @@ fn read_package(manifest: &Path) -> Option<CargoPackage> {
         }
     }
     Some(CargoPackage { manifest: manifest.to_owned(), name, edition, bins, lib, dependencies })
+}
+
+fn workspace_edition(doc: &toml::Table) -> Option<String> {
+    Some(doc.get("workspace")?.get("package")?.get("edition")?.as_str()?.to_owned())
+}
+
+fn conventional_bins(dir: &Path, package: &str) -> Vec<(String, String)> {
+    let mut extra = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir.join("src/bin")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
+                if let Some(name) = path.file_stem().and_then(|n| n.to_str()).filter(|n| !n.starts_with('.')) {
+                    extra.push((name.to_owned(), format!("src/bin/{name}.rs")));
+                }
+            } else if path.join("main.rs").is_file()
+                && let Some(name) = path.file_name().and_then(|n| n.to_str()).filter(|n| !n.starts_with('.'))
+            {
+                extra.push((name.to_owned(), format!("src/bin/{name}/main.rs")));
+            }
+        }
+    }
+    extra.sort();
+    if dir.join("src/main.rs").is_file() {
+        extra.insert(0, (package.to_owned(), "src/main.rs".into()));
+    }
+    extra
 }
 
 /// Folders detection never enters: ignored ones and hidden ones.

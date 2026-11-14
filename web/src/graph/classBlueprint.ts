@@ -75,7 +75,11 @@ export function classMembers(index: StructureIndex, typeId: string): Symbol[] {
   const owner = index.byId.get(typeId);
   const declarations = owner && isFileModule(owner) ? moduleDeclarations(index, typeId) : index.members(typeId);
   return declarations
-    .flatMap((s) => [...(s.has_flow ? [s] : []), ...(isAccessorOwner(s) ? (index.children.get(s.id) ?? []).filter((a) => a.has_flow) : [])])
+    .flatMap((s) => [
+      ...(s.has_flow ? [s] : []),
+      ...(index.children.get(s.id) ?? []).filter((child) => child.has_flow &&
+        (isAccessorOwner(s) || (s.flavors.includes("top-level") && child.flavors.includes("initializer-callback")))),
+    ])
     .sort((a, b) => (a.origins[0]?.start_line ?? Infinity) - (b.origins[0]?.start_line ?? Infinity));
 }
 

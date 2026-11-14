@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { Symbol } from "../gen/Symbol";
+import { classMembers } from "../graph/classBlueprint";
 import { StructureIndex } from "../graph/structureGraph";
 import { useUi } from "../store";
 import { Sidebar } from "./Sidebar";
@@ -20,16 +21,35 @@ function declaration(id: string, kind: Symbol["kind"], language: Symbol["languag
 }
 
 it("opens file modules and types from their respective Blueprint entry points", () => {
+  const file = "creatureLevelUp.ts";
+  const module = declaration("ts:creatureLevelUp", "Module", "typescript", file);
+  const initializer = {
+    ...declaration("creatureLevelUp.(module)", "Function", "typescript", file),
+    parent: module.id, has_flow: true, flavors: ["top-level"],
+  };
+  const handler = {
+    ...declaration("creatureLevelUp.(module).defineEndpoint callback", "Function", "typescript", file),
+    parent: initializer.id, has_flow: true, flavors: ["initializer-callback", "async"],
+  };
+  const transaction = {
+    ...declaration("runTransaction callback", "Function", "typescript", file), parent: handler.id, has_flow: true,
+  };
   const symbols = [
     declaration("CSharpContract", "Interface", "csharp", "CSharpContract.cs"),
     declaration("TypeScriptState", "Union", "typescript", "TypeScriptState.ts"),
     declaration("RustSource", "Trait", "rust", "RustSource.rs"),
     declaration("rustFlows", "Module", "rust", "flows.rs"),
     declaration("tsFlows", "Module", "typescript", "flows.ts"),
+    module, initializer, handler, transaction,
   ];
   structure = new StructureIndex({ symbols, edges: [] });
+  const second = { ...handler, id: "second callback" };
+  const multiple = new StructureIndex({ symbols: [...symbols, second], edges: [] });
+  expect(multiple.fileBlueprint(file, true)).toBe(module);
+  expect(classMembers(multiple, module.id)).toEqual([initializer, handler, second]);
   const project = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity } } });
-  project.setQueryData(["project"], { name: "Blueprint demo", files: symbols.map((s) => ({ path: s.origins[0].file, diagnostics: [] })) });
+  const files = [...new Set(symbols.map((s) => s.origins[0].file))].map((path) => ({ path, diagnostics: [] }));
+  project.setQueryData(["project"], { name: "Blueprint demo", files });
   const host = document.createElement("div");
   const root = createRoot(host);
   const previous = useUi.getState();
@@ -48,6 +68,8 @@ it("opens file modules and types from their respective Blueprint entry points", 
     useUi.setState({ view: "overview", flowSymbol: null });
     act(() => root.render(<QueryClientProvider client={project}><Sidebar /></QueryClientProvider>));
     click("Files");
+    click("▤creatureLevelUp.ts");
+    expectOpen(handler.id, file);
     click("▤flows.rs");
     expectOpen("rustFlows", "flows.rs");
     click("▤flows.ts");

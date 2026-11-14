@@ -7,7 +7,7 @@
 //!
 //! - start of the body: `let __nx_g = enter(M);` (its drop records the end, also on `?`,
 //!   early returns and panics) and the arguments;
-//! - before every statement: `step(M, P)`; after a `let x = …` or `x = …`: the new value;
+//! - before statements without outer attributes: `step(M, P)`; after a `let x = …` or `x = …`: the new value;
 //! - the function's tail expression: its value is recorded as the result;
 //! - `e.await` becomes `traced(R, e).await` (suspensions end the frame; resuming enters `R`,
 //!   the function's `resume` entry, like .NET and JavaScript).
@@ -56,7 +56,7 @@ impl TraceInstrumenter for RustInstrumenter {
         let (package, (bin, _)) = packages
             .iter()
             .find_map(|p| p.bins.first().map(|b| (p, b.clone())))
-            .ok_or("no binary to run: add src/main.rs or a [[bin]] target")?;
+            .ok_or("no binary to run: add src/main.rs, a src/bin target, or a [[bin]] target")?;
         let work = out_dir.join("rust");
         let copy = work.join("src");
         log("Copying the project …");
@@ -250,6 +250,14 @@ impl Rewriter<'_> {
         let items: Vec<Node> = named_children(block).into_iter().filter(|c| !is_comment(c.kind()) && !is_item(c.kind())).collect();
         let count = items.len();
         for (i, s) in items.into_iter().enumerate() {
+            // A probe before an attributed statement would take its attribute.
+            let mut previous = s.prev_named_sibling();
+            while previous.is_some_and(|n| is_comment(n.kind())) {
+                previous = previous.and_then(|n| n.prev_named_sibling());
+            }
+            if previous.is_some_and(|n| n.kind() == "attribute_item") {
+                continue;
+            }
             let last = i + 1 == count;
             let tail = last
                 && match s.kind() {
@@ -260,9 +268,9 @@ impl Rewriter<'_> {
             let p = self.point(m, s);
             let id = m.id;
             if tail && ret {
-                self.insert(s.start_byte(), format!("{RT}::step({id}, {p}); let __nx_r = "));
+                self.insert(s.start_byte(), format!("{RT}::step({id}, {p}); {RT}::returning("));
                 self.descend(m, s);
-                self.insert(s.end_byte(), format!("; {RT}::nx_ret!({id}, __nx_r); __nx_r"));
+                self.insert(s.end_byte(), format!(", |__nx_r| {{ {RT}::nx_ret!({id}, *__nx_r); }})"));
                 continue;
             }
             self.insert(s.start_byte(), format!("{RT}::step({id}, {p}); "));
@@ -379,7 +387,10 @@ pub fn instrument_source(rel: &str, text: &str, next_id: &mut i32, methods: &mut
                 head.push_str(&format!(" {RT}::nx_arg!({id}, {i}, {name});"));
             }
         }
-        rw.insert(job.body.start_byte() + 1, head);
+        let entry = named_children(job.body).into_iter()
+            .find(|node| !is_comment(node.kind()) && node.kind() != "inner_attribute_item")
+            .map_or(job.body.end_byte() - 1, |node| node.start_byte());
+        rw.insert(entry, head);
         rw.block(&mut m, job.body, job.returns_value);
         let params = job.params.iter().map(|(n, _)| n.clone()).collect();
         entries.push((job.symbol.clone(), m, params));
@@ -426,7 +437,7 @@ mod tests {
         assert!(out.contains("::nodex_trace_rt::enter(1)"), "{out}");
         assert!(out.contains("::nodex_trace_rt::nx_arg!(1, 0, items)"), "{out}");
         assert!(out.contains("::nodex_trace_rt::nx_local!(1, 0, sum)"), "{out}");
-        assert!(out.contains("let __nx_r = sum; ::nodex_trace_rt::nx_ret!(1, __nx_r); __nx_r"), "{out}");
+        assert!(out.contains("::nodex_trace_rt::returning(sum, |__nx_r| { ::nodex_trace_rt::nx_ret!(1, *__nx_r); })"), "{out}");
         let points = methods[0]["points"].as_array().unwrap();
         // Brace, `let`, `for`, `sum += x;`, tail `sum`: points read the original text.
         let texts: Vec<&str> = points.iter().map(|p| &text[p["start"].as_u64().unwrap() as usize..p["end"].as_u64().unwrap() as usize]).collect();
