@@ -26,7 +26,7 @@ use tree_sitter::Node;
 
 use crate::reading::{
     DefaultCollection, DefaultType, Evidence, Family, NumericAlias, Operations, Resolved,
-    TypeIdentities, may_shadow_cast_type, written_default_collection, written_result_type,
+    TypeIdentities, may_shadow_cast_type, written_default_collection, written_option_type, written_result_type,
 };
 
 /// Semantic facts from `rust-analyzer scip`.
@@ -341,6 +341,13 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
             match descriptor {
                 "string/impl#[String]from_utf8()." => return Some((Family::Utf8, "owned".into())),
                 "string/impl#[String]from_utf8_lossy()." => return Some((Family::Utf8, "lossy".into())),
+                _ => {}
+            }
+        }
+        if sym.package == "alloc" {
+            match descriptor {
+                "vec/impl#[`Vec<T, A>`][`Extend<T>`]extend()." => return Some((Family::VecExtend, name.into())),
+                "vec/impl#[`Vec<T, A>`][`Extend<&'a T>`]extend()." => return Some((Family::VecExtend, "copy".into())),
                 _ => {}
             }
         }
@@ -667,6 +674,7 @@ struct ReturnType {
     cast_alias: Option<NumericAlias>,
     default_collection: Option<DefaultCollection>,
     std_result: bool,
+    std_option: bool,
     generics: Vec<Option<String>>,
     parameters: Vec<Option<TypeShape>>,
     receiver: bool,
@@ -1334,7 +1342,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let identities = default_types.get(&definition.file).filter(|_| synchronous);
         let default_collection = identities.and_then(|types| written_default_collection(ty, types));
         let std_result = identities.is_some_and(|types| written_result_type(ty, types));
-        Some((symbol, (definition, ReturnType { info, cast_alias, default_collection, std_result, generics, parameters, receiver, owner, owner_generics })))
+        let std_option = identities.is_some_and(|types| written_option_type(ty, types));
+        Some((symbol, (definition, ReturnType { info, cast_alias, default_collection, std_result, std_option, generics, parameters, receiver, owner, owner_generics })))
     }).collect();
     for (definition, result) in return_types.values() {
         facts.types.push(TypeFact { site: (*definition).clone(), target: ValueFactTarget::Member, info: result.info.clone() });
@@ -1349,7 +1358,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let owner = ByteRange { file: definition.file.clone(), start: owner.start_byte() as u32, end: owner.end_byte() as u32 };
         let info = TypeInfo::new(written_shape(ty, text, identities), TypeOrigin::Declared, Some(text[ty.byte_range()].to_owned()));
         let default_collection = default_types.get(&definition.file).and_then(|types| written_default_collection(ty, types));
-        Some((symbol, (owner, info, cast_alias_at(&definition.file, ty), default_collection)))
+        let std_option = default_types.get(&definition.file).is_some_and(|types| written_option_type(ty, types));
+        Some((symbol, (owner, info, cast_alias_at(&definition.file, ty), default_collection, std_option)))
     }).collect();
 
     for doc in &index.documents {
@@ -1371,6 +1381,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let mut alias_values = HashMap::new();
         let mut default_values = HashMap::new();
         let mut result_calls = HashMap::new();
+        let mut option_values = HashMap::new();
         let mut ordered_queue_bindings = HashSet::new();
         let mut registry_selects = HashMap::new();
         let vec_macros: HashSet<_> = doc.occurrences.iter().filter_map(|occurrence| {
@@ -1544,10 +1555,12 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             {
                 let entry = fields.get(o.symbol.as_str());
                 record_unambiguous(&mut alias_values, (field.start_byte(), field.end_byte()),
-                    entry.and_then(|(_, _, alias, _)| alias.as_ref()));
+                    entry.and_then(|(_, _, alias, _, _)| alias.as_ref()));
                 record_unambiguous(&mut default_values, (field.start_byte(), field.end_byte()),
-                    entry.and_then(|(_, _, _, proof)| *proof));
-                if let Some((owner, info, _, _)) = entry {
+                    entry.and_then(|(_, _, _, proof, _)| *proof));
+                record_unambiguous(&mut option_values, (field.start_byte(), field.end_byte()),
+                    entry.is_some_and(|(_, _, _, _, std_option)| *std_option));
+                if let Some((owner, info, _, _, _)) = entry {
                     field_uses.push((field, owner, info));
                 }
             }
@@ -1669,6 +1682,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                         returns.and_then(|result| result.default_collection));
                     record_unambiguous(&mut result_calls, (at.start_byte(), at.end_byte()),
                         returns.is_some_and(|result| result.std_result));
+                    record_unambiguous(&mut option_values, (at.start_byte(), at.end_byte()),
+                        returns.is_some_and(|result| result.std_option));
                 }
                 if ref_kind == RefKind::Call && let Some((_, result)) = return_types.get(o.symbol.as_str()) {
                     let range = (at.start_byte(), at.end_byte());
@@ -1732,6 +1747,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             default_collections: default_values.into_iter()
                 .filter_map(|(range, proof)| Some((range, proof.flatten()?))).collect(),
             result_calls: result_calls.into_iter()
+                .filter_map(|(range, proof)| (proof == Some(true)).then_some(range)).collect(),
+            option_values: option_values.into_iter()
                 .filter_map(|(range, proof)| (proof == Some(true)).then_some(range)).collect(),
             ordered_queue_bindings,
             registry_selects: registry_selects.into_iter()

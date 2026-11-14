@@ -275,6 +275,7 @@ pub(crate) enum Family {
     VecDrain,
     VecTruncate,
     VecRemove,
+    VecExtend,
     VecRetain,
     StrSplit,
     Length,
@@ -311,6 +312,17 @@ pub(crate) struct DefaultCollection {
     name: &'static str,
     container: Option<DefaultType>,
     mutable_reference: bool,
+}
+
+pub(crate) fn written_option_type(ty: Node<'_>, identities: &HashMap<Range, DefaultType>) -> bool {
+    let mut ty = crate::syntax::unparen_type(ty);
+    if ty.kind() == "reference_type" {
+        let Some(inner) = ty.child_by_field_name("type") else { return false };
+        ty = crate::syntax::unparen_type(inner);
+    }
+    ty.kind() == "generic_type" && ty.child_by_field_name("type").is_some_and(|head| {
+        identities.get(&range(head)) == Some(&DefaultType::Option)
+    })
 }
 
 pub(crate) fn written_result_type(ty: Node<'_>, identities: &HashMap<Range, DefaultType>) -> bool {
@@ -373,6 +385,7 @@ pub(crate) struct Evidence<'a> {
     pub default_types: Option<&'a HashMap<Range, DefaultType>>,
     pub default_collections: HashMap<Range, DefaultCollection>,
     pub result_calls: HashSet<Range>,
+    pub option_values: HashSet<Range>,
     pub ordered_queue_bindings: HashSet<Range>,
     pub registry_selects: HashSet<Range>,
     pub definitions: Option<&'a HashMap<&'a str, Range>>,
@@ -1947,6 +1960,7 @@ impl Reader<'_, '_> {
             Family::VecTruncate => self.vec_truncate(node),
             Family::VecRemove if name == "dedup" => self.vec_dedup(node),
             Family::VecRemove => self.vec_remove(node, &name),
+            Family::VecExtend => self.vec_extend(node, name == "copy"),
             Family::VecRetain => self.vec_retain(node, &name),
             Family::StrSplit => self.str_split(node, &name),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
@@ -2337,6 +2351,39 @@ impl Reader<'_, '_> {
         ];
         self.push(self.src.span(node), self.src.span(call_member(node).unwrap_or(node)), true,
             ReadingContent::Steps { label: "Select a position and partition the slice".into(), steps });
+    }
+
+    fn vec_extend(&mut self, node: Node<'_>, copy: bool) {
+        let Some((vector, position)) = receiver(node) else { return };
+        let Some(source) = argument(node, usize::from(position.is_some())) else { return };
+        let vector = self.written(vector, 80);
+        let source_value = if source.kind() == "reference_expression" {
+            source.child_by_field_name("value").map(unparen).unwrap_or(source)
+        } else {
+            source
+        };
+        let option = self.evidence.option_values.contains(&range(source_value))
+            || self.op(source_value).is_some_and(|op| op.family == Family::Option && op.name == "Some")
+            || self.direct_option_receiver(source_value).is_some();
+        let input = if option {
+            "Use the Option as a source of zero or one item. None yields no item. Some supplies its value, or a reference to it if the Option is borrowed."
+        } else if self.op(source).is_some_and(|op| op.family == Family::Iter && op.name == "map") {
+            "Drive the input iterator now. When the mapped iterator supplies an item, its callback runs during this call."
+        } else {
+            "Use IntoIterator to turn the source into items and read them during this call."
+        };
+        let append = if copy {
+            format!("Copy each referenced value and append the copy to the end of {vector} in the source's order.")
+        } else {
+            format!("Append each yielded item to the end of {vector} in the source's order.")
+        };
+        let steps = vec![
+            self.step(source, "Read the source", input),
+            self.step(node, "Extend the existing vector", append),
+            self.step(node, "If the call completes", "The call returns () (unit)."),
+        ];
+        self.push(self.src.span(node), self.src.span(call_member(node).unwrap_or(node)), true,
+            ReadingContent::Steps { label: "Append items to the vector".into(), steps });
     }
 
     fn vec_remove(&mut self, node: Node<'_>, method: &str) {
