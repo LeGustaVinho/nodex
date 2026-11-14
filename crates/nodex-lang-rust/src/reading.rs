@@ -260,6 +260,7 @@ pub(crate) enum Family {
     IterFromFn,
     FutureReady,
     BoxPin,
+    FuturesOrderedPush,
     MemReplace,
     OnceLock,
     NonZero,
@@ -708,6 +709,14 @@ fn direct_argument_call(mut value: Node<'_>) -> Option<Node<'_>> {
     let arguments = value.parent().filter(|parent| parent.kind() == "arguments")?;
     let call = arguments.parent().filter(|parent| parent.kind() == "call_expression")?;
     (call.child_by_field_name("arguments") == Some(arguments)).then_some(call)
+}
+
+fn ordered_push_parts(call: Node<'_>) -> Option<(Node<'_>, Node<'_>)> {
+    let (_, receiver_argument) = receiver(call)?;
+    let member = method_call(call).map(|(_, member)| member).or_else(|| {
+        call.child_by_field_name("function")?.child_by_field_name("name")
+    })?;
+    Some((member, argument(call, usize::from(receiver_argument.is_some()))?))
 }
 
 #[derive(Clone, Copy)]
@@ -1874,6 +1883,7 @@ impl Reader<'_, '_> {
             Family::Iter if name == "fold" => self.iterator_fold(node),
             Family::ArrayFromFn | Family::IterFromFn => self.from_fn(node, family),
             Family::FutureReady | Family::BoxPin => self.future_preparation(node, family),
+            Family::FuturesOrderedPush => self.ordered_push(node),
             Family::MemReplace => self.mem_replace(node, &name),
             Family::OnceLock => self.once_lock_call(node, &name),
             Family::Length => {
@@ -2385,6 +2395,32 @@ impl Reader<'_, '_> {
             _ => return,
         };
         self.push(self.src.span(node), self.src.span(member), true, ReadingContent::Steps { label: label.into(), steps });
+    }
+
+    fn ordered_push(&mut self, node: Node<'_>) {
+        let Some((member, future)) = ordered_push_parts(node) else { return };
+        self.ordered_push_steps(self.src.span(node), self.src.span(member), self.src.span(future));
+    }
+
+    fn ordered_push_steps(&mut self, anchor: Span, member: Span, future: Span) {
+        let steps = vec![
+            ReadingStep {
+                span: future,
+                timing: "Before insertion".into(),
+                action: "Evaluate the argument to obtain the future. Any work done by that expression happens here.".into(),
+            },
+            ReadingStep {
+                span: member.clone(),
+                timing: "During push_back".into(),
+                action: "Put the future at the back of the queue without polling it.".into(),
+            },
+            ReadingStep {
+                span: member.clone(),
+                timing: "When the queue is polled".into(),
+                action: "Polling the queue lets futures make progress concurrently. They can finish in a different order. The queue yields outputs in queue order, waiting for earlier entries when needed.".into(),
+            },
+        ];
+        self.push(anchor, member, true, ReadingContent::Steps { label: "Queue a future at the back".into(), steps });
     }
 
     fn from_fn(&mut self, node: Node<'_>, family: Family) {
@@ -3203,6 +3239,10 @@ impl Reader<'_, '_> {
         }
         let tokens: Vec<_> = children(tree).into_iter().filter(|token| !token.is_extra()).collect();
         let loop_body = select_loop_body(node);
+        let queue_calls: HashSet<_> = self.evidence.operations.iter().filter_map(|(&range, operation)| {
+            (tree.start_byte() <= range.0 && range.1 <= tree.end_byte()
+                && operation.as_ref().is_some_and(|op| op.family == Family::FuturesOrderedPush)).then_some(range)
+        }).collect();
         let mut start = if let [_, bias, separator, ..] = tokens.as_slice()
             && self.src.text(*bias) == "biased" && separator.kind() == ";"
         {
@@ -3211,6 +3251,7 @@ impl Reader<'_, '_> {
             1
         };
         let mut steps = Vec::new();
+        let mut handlers = Vec::new();
         for (arrow, token) in tokens.iter().enumerate().filter(|(_, token)| self.src.text(**token) == "=>") {
             if arrow < start {
                 continue;
@@ -3232,21 +3273,59 @@ impl Reader<'_, '_> {
             } else {
                 break;
             }
-            start = if body.first().is_some_and(|token| {
+            let (handler_end, consumed) = if body.first().is_some_and(|token| {
                 token.kind() == "token_tree" && self.src.text(*token).starts_with('{')
             }) {
                 // A bare block handler can omit its comma. The next prefix must still
                 // look like a branch before we attribute a handler to it.
-                arrow + 2 + usize::from(body.get(1).is_some_and(|token| token.kind() == ","))
+                (body[0].end_byte(), 1 + usize::from(body.get(1).is_some_and(|token| token.kind() == ",")))
+            } else if let Some(comma) = select_handler_comma(self.src, body) {
+                (body[comma].start_byte(), comma + 1)
             } else {
-                select_handler_comma(self.src, body).map_or(tokens.len(), |comma| arrow + 2 + comma)
+                (tree.end_byte().saturating_sub(1), body.len())
             };
+            if let Some(first) = body.first()
+                && queue_calls.iter().any(|&(at, stop)| first.start_byte() <= at && stop <= handler_end)
+            {
+                handlers.push((first.start_byte(), handler_end));
+            }
+            start = arrow + 1 + consumed;
             if start >= tokens.len() {
                 break;
             }
         }
         if !steps.is_empty() {
             self.steps(node, "Wait for one eligible branch", steps);
+        }
+        for (start, end) in handlers {
+            self.select_handler_queue_calls(node, start, end, &queue_calls);
+        }
+    }
+
+    fn select_handler_queue_calls(&mut self, select: Node<'_>, start: usize, end: usize, queue_calls: &HashSet<Range>) {
+        let Some(parsed) = self.src.text.get(start..end).and_then(parse_macro_operand) else { return };
+        let Some(handler) = macro_operand(&parsed) else { return };
+        let original = |node: Node<'_>| {
+            let offset = node.start_byte() - MACRO_OPERAND_PREFIX.len();
+            let first = start + offset;
+            (first, first + node.byte_range().len())
+        };
+        let mut pending = vec![handler];
+        while let Some(part) = pending.pop() {
+            if matches!(part.kind(), "closure_expression" | "async_block" | "gen_block" | "const_block" | "macro_invocation")
+                || part.kind().ends_with("_item")
+            {
+                continue;
+            }
+            if part.kind() == "call_expression" && let Some((member, future)) = ordered_push_parts(part) {
+                let (first, last) = original(member);
+                if queue_calls.contains(&(first, last)) {
+                    let (arg_start, arg_end) = original(future);
+                    self.ordered_push_steps(self.src.span(select), self.src.index.span(self.src.file, first, last),
+                        self.src.index.span(self.src.file, arg_start, arg_end));
+                }
+            }
+            pending.extend(named_children(part).into_iter().rev());
         }
     }
 

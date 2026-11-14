@@ -457,6 +457,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
             (true, "tokio", "macros/select/select!" | "select!") => return Some((Family::Macro, "select".into())),
             (true, "tokio", "macros/join/join!") => return Some((Family::Macro, "join".into())),
             (true, "tokio", "macros/try_join/try_join!") => return Some((Family::Macro, "try_join".into())),
+            (true, "futures-util", "stream/futures_ordered/impl#[`FuturesOrdered<Fut>`]push_back().")
+                if sym.version.starts_with("0.3.") && sym.from_registry(registry) => Family::FuturesOrderedPush,
             (true, "tokio", "time/timeout/timeout()." | "time/timeout/timeout_at().") if sym.from_registry(registry) => Family::Effect,
             (true, "axum", "extract/ws/impl#[WebSocket]recv().") if sym.from_registry(registry) => return Some((Family::Effect, "recv_websocket".into())),
             (true, "tokio", "sync/mpsc/bounded/impl#[`Receiver<T>`]recv()." | "sync/mpsc/unbounded/impl#[`UnboundedReceiver<T>`]recv().")
@@ -1473,6 +1475,11 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                         "token_tree" if name.start_byte() == s && name.end_byte() == e => Some(name),
                         _ => None,
                     })
+                } else if family == Family::FuturesOrderedPush && name.start_byte() == s && name.end_byte() == e
+                    && name.parent().is_some_and(|parent| parent.kind() == "token_tree")
+                {
+                    // A proven select handler can recover the call from its original tokens.
+                    Some(name)
                 } else { enclosing_call(name) };
                 if let Some(at) = at {
                     record_operation(&mut operations, at, Resolved { family, name: operation, definition: None });
