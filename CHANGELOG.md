@@ -6,6 +6,10 @@ The release workflow publishes the section of the version it builds as the relea
 
 ## [Unreleased]
 
+### Fixed
+
+- Previewing an outcome in the Rust Blueprint Guide highlights its source occurrence, even when several readings share one node.
+
 ### Added
 
 - Rust Blueprints explain when a Tokio broadcast receive gets a message, falls behind, or finds the channel closed, including inside `select!`.

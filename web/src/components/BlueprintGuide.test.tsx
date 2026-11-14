@@ -483,6 +483,90 @@ it("shows the guard for a Rust match arm without choosing an execution edge", as
   }
 });
 
+it.each([undefined, "0"])("focuses the chosen pinless broadcast receive on path %s", async (path) => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const settings = useUi.getState();
+  const env = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previousEnvironment = env.IS_REACT_ACT_ENVIRONMENT;
+  env.IS_REACT_ACT_ENVIRONMENT = true;
+  const onStep = vi.fn();
+  const macro = `tokio::select! {
+    result = results.recv() => {},
+    publication = publications.recv() => {},
+  }`;
+  const selectSpan = { ...span, end_byte: macro.length, end_line: 4, end_col: 4 };
+  const receiveSpan = (receiver: string, line: number) => {
+    const start_byte = macro.indexOf(`${receiver}.recv()`);
+    const start_col = start_byte - macro.lastIndexOf("\n", start_byte);
+    const length = `${receiver}.recv()`.length;
+    return { ...span, start_byte, end_byte: start_byte + length, start_line: line, end_line: line, start_col, end_col: start_col + length };
+  };
+  const result = receiveSpan("results", 2);
+  const publication = receiveSpan("publications", 3);
+  const wait = { ...step("Wait for an event", "Call", [output("out", "")]), span: selectSpan, code: macro,
+    expr: { concept: "Call", label: "select!", children: [], flavors: ["macro"], span: selectSpan, symbol: null, target: null, ty: null, op: null, params: [] } as Expr };
+  const after = step("Continue the loop", "Return");
+  const receive = (receiver: string, location: typeof span): NonNullable<FlowGraph["reading"]>[number] => ({
+    node: wait.id, path, span: location, basis: "TypeAnalysis",
+    content: { kind: "Paths", input: `Read the next message from ${receiver}`, deferred: true,
+      timing: "When this receive is polled", branches: [
+        { label: "Message received", action: "Read the next message", output: "Ok(message)" },
+        { label: "Receiver lagged", action: "Advance to the oldest message still retained", output: "Err(RecvError::Lagged(n))" },
+        { label: "Channel closed", action: "There are no more messages", output: "Err(RecvError::Closed)" },
+      ] },
+  });
+  const example: FlowGraph = {
+    ...flow, span: selectSpan, source_revision: "broadcast-source",
+    nodes: [wait, after], edges: [exec(wait.id, "out", after.id)],
+    reading: [receive("results", result), receive("publications", publication)],
+  };
+  const render = (sourceRevision: string, replaying = false) => act(async () => root.render(
+    <BlueprintGuide flows={[example]} activeFlow={example.symbol} activeNode={wait.id} replaying={replaying} onStep={onStep}
+      sources={{ [span.file]: { bytes: new TextEncoder().encode(macro), revision: sourceRevision } }} />,
+  ));
+  const button = (label: string) => [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === label)!;
+  const lagged = () => [...host.querySelectorAll("button")].filter((candidate) => candidate.textContent === "Receiver lagged");
+  try {
+    useUi.setState({ blueprintExplanations: true });
+    const selection = { kind: "flow-node", flow: example.symbol, id: wait.id, pin: "out" } as const;
+    useUi.getState().select(selection, selectSpan);
+    const expanded = useUi.getState().expanded;
+    await render("broadcast-source");
+    const choices = lagged();
+    expect(choices).toHaveLength(2);
+    for (const [choice, location] of [[choices[0], result], [choices[1], publication]] as const) {
+      await act(async () => choice.click());
+      expect(useUi.getState()).toMatchObject({ selection, codeFocus: location, codeFocusRevision: "broadcast-source" });
+      expect(useUi.getState().expanded).toBe(expanded);
+      expect(host.querySelector('[role="status"]')?.textContent).toBe("Receiver lagged → Err(RecvError::Lagged(n))");
+      expect(onStep).not.toHaveBeenCalled();
+    }
+    await act(async () => button("Back").click());
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    await act(async () => button("Next").click());
+    expect(onStep).toHaveBeenCalledExactlyOnceWith(example.symbol, after);
+
+    await act(async () => lagged()[0].click());
+    await render("edited-source");
+    expect(lagged()).toHaveLength(0);
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(useUi.getState().codeFocus).toEqual(result);
+
+    await render("broadcast-source");
+    await act(async () => lagged()[1].click());
+    await render("broadcast-source", true);
+    expect(lagged()).toHaveLength(0);
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(useUi.getState().codeFocus).toEqual(publication);
+    expect(onStep).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => root.unmount());
+    useUi.setState(settings);
+    env.IS_REACT_ACT_ENVIRONMENT = previousEnvironment;
+  }
+});
+
 it("previews the selected value of an embedded Rust match before taking the next statement", async () => {
   const host = document.createElement("div");
   const root = createRoot(host);

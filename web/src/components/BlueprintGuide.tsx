@@ -191,6 +191,7 @@ export function BlueprintGuide({ flows, activeFlow, activeNode, replaying, onSte
             if (next && edge) {
               visit(flow, next, { via: edge.from_pin });
             } else {
+              if (!pin && revision && site.span.file === flow.span.file) focusCode(site.span, revision);
               setLocalChoice({ flow: flow.symbol, node: node.id, revision, text: `${label} → ${output}` });
             }
           }} inspect={(site, span) => {
