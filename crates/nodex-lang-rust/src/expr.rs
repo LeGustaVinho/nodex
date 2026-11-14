@@ -816,6 +816,9 @@ fn access_of(src: Src, id: Node) -> Option<Access> {
 }
 
 fn collect(src: Src, node: Node, shadowed: &mut Vec<String>, out: &mut Vec<Read>) {
+    if crate::syntax::discarded_path(node) {
+        return;
+    }
     match node.kind() {
         "identifier" => {
             let name = src.text(node).to_owned();

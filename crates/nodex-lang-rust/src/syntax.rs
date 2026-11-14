@@ -72,6 +72,30 @@ pub(crate) fn statement_tail(statement: Node<'_>) -> Option<Node<'_>> {
     is_expression(statement.kind()).then_some(statement)
 }
 
+/// The wildcard token when it is the entire `let` pattern, possibly grouped.
+pub(crate) fn let_wildcard(declaration: Node<'_>) -> Option<Node<'_>> {
+    if declaration.kind() != "let_declaration" || declaration.child_by_field_name("alternative").is_some() {
+        return None;
+    }
+    let mut pattern = declaration.child_by_field_name("pattern")?;
+    while let Some(inner) = nodex_lang_api::blueprint_types::rust_grouped_pattern(pattern) {
+        pattern = inner;
+    }
+    (pattern.kind() == "_" && !pattern.is_missing()).then_some(pattern)
+}
+
+/// A plain path in a wildcard initializer supplies no value to read or capture.
+pub(crate) fn discarded_path(mut node: Node<'_>) -> bool {
+    if !matches!(node.kind(), "identifier" | "self" | "scoped_identifier") {
+        return false;
+    }
+    while let Some(parent) = node.parent().filter(|parent| parent.kind() == "parenthesized_expression") {
+        node = parent;
+    }
+    node.parent().is_some_and(|parent| let_wildcard(parent).is_some()
+        && parent.child_by_field_name("value") == Some(node))
+}
+
 /// Removes redundant parentheses.
 pub fn unparen(mut node: Node) -> Node {
     while node.kind() == "parenthesized_expression" {

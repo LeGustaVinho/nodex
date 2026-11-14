@@ -363,6 +363,10 @@ fn a_question_mark_statement_discards_the_value_but_keeps_both_execution_outcome
             let _ = value?;
             Ok(5)
         }
+        fn grouped_wildcard(value: Result<String, String>) -> Result<u8, String> {
+            let (_) = (value?);
+            Ok(6)
+        }
     "#;
     let ir = lower_source("src/lib.rs", source);
     for (function, expected) in [
@@ -370,7 +374,8 @@ fn a_question_mark_statement_discards_the_value_but_keeps_both_execution_outcome
         ("fitting", "Continue after this statement"),
         ("maybe", "Continue after this statement"),
         ("consumed", "Use the value as an argument to std::hint::black_box(...)"),
-        ("wildcard", "Continue"),
+        ("wildcard", "Continue after this statement"),
+        ("grouped_wildcard", "Continue after this statement"),
     ] {
         let graph = ir.flows.iter().find(|flow| flow.name == function).unwrap();
         let (node, site) = question_marks(graph, source).next().unwrap();
@@ -386,4 +391,82 @@ fn a_question_mark_statement_discards_the_value_but_keeps_both_execution_outcome
         assert!(graph.edges.iter().any(|edge| edge.kind == FlowEdgeKind::Exec
             && edge.from == node.id && edge.from_pin == "out"));
     }
+}
+
+#[test]
+fn let_wildcard_evaluates_the_initializer_without_binding_its_result() {
+    let source = r#"
+        struct Pair { field: String }
+
+        fn places(existing: String, pair: Pair) -> String {
+            let _ = existing;
+            let (_) = (existing);
+            let _ = pair.field;
+            existing + &pair.field
+        }
+
+        async fn gateway(send: impl std::future::Future<Output = Result<(), String>>) {
+            let _ = send.await;
+        }
+
+        fn durable(send: impl FnOnce() -> Result<(), String>) {
+            let _ = send();
+        }
+
+        fn indexed(values: Vec<String>, index: impl FnOnce() -> usize) {
+            let _ = values[index()];
+        }
+
+        fn uncaptured(existing: String) -> String {
+            let callback = move || { let _ = (existing); };
+            callback();
+            existing
+        }
+
+        fn bindings(value: String, pair: (String,)) {
+            let _name = value;
+            let (_,) = pair;
+        }
+    "#;
+    let ir = lower_source("src/lib.rs", source);
+    let flow = |name| ir.flows.iter().find(|graph| graph.name == name).unwrap();
+    let ignored = |node: &FlowNode| node.label.starts_with("evaluate ") && node.label.ends_with(" and ignore the result");
+    for (name, expected) in [("places", 3), ("gateway", 1), ("durable", 1), ("indexed", 1), ("bindings", 0)] {
+        let graph = flow(name);
+        let sites: Vec<_> = graph.reading.iter().flatten().filter(|site| {
+            matches!(&site.content, ReadingContent::Detail { label, .. } if label == "Ignore the result with let _")
+        }).collect();
+        assert_eq!(sites.len(), expected, "{name}: {:?}", graph.reading);
+        assert_eq!(graph.nodes.iter().filter(|node| ignored(node)).count(), expected, "{name}");
+        for site in sites {
+            assert_eq!(&source[site.span.start_byte as usize..site.span.end_byte as usize], "_");
+            assert!(site.path.is_none());
+            assert!(matches!(&site.content, ReadingContent::Detail { text, .. }
+                if text.contains("creates no variable") && text.contains("value stays in place")
+                    && text.contains("when its temporary scope ends")));
+            let node = graph.node(&site.node).unwrap();
+            assert!(node.outputs.iter().all(|pin| !pin.id.starts_with("var:")));
+        }
+    }
+    let places = flow("places");
+    for node in places.nodes.iter().filter(|node| ignored(node)) {
+        assert!(places.edges.iter().filter(|edge| edge.to == node.id && edge.kind == FlowEdgeKind::Data)
+            .all(|edge| !matches!(edge.access, Some(nodex_ir::Access::Move | nodex_ir::Access::Copy | nodex_ir::Access::ByValue))));
+        if !node.code.contains("pair.field") {
+            assert!(!places.edges.iter().any(|edge| edge.to == node.id && edge.kind == FlowEdgeKind::Data));
+        }
+    }
+    let gateway = flow("gateway");
+    let discard_await = gateway.nodes.iter().find(|node| ignored(node)).unwrap();
+    assert!(discard_await.flavors.iter().any(|flavor| flavor == "async"));
+    assert_eq!(discard_await.expr.as_ref().unwrap().concept, Concept::Await);
+    let indexed = flow("indexed");
+    let discard_index = indexed.nodes.iter().find(|node| ignored(node)).unwrap();
+    assert!(discard_index.inputs.iter().any(|pin| pin.id == "use:index"));
+    let uncaptured = flow("uncaptured");
+    let callback = uncaptured.nodes.iter().find(|node| node.code.starts_with("let callback")).unwrap();
+    assert!(!callback.inputs.iter().any(|pin| pin.id == "use:existing"));
+    let bindings = flow("bindings");
+    assert!(bindings.nodes.iter().any(|node| node.outputs.iter().any(|pin| pin.id == "var:_name")));
+    assert!(bindings.nodes.iter().any(|node| node.code.contains("let (_,)") && node.concept == Concept::Destructure));
 }

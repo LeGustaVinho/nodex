@@ -12,6 +12,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints explain how `let _ = expression` evaluates the initializer and discards its result without binding a variable.
 - The Rust Blueprint Guide can return to the start of a `loop` after a mapped path finishes normally, including after scope cleanup.
 - Rust Blueprints explain when `Vec::extend` consumes its source and how an `Option` can add zero or one item.
 - Rust Blueprints show how slice sorting calls a comparator or extracts keys, updates the original collection, and handles ties.

@@ -17,7 +17,7 @@ use tree_sitter::Node;
 
 use crate::expr::{ExprLowering, callee_path, macro_args, macro_name, reads};
 use crate::structure::{BodyJob, BodyKind, direct_loop_body};
-use crate::syntax::{Src, block_statements, children, first_child_of_kind, inclusive_range_to, is_comment, is_expression, is_item, named_children, parameters, pattern_bindings, statement_tail, unparen};
+use crate::syntax::{Src, block_statements, children, first_child_of_kind, inclusive_range_to, is_comment, is_expression, is_item, let_wildcard, named_children, parameters, pattern_bindings, statement_tail, unparen};
 
 pub struct Lowered {
     pub graph: FlowGraph,
@@ -762,6 +762,7 @@ impl Lowering<'_, '_> {
         let value = s.child_by_field_name("value");
         let ty = s.child_by_field_name("type").map(|t| src.norm(t)).or_else(|| value.and_then(|v| self.infer(v)));
         let alternative = s.child_by_field_name("alternative");
+        let ignores_result = value.is_some() && let_wildcard(s).is_some();
         let binding = pattern.and_then(single_binding);
         let single = binding.map(|b| src.text(b).to_owned());
         let mutable = first_child_of_kind(s, "mutable_specifier").is_some()
@@ -786,6 +787,9 @@ impl Lowering<'_, '_> {
         let (concept, label) = match (&shown, &value_text) {
             (Some(n), Some(v)) => (Concept::Var, format!("{n} = {v}")),
             (Some(n), None) => (Concept::Var, format!("declare {n}")),
+            (None, Some(v)) if ignores_result => {
+                (Concept::Call, format!("evaluate {v} and ignore the result"))
+            }
             (None, v) => (
                 Concept::Destructure,
                 match (v, alternative.is_some()) {

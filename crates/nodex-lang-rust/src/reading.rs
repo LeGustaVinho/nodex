@@ -3939,6 +3939,7 @@ impl Reader<'_, '_> {
             if let Some(&declaration) = definitions.get(symbol)
                 && declaration.0 < node.start_byte()
                 && let Some(usage) = node.descendant_for_byte_range(start, end)
+                && !crate::syntax::discarded_path(usage)
             {
                 let mut place = usage;
                 let mut info = self.types.get(&declaration).map(|ty| (*ty).clone());
@@ -4028,6 +4029,13 @@ impl Reader<'_, '_> {
             && let Some(else_token) = children(node).into_iter().find(|token| token.kind() == "else")
         {
             self.let_else(node, value, pattern, else_token);
+        }
+        if value.is_some() && let Some(wildcard) = crate::syntax::let_wildcard(node) {
+            self.push(self.src.span(node), self.src.span(wildcard), false, detail(
+                "Ignore the result with let _",
+                "Evaluate the expression on the right, including any effects. The wildcard creates no variable. If the expression refers to an existing variable or field, its value stays in place. A temporary result is discarded and cleaned up when its temporary scope ends.",
+            ));
+            return;
         }
         if pattern.kind() == "identifier" {
             return;
@@ -4375,6 +4383,7 @@ fn expression_result_is_discarded(mut node: Node<'_>) -> bool {
     node.parent().is_some_and(|parent| {
         parent.kind() == "expression_statement"
             && children(parent).iter().any(|token| token.kind() == ";" && !token.is_missing())
+            || crate::syntax::let_wildcard(parent).is_some() && parent.child_by_field_name("value") == Some(node)
     })
 }
 
