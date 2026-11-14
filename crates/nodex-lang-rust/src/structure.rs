@@ -231,6 +231,11 @@ impl<'a, 't> Collector<'a, 't> {
                     let s = self.sym(&format!("ns:{path}"), SymbolKind::Module, &name, Some(&module_id), item, flavors);
                     self.push(s);
                     self.items(body, &path);
+                } else if let Some(explanation) = crate::external_module_reading::explain(src, item) {
+                    let path = format!("{module}::{name}");
+                    let mut s = self.sym(&format!("ns:{path}"), SymbolKind::Module, &name, Some(&module_id), item, flavors);
+                    s.rust_contract.get_or_insert_with(Vec::new).push(explanation);
+                    self.push(s);
                 }
             }
             "struct_item" | "union_item" => self.struct_item(item, module, flavors),

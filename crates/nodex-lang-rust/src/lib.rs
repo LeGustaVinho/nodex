@@ -8,6 +8,7 @@
 
 mod borrow;
 mod expr;
+mod external_module_reading;
 mod flow;
 mod debug;
 pub mod instrument;
@@ -22,6 +23,15 @@ mod reading_tuple_let;
 mod struct_binding_reading;
 mod let_else_explanation;
 mod const_explanation;
+mod static_explanation;
+mod static_mut_explanation;
+mod function_explanation;
+mod function_signature_explanation;
+mod never_return_reading;
+mod pub_function_explanation;
+mod inline_module_explanation;
+mod import_item_explanation;
+mod import_path_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;

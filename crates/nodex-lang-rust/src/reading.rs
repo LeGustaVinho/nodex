@@ -25,6 +25,14 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
     items.extend(crate::const_explanation::explain(src, node));
+    items.extend(crate::static_explanation::explain(src, node));
+    items.extend(crate::static_mut_explanation::explain(src, node));
+    items.extend(crate::function_explanation::explain(src, node));
+    items.extend(crate::function_signature_explanation::explain(src, node));
+    items.extend(crate::pub_function_explanation::explain(src, node));
+    items.extend(crate::inline_module_explanation::explain(src, node));
+    items.extend(crate::import_item_explanation::explain(src, node));
+    items.extend(crate::import_path_explanation::explain(src, node));
     let mut add = |at, group: &str, text: String, ty: Option<Node>| {
         let type_info = ty.map(|ty| {
             let native = src.norm(ty);
@@ -92,6 +100,7 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
         }
         if let Some(result) = node.child_by_field_name("return_type") {
             let description = match result.kind() {
+                "never_type" => crate::never_return_reading::explain(result).unwrap(),
                 "abstract_type" => "A concrete type chosen by this implementation that meets the listed requirements",
                 "reference_type" => "A reference to data that must remain available for the required lifetime",
                 _ => "Value returned to the caller",
