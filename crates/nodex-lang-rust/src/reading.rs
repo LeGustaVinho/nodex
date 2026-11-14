@@ -62,6 +62,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::trait_declaration_explanation::explain(src, node));
     items.extend(crate::enum_discriminant_explanation::explain(src, node));
     items.extend(crate::supertrait_explanation::explain(src, node));
+    items.extend(crate::multiple_supertraits_explanation::explain(src, node));
+    items.extend(crate::shared_receiver_explanation::explain(src, node));
+    items.extend(crate::new_associated_function_explanation::explain(src, node));
+    items.extend(crate::blanket_impl_explanation::explain(src, node));
+    items.extend(crate::trait_impl_explanation::explain(src, node));
+    items.extend(crate::generic_inherent_impl_explanation::explain(src, node));
+    items.extend(crate::inherent_impl_explanation::explain(src, node));
     let import_container = match node.kind() {
         "source_file" => Some(node),
         "mod_item" => node.child_by_field_name("body"),

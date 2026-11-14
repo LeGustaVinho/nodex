@@ -71,6 +71,13 @@ mod tuple_variant_call_explanation;
 mod union_initialization_explanation;
 mod enum_discriminant_explanation;
 mod supertrait_explanation;
+mod multiple_supertraits_explanation;
+mod shared_receiver_explanation;
+mod new_associated_function_explanation;
+mod blanket_impl_explanation;
+mod trait_impl_explanation;
+mod generic_inherent_impl_explanation;
+mod inherent_impl_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;
