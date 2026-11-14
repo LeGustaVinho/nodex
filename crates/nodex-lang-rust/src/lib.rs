@@ -42,6 +42,16 @@ mod public_visibility_explanation;
 mod pub_crate_explanation;
 mod pub_super_explanation;
 mod pub_self_explanation;
+mod pub_in_explanation;
+mod crate_path_explanation;
+mod self_path_explanation;
+mod super_path_explanation;
+mod path_separator_explanation;
+mod self_type_explanation;
+mod raw_identifier_explanation;
+mod absolute_path_explanation;
+mod super_single_path_explanation;
+mod self_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;

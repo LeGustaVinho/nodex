@@ -41,6 +41,15 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::pub_crate_explanation::explain(src, node));
     items.extend(crate::pub_super_explanation::explain(src, node));
     items.extend(crate::pub_self_explanation::explain(src, node));
+    items.extend(crate::pub_in_explanation::explain(src, node));
+    items.extend(crate::crate_path_explanation::imports(src, node));
+    items.extend(crate::self_path_explanation::imports(src, node));
+    items.extend(crate::super_path_explanation::imports(src, node));
+    items.extend(crate::self_type_explanation::explain(src, node));
+    items.extend(crate::raw_identifier_explanation::explain(src, node));
+    items.extend(crate::absolute_path_explanation::explain_imports(src, node));
+    items.extend(crate::super_single_path_explanation::imports(src, node));
+    items.extend(crate::self_explanation::receiver(src, node));
     let import_container = match node.kind() {
         "source_file" => Some(node),
         "mod_item" => node.child_by_field_name("body"),
@@ -1147,7 +1156,18 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((span, content)) = crate::absolute_path_explanation::explain_path(self.src, node) {
+            self.push(self.src.span(node), span, false, content);
+        }
         match node.kind() {
+            "scoped_identifier" | "scoped_type_identifier" => {
+                let content = crate::crate_path_explanation::expression(self.src, node)
+                    .or_else(|| crate::self_path_explanation::expression(self.src, node))
+                    .or_else(|| crate::super_path_explanation::expression(self.src, node))
+                    .or_else(|| crate::super_single_path_explanation::expression(self.src, node))
+                    .or_else(|| crate::path_separator_explanation::explain(self.src, node).map(|text| detail(crate::path_separator_explanation::TITLE, text)));
+                if let Some(content) = content { self.at(node, false, content); }
+            }
             "call_expression" => self.call(node),
             "try_expression" => self.propagation(node),
             "type_cast_expression" => self.numeric_cast(node),
