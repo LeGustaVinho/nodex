@@ -256,6 +256,7 @@ pub(crate) enum Family {
     Clone,
     Macro,
     Effect,
+    OneShot,
     ArrayFromFn,
     IterFromFn,
     FutureReady,
@@ -1120,7 +1121,15 @@ impl Reader<'_, '_> {
             "block" => self.block_result(node),
             "base_field_initializer" => self.struct_update(node),
             "macro_invocation" => self.macro_call(node),
-            "await_expression" => self.at(node, false, detail("Await a result", "Continue here when the future is ready. If it is pending, this task can suspend.")),
+            "await_expression" => {
+                if self.op(node).is_some_and(|op| op.family == Family::OneShot && op.name == "poll") {
+                    if let Some(keyword) = children(node).into_iter().find(|token| token.kind() == "await") {
+                        self.oneshot_receive(node, self.src.span(keyword), false);
+                    }
+                } else {
+                    self.at(node, false, detail("Await a result", "Continue here when the future is ready. If it is pending, this task can suspend."));
+                }
+            }
             "unsafe_block" => self.at(node, false, detail("Operations with extra safety conditions", "Check the contract of each unsafe operation used here. Rust still checks the types.")),
             "foreign_mod_item" => self.at(node, false, detail("Foreign interface", "These declarations describe how Rust calls code across an ABI boundary.")),
             "async_block" => {
@@ -1901,6 +1910,7 @@ impl Reader<'_, '_> {
         let name = op.name.clone();
         match family {
             Family::Bool => self.bool_call(node, &name),
+            Family::OneShot => self.oneshot_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::Arc if matches!(name.as_str(), "make_mut" | "unwrap_or_clone") => self.arc_value(node, &name),
             Family::Arc if name == "try_unwrap" => self.arc_try_unwrap(node),
@@ -1963,6 +1973,39 @@ impl Reader<'_, '_> {
                 }
             }
         }
+    }
+
+    fn oneshot_call(&mut self, node: Node<'_>, name: &str) {
+        let Some(member) = call_member(node) else { return };
+        let span = self.src.span(member);
+        match name {
+            "channel" => self.push(self.src.span(node), span, true, detail(
+                "Create a channel for one value",
+                "Return (sender, receiver). The sender can send one value, and the receiver can wait for it. Creating this pair does not send a value or start a task.",
+            )),
+            "send" => {
+                let Some((_, receiver_argument)) = receiver(node) else { return };
+                let Some(value) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+                self.paths(node, span, true, format!("Use up this sender to send {} once. This call does not wait for the receiver.", self.written(value, 100)), vec![
+                    branch("The channel accepts the value", "The receiver can take the value later. This does not confirm that it has read it.", "Ok(())"),
+                    branch("The receiver has closed or been dropped", "Return the original value to the caller.", "Err(value)"),
+                ], self.known_type(node));
+            }
+            "blocking_recv" => self.oneshot_receive(node, span, true),
+            _ => {}
+        }
+    }
+
+    fn oneshot_receive(&mut self, node: Node<'_>, span: Span, blocking: bool) {
+        let input = if blocking {
+            "Receive the channel's single value, blocking the current thread if it is still pending. This call panics inside an asynchronous execution context."
+        } else {
+            "The receiver is itself a future. Await its single value. If the channel is still pending, this task can suspend."
+        };
+        self.paths(node, span, true, input.into(), vec![
+            branch("The channel delivers a value", "Use the value the sender sent, including false or an error if that is the value.", "Ok(value)"),
+            branch("The channel closes without delivering a value", "The receiver completes with an error because there is no message to read.", "Err(RecvError)"),
+        ], self.known_type(node));
     }
 
     fn timeout(&mut self, call: Node<'_>, name: &str) {

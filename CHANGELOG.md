@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints explain the two ends of a Tokio one-value channel and distinguish a received value from a channel that closes without one.
 - Rust Blueprints show how `select_nth_unstable_by` partitions a slice in place and how `Vec::truncate` keeps the prefix.
 - Rust Blueprints show how `Mutex::into_inner`, `Arc::try_unwrap`, and `OnceLock::into_inner` return the values they hold.
 - Rust Blueprints explain when a `loop` repeats and how `break` can supply the value of the loop expression.

@@ -1,0 +1,9 @@
+[package]
+name = "rust-tokio-oneshot-reading"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "=1.47.1", features = ["sync", "rt"] }
+
+[workspace]
