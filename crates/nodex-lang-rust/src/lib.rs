@@ -17,6 +17,11 @@ mod reading;
 pub mod semantic;
 mod structure;
 mod syntax;
+mod shadow_reading;
+mod reading_tuple_let;
+mod struct_binding_reading;
+mod let_else_explanation;
+mod const_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;

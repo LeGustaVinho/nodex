@@ -24,6 +24,7 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::const_explanation::explain(src, node));
     let mut add = |at, group: &str, text: String, ty: Option<Node>| {
         let type_info = ty.map(|ty| {
             let native = src.norm(ty);
@@ -4020,6 +4021,9 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        if let Some(content) = crate::shadow_reading::explain(self.src, node) {
+            self.at(node, true, content);
+        }
         let Some(pattern) = node.child_by_field_name("pattern") else {
             return;
         };
@@ -4037,10 +4041,37 @@ impl Reader<'_, '_> {
             ));
             return;
         }
+        self.explicit_binding_type(node, pattern);
+        if node.kind() == "let_declaration" && value.is_none() && pattern.kind() == "identifier" {
+            let name = self.src.norm(pattern);
+            let type_description = node.child_by_field_name("type")
+                .map(|ty| format!(" with the declared type {}", self.src.norm(ty)))
+                .unwrap_or_default();
+            self.push(self.src.span(node), self.src.span(pattern), false, detail(
+                "Declare a variable without a value",
+                format!("Declare {name}{type_description}, but do not assign a value yet. Rust requires it to be initialized on every reachable path before its value is read."),
+            ));
+        }
         if pattern.kind() == "identifier" {
+            self.explain_immutable_binding(node, pattern, value);
+            if node.kind() == "let_declaration"
+                && value.is_some()
+                && let Some(mutability) = children(node).into_iter().find(|child| child.kind() == "mutable_specifier")
+            {
+                self.push(self.src.span(node), self.src.span(mutability), false, detail(
+                    "Create a changeable variable",
+                    format!("let creates the variable {} and initializes it with the value on the right. mut allows assigning a new value to this variable later; it does not make other variables changeable.", self.short(pattern)),
+                ));
+            }
             return;
         }
         let input = value.map_or_else(|| "Input value".into(), |value| self.short(value));
+        if let Some(tuple) = crate::reading_tuple_let::tuple_let_pattern(node) {
+            self.push(self.src.span(node), self.src.span(tuple), false, detail(crate::reading_tuple_let::TITLE, crate::reading_tuple_let::EXPLANATION));
+        }
+        if let Some(text) = crate::struct_binding_reading::explanation(node) {
+            self.push(self.src.span(node), self.src.span(pattern), false, detail("Destructure named fields", text));
+        }
         let declared = node.child_by_field_name("type");
         let lookup = value.and_then(|value| self.lookup(unparen(value)));
         let ty = declared
@@ -4094,10 +4125,25 @@ impl Reader<'_, '_> {
         );
     }
 
+    fn explicit_binding_type(&mut self, node: Node<'_>, pattern: Node<'_>) {
+        if node.kind() != "let_declaration" || pattern.kind() != "identifier"
+            || node.child_by_field_name("value").is_none() {
+            return;
+        }
+        let Some(ty) = node.child_by_field_name("type") else { return };
+        let name = self.short(pattern);
+        let type_name = self.short(ty);
+        self.push(self.src.span(node), self.src.span(ty), false, detail(
+            "Explicit variable type",
+            format!("The colon introduces the explicitly declared type of {name}: {type_name}. Rust checks the initializer against this type; the annotation describes the variable, not a conversion of its value."),
+        ));
+    }
+
     fn let_else(&mut self, node: Node, value: Node, pattern: Node, else_token: Node) {
-        let mut success = branch("Pattern matches", "Any names bound by the pattern become available after this statement.", "Continue below");
+        let (input, success_text, mismatch_text) = crate::let_else_explanation::explain(&self.short(value), &self.short(pattern));
+        let mut success = branch("Pattern matches", success_text, "Continue below");
         success.pin = Some("out".into());
-        let mut mismatch = branch("Pattern mismatch", "The else block must leave this path or run without finishing. It can use return, break, continue, or panic.", "Run else");
+        let mut mismatch = branch("Pattern mismatch", mismatch_text, "Run else");
         mismatch.pin = Some("else".into());
         let scope = boundary(node);
         let timing = scope.filter(|scope| scope.kind() == "async_block").map(|_| "When the future runs".into());
@@ -4111,7 +4157,7 @@ impl Reader<'_, '_> {
             self.src.span(else_token),
             false,
             ReadingContent::Paths {
-                input: format!("Check whether {} matches {}", self.short(value), self.short(pattern)),
+                input,
                 deferred: inline_closure || timing.is_some(),
                 branches: vec![success, mismatch],
                 result: None,
@@ -5420,3 +5466,5 @@ mod tests {
         assert_eq!(steps[2].action, "Run the else branch");
     }
 }
+
+mod immutable_binding;
