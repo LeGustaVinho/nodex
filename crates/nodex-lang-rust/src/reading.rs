@@ -53,6 +53,11 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::named_struct_explanation::explain(src, node));
     items.extend(crate::tuple_struct_explanation::explain(src, node));
     items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::byte_literal_explanation::contract(src, node));
+    items.extend(crate::byte_string_literal_explanation::contract(src, node));
+    items.extend(crate::hex_integer_literal_explanation::contract(src, node));
+    items.extend(crate::octal_literal_explanation::contract(src, node));
+    items.extend(crate::f64_literal_explanation::contract(src, node));
     items.extend(crate::u8_literal_explanation::contract(src, node));
     items.extend(crate::i32_suffixed_literal_explanation::contract(src, node));
     items.extend(crate::raw_lifetime_label_explanation::contract(src, node));
@@ -1258,6 +1263,16 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((span, content)) = crate::byte_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::raw_byte_string_hash_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((span, content)) = crate::byte_string_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::multiple_hash_raw_string_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::raw_byte_string_explanation::explain(self.src, node) { self.push(self.src.span(node), site, false, content); }
+        if let Some((span, content)) = crate::hex_integer_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::octal_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::raw_string_no_hash_explanation::explain(self.src, node) { self.push(self.src.span(node), site, false, content); }
+        if let Some((span, content)) = crate::one_hash_raw_string_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::f64_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((span, content)) = crate::u8_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((span, content)) = crate::i32_suffixed_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::positional_field_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
