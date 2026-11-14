@@ -900,9 +900,16 @@ impl Lowering<'_, '_> {
             "identifier" => self.b.type_of(src.text(v)),
             "reference_expression" => {
                 let inner = v.child_by_field_name("value")?;
-                let mutable = children(v).iter().any(|c| c.kind() == "mutable_specifier");
+                let parts = children(v);
+                let mutable = parts.iter().any(|c| c.kind() == "mutable_specifier" || src.text(*c) == "mut");
+                let raw = parts.iter().any(|c| src.text(*c) == "raw");
                 let t = self.infer(inner).unwrap_or_else(|| "…".into());
-                Some(if mutable { format!("&mut {t}") } else { format!("&{t}") })
+                Some(match (raw, mutable) {
+                    (true, true) => format!("*mut {t}"),
+                    (true, false) => format!("*const {t}"),
+                    (false, true) => format!("&mut {t}"),
+                    (false, false) => format!("&{t}"),
+                })
             }
             "struct_expression" => v.child_by_field_name("name").map(|n| src.norm(n)),
             "array_expression" => Some("[…]".into()),

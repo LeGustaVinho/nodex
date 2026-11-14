@@ -1243,6 +1243,14 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::if_else_value_explanation::explain(self.src, node) { self.push(self.src.span(site), self.src.span(site), false, content); }
+        if let Some((statement, site, content)) = crate::semicolon_block_result_explanation::explain(self.src, node) { self.push(self.src.span(statement), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::mutable_pattern_binding_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::block_expression_explanation::explain(node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::ref_mut_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::ref_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::raw_mut_address_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::raw_const_address_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::dereference_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::shared_borrow_expression_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::mutable_borrow_expression_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -1269,6 +1277,13 @@ impl Reader<'_, '_> {
             self.push(self.src.span(node), span, false, content);
         }
         match node.kind() {
+            "if_expression" => {
+                if let Some((keyword, content)) = crate::if_let_condition_explanation::explain(self.src, node) {
+                    let body = node.child_by_field_name("consequence");
+                    self.push(self.src.header_span(node, body), self.src.span(keyword), false, content);
+                }
+                self.if_value(node);
+            }
             "unit_expression" => { if let Some(content) = crate::unit_type_explanation::value(node) { self.at(node, false, content); } }
             "scoped_identifier" | "scoped_type_identifier" => {
                 let content = crate::crate_path_explanation::expression(self.src, node)
@@ -1346,7 +1361,6 @@ impl Reader<'_, '_> {
                 self.match_value(node);
                 self.match_patterns(node);
             }
-            "if_expression" => self.if_value(node),
             "field_expression" => {
                 if let Some(by_reference) = self.evidence.direct_fields.get(&range(node)).copied()
                     .or_else(|| self.tuple_member(node).map(|(_, by_reference)| by_reference))
@@ -4195,6 +4209,7 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        if let Some((anchor, site, content)) = crate::let_block_value_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::value_binding_transfer_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::qualified_assoc_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::for_lifetime_fn_pointer_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
