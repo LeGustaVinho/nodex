@@ -272,6 +272,7 @@ pub(crate) enum Family {
     InclusiveRange,
     VecDrain,
     VecTruncate,
+    VecRemove,
     VecRetain,
     StrSplit,
     Length,
@@ -1942,6 +1943,8 @@ impl Reader<'_, '_> {
             Family::InclusiveRange => self.inclusive_range_contains(node),
             Family::VecDrain => self.vec_drain(node),
             Family::VecTruncate => self.vec_truncate(node),
+            Family::VecRemove if name == "dedup" => self.vec_dedup(node),
+            Family::VecRemove => self.vec_remove(node, &name),
             Family::VecRetain => self.vec_retain(node, &name),
             Family::StrSplit => self.str_split(node, &name),
             Family::NumericFrom { source, target } | Family::NumericTryFrom { source, target } => {
@@ -2250,6 +2253,37 @@ impl Reader<'_, '_> {
         ];
         self.push(self.src.span(node), self.src.span(call_member(node).unwrap_or(node)), true,
             ReadingContent::Steps { label: "Select a position and partition the slice".into(), steps });
+    }
+
+    fn vec_remove(&mut self, node: Node<'_>, method: &str) {
+        let Some((vector, position)) = receiver(node) else { return };
+        let Some(index) = argument(node, usize::from(position.is_some())) else { return };
+        let vector = self.written(vector, 80);
+        let index_text = self.written(index, 80);
+        let label = if method == "swap_remove" { "Remove an element by swapping in the last one" } else { "Remove an element and preserve the order" };
+        let mut steps = vec![self.step(index, "Index", format!("Select index {index_text} in {vector}, counting from zero. An index outside the vector panics."))];
+        if method == "swap_remove" {
+            steps.extend([
+                self.step(node, "If the index is before the last element", "Move the last element into the removed element's position and shorten the vector. This can change the order."),
+                self.step(node, "If the index is the last element", "Shorten the vector by one. No other element needs to move."),
+            ]);
+        } else {
+            steps.push(self.step(node, "For a valid index", "Shift the elements after the removed one left by one slot and shorten the vector. The remaining elements keep their relative order."));
+        }
+        steps.push(self.step(node, "Returned value", "Return the removed element by value."));
+        self.push(self.src.span(node), self.src.span(call_member(node).unwrap_or(node)), true,
+            ReadingContent::Steps { label: label.into(), steps });
+    }
+
+    fn vec_dedup(&mut self, node: Node<'_>) {
+        let Some((vector, _)) = receiver(node) else { return };
+        let vector = self.written(vector, 80);
+        let steps = vec![
+            self.step(node, "During the call", format!("Compare consecutive elements of {vector} using the element type's PartialEq equality. Keep the first element in each run of equal neighbors and drop the rest in place.")),
+            self.step(node, "If the call completes", "Equal elements separated by different values can both remain. The call returns () (unit)."),
+        ];
+        self.push(self.src.span(node), self.src.span(call_member(node).unwrap_or(node)), true,
+            ReadingContent::Steps { label: "Remove consecutive duplicates".into(), steps });
     }
 
     fn vec_truncate(&mut self, node: Node<'_>) {

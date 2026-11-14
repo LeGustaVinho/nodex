@@ -350,6 +350,11 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
         if sym.package == "alloc" && descriptor == "string/impl#[String]len()." {
             return Some((Family::Length, "bytes".into()));
         }
+        if sym.package == "alloc" && matches!(descriptor,
+            "vec/impl#[`Vec<T, A>`]swap_remove()." | "vec/impl#[`Vec<T, A>`]remove()." | "vec/impl#[`Vec<T, A>`]dedup().")
+        {
+            return Some((Family::VecRemove, name.into()));
+        }
         if sym.package == "alloc" && descriptor == "vec/impl#[`Vec<T, A>`]truncate()." {
             return Some((Family::VecTruncate, name.into()));
         }

@@ -8,6 +8,7 @@ The release workflow publishes the section of the version it builds as the relea
 
 ### Added
 
+- Rust Blueprints explain which elements move when a vector removes an item and why `dedup` only removes adjacent duplicates.
 - The Rust Blueprint Guide links an ordered queue insertion to the `next()` call that can poll the same queue in a Tokio `select!`.
 - Rust Blueprints explain floating-point ordering and when `then` and `then_with` evaluate a tie breaker.
 - Rust Blueprints explain the two ends of a Tokio one-value channel and distinguish a received value from a channel that closes without one.
