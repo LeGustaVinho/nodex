@@ -1255,6 +1255,16 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((owner, site, content)) = crate::half_open_range_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((m, site, content)) = crate::range_to_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(m, m.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::open_lower_range_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::inclusive_match_range_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::at_binding_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::err_pattern_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::or_pattern_syntax_explanation::explain(self.src, node) { let body = owner.child_by_field_name("body").or_else(|| owner.child_by_field_name("consequence")); self.push(self.src.header_span(owner, body), self.src.span(site), false, content); }
+        for (anchor, site, content) in crate::none_pattern_explanation::explain(self.src, node) { self.push(anchor, self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::ok_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::some_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (anchor, site, content) in crate::wildcard_pattern_explanation::explain(node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::async_closure_explanation::explain(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::basic_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
