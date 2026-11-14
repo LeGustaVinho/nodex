@@ -122,6 +122,11 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::relaxed_sized_explanation::contract(src, node));
     items.extend(crate::where_associated_type_explanation::explain(src, node));
     items.extend(crate::sized_bound_explanation::contract(src, node));
+    items.extend(crate::lifetime_send_bounds_explanation::contract(src, node));
+    items.extend(crate::const_function_parameter_explanation::explain(src, node));
+    items.extend(crate::default_type_parameter_explanation::explain(src, node));
+    items.extend(crate::struct_const_parameter_explanation::contract(src, node));
+    items.extend(crate::const_generic_default_explanation::explain(src, node));
     items.extend(crate::integer_128_explanation::explain(src, node));
     items.extend(crate::signed_integer_explanation::explain(src, node));
     items.extend(crate::float_type_explanation::contract(src, node));
@@ -1234,6 +1239,9 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (site, content) in crate::computed_const_generic_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::turbofish_type_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::const_turbofish_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::inferred_type_placeholder_explanation::generic_arguments(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((keyword, content)) = crate::unsafe_function_pointer_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(keyword), false, content); }
         if let Some((comma, content)) = crate::single_tuple_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(comma), false, content); }
@@ -2076,6 +2084,8 @@ impl Reader<'_, '_> {
     }
 
     fn call(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::method_turbofish_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, text)) = crate::turbofish_type_path_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Generic arguments on a type path", text)); }
         if let Some((arguments, text)) = crate::tuple_variant_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(arguments), false, detail("Construct a tuple-style enum variant", text)); }
         if let Some((callee, text)) = crate::tuple_struct_call_explanation::explain(self.src, node) {
             self.push(self.src.span(node), self.src.span(callee), false, detail("Construct a tuple struct", text));
