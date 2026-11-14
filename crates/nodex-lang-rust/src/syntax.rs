@@ -301,10 +301,14 @@ pub fn parameters(src: Src, func: Node) -> Vec<(String, Option<String>)> {
     out
 }
 
-/// The `self` receiver of a method: `&self`, `&mut self`, `self`, `mut self`.
+/// The `self` receiver of a method, including explicitly typed receivers.
 pub fn receiver(src: Src, func: Node) -> Option<String> {
     let list = func.child_by_field_name("parameters")?;
-    let s = first_child_of_kind(list, "self_parameter")?;
+    let s = named_children(list).into_iter().find(|parameter| {
+        parameter.kind() == "self_parameter"
+            || (parameter.kind() == "parameter"
+                && parameter.child_by_field_name("pattern").is_some_and(|pattern| pattern.kind() == "self"))
+    })?;
     let text = src.norm(s);
     Some(if text.contains("&mut") || text.contains("& mut") {
         "&mut self".into()

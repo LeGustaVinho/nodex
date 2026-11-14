@@ -78,6 +78,16 @@ mod blanket_impl_explanation;
 mod trait_impl_explanation;
 mod generic_inherent_impl_explanation;
 mod inherent_impl_explanation;
+mod associated_type_impl_explanation;
+mod trait_associated_type_explanation;
+mod default_trait_method_explanation;
+mod unsafe_trait_explanation;
+mod required_associated_const_explanation;
+mod boxed_receiver_explanation;
+mod arc_receiver_explanation;
+mod unsafe_impl_explanation;
+mod type_alias_explanation;
+mod add_impl_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;
