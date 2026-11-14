@@ -88,6 +88,16 @@ mod arc_receiver_explanation;
 mod unsafe_impl_explanation;
 mod type_alias_explanation;
 mod add_impl_explanation;
+mod pointer_sized_integer_explanation;
+mod str_type_explanation;
+mod unit_type_explanation;
+mod unsigned_integer_type_explanation;
+mod integer_128_explanation;
+mod signed_integer_explanation;
+mod float_type_explanation;
+mod char_type_explanation;
+mod str_reference_explanation;
+mod string_type_explanation;
 
 use std::collections::HashSet;
 use std::path::Path;

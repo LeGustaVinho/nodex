@@ -79,6 +79,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::unsafe_impl_explanation::explain(src, node));
     items.extend(crate::type_alias_explanation::explain(src, node));
     items.extend(crate::add_impl_explanation::explain(src, node));
+    items.extend(crate::pointer_sized_integer_explanation::contract(src, node));
+    items.extend(crate::str_type_explanation::contract(src, node));
+    items.extend(crate::unit_type_explanation::contract(src, node));
+    items.extend(crate::unsigned_integer_type_explanation::explain(src, node));
+    items.extend(crate::integer_128_explanation::explain(src, node));
+    items.extend(crate::signed_integer_explanation::explain(src, node));
+    items.extend(crate::float_type_explanation::contract(src, node));
+    items.extend(crate::char_type_explanation::contract(src, node));
+    items.extend(crate::str_reference_explanation::contract(src, node));
+    items.extend(crate::string_type_explanation::contract(src, node));
     let import_container = match node.kind() {
         "source_file" => Some(node),
         "mod_item" => node.child_by_field_name("body"),
@@ -1185,11 +1195,24 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((highlight, content)) = crate::float_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(highlight), false, content); }
+        for (ty, content) in crate::char_type_explanation::local(self.src, node) {
+            let span = if node.child_by_field_name("type") == Some(ty) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(ty), |part| self.src.span(part)) } else { self.src.span(ty) };
+            self.push(self.src.span(node), span, false, content);
+        }
+        if let Some(content) = crate::pointer_sized_integer_explanation::reading(self.src, node) {
+            if let Some(binding) = node.parent().filter(|parent| parent.kind() == "let_declaration" && parent.child_by_field_name("type") == Some(node)) {
+                let span = children(binding).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(node), |part| self.src.span(part));
+                self.push(self.src.span(binding), span, false, content);
+            } else { self.at(node, false, content); }
+        }
+        if let Some(content) = crate::str_type_explanation::reading(self.src, node) { self.at(node, false, content); }
         if let Some(content) = crate::raw_lifetime_label_explanation::label(self.src, node) { self.at(node, false, content); }
         if let Some((span, content)) = crate::absolute_path_explanation::explain_path(self.src, node) {
             self.push(self.src.span(node), span, false, content);
         }
         match node.kind() {
+            "unit_expression" => { if let Some(content) = crate::unit_type_explanation::value(node) { self.at(node, false, content); } }
             "scoped_identifier" | "scoped_type_identifier" => {
                 let content = crate::crate_path_explanation::expression(self.src, node)
                     .or_else(|| crate::self_path_explanation::expression(self.src, node))
@@ -4111,6 +4134,23 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        for (span, content) in crate::integer_128_explanation::local(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        for (site, content) in crate::str_reference_explanation::local(self.src, node) {
+            let span = if node.child_by_field_name("type") == Some(site) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(site), |part| self.src.span(part)) } else { self.src.span(site) };
+            self.push(self.src.span(node), span, false, content);
+        }
+        if let Some((ty, content)) = crate::string_type_explanation::local(self.src, node) {
+            let span = if node.child_by_field_name("type") == Some(ty) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(ty), |part| self.src.span(part)) } else { self.src.span(ty) };
+            self.push(self.src.span(node), span, false, content);
+        }
+        for (ty, text) in crate::signed_integer_explanation::local_types(self.src, node) {
+            let span = if node.child_by_field_name("type") == Some(ty) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(ty), |part| self.src.span(part)) } else { self.src.span(ty) };
+            self.push(self.src.span(node), span, false, detail("Signed integer type", text));
+        }
+        for (ty, content) in crate::unsigned_integer_type_explanation::local(self.src, node) {
+            let span = if node.child_by_field_name("type") == Some(ty) { children(node).into_iter().find(|part| part.kind() == ":").map_or_else(|| self.src.span(ty), |part| self.src.span(part)) } else { self.src.span(ty) };
+            self.push(self.src.span(node), span, false, content);
+        }
         if let Some(content) = crate::shadow_reading::explain(self.src, node) {
             self.at(node, true, content);
         }
