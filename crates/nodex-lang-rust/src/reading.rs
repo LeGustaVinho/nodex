@@ -53,6 +53,8 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::named_struct_explanation::explain(src, node));
     items.extend(crate::tuple_struct_explanation::explain(src, node));
     items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::u8_literal_explanation::contract(src, node));
+    items.extend(crate::i32_suffixed_literal_explanation::contract(src, node));
     items.extend(crate::raw_lifetime_label_explanation::contract(src, node));
     items.extend(crate::unit_struct_explanation::explain(src, node));
     items.extend(crate::unit_enum_explanation::explain(src, node));
@@ -1256,6 +1258,16 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((span, content)) = crate::u8_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::i32_suffixed_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::positional_field_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::half_open_for_range_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::usize_literal_explanation::explain(self.src, node) { self.push(self.src.span(node), site, false, content); }
+        if let Some((site, content)) = crate::single_tuple_value_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::f32_literal_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::tuple_field_access_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::array_literal_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::array_repeat_beginner_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::open_start_slice_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::inclusive_prefix_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::open_ended_index_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
