@@ -93,6 +93,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::mutable_slice_reference_explanation::contract(src, node));
     items.extend(crate::raw_const_pointer_explanation::contract(src, node));
     items.extend(crate::raw_mut_pointer_explanation::contract(src, node));
+    items.extend(crate::dynamic_trait_type_explanation::contract(src, node));
+    items.extend(crate::unsafe_function_pointer_explanation::contract(src, node));
+    items.extend(crate::return_impl_trait_explanation::explain(src, node));
+    items.extend(crate::impl_trait_parameter_explanation::contract(src, node));
+    items.extend(crate::borrowed_dyn_trait_explanation::contract(src, node));
+    items.extend(crate::function_pointer_type_explanation::contract(src, node));
+    items.extend(crate::boxed_dyn_trait_explanation::contract(src, node));
+    items.extend(crate::dyn_send_bound_explanation::contract(src, node));
+    items.extend(crate::dyn_lifetime_explanation::contract(src, node));
+    items.extend(crate::combined_impl_trait_explanation::contract(src, node));
     items.extend(crate::integer_128_explanation::explain(src, node));
     items.extend(crate::signed_integer_explanation::explain(src, node));
     items.extend(crate::float_type_explanation::contract(src, node));
@@ -1205,6 +1215,7 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((keyword, content)) = crate::unsafe_function_pointer_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(keyword), false, content); }
         if let Some((comma, content)) = crate::single_tuple_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(comma), false, content); }
         if let Some((highlight, content)) = crate::float_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(highlight), false, content); }
         for (ty, content) in crate::char_type_explanation::local(self.src, node) {
@@ -4145,6 +4156,12 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        for (site, content) in crate::dyn_send_bound_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::dyn_lifetime_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::boxed_dyn_trait_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::borrowed_dyn_trait_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::function_pointer_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::dynamic_trait_type_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::raw_mut_pointer_explanation::local(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::raw_const_pointer_explanation::local(node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::shared_slice_reference_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
