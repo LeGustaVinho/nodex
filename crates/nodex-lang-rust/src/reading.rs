@@ -140,6 +140,7 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::qualified_assoc_type_explanation::contract(src, node));
     items.extend(crate::precise_capture_explanation::contract(src, node));
     items.extend(crate::associated_type_bound_explanation::contract(src, node));
+    items.extend(crate::tuple_pattern_explanation::contract(src, node));
     items.extend(crate::integer_128_explanation::explain(src, node));
     items.extend(crate::signed_integer_explanation::explain(src, node));
     items.extend(crate::float_type_explanation::contract(src, node));
@@ -1255,6 +1256,14 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((owner, site, content)) = crate::match_middle_slice_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::nested_tuple_variant_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::half_open_range_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::exact_slice_pattern_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::slice_endpoint_pattern_explanation::explain(self.src, node) { let body = owner.child_by_field_name("body").or_else(|| owner.child_by_field_name("consequence")); self.push(self.src.header_span(owner, body), self.src.span(site), false, content); }
+        for (anchor, site, content) in crate::tuple_pattern_explanation::reading(self.src, node) { self.push(anchor, self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::named_positional_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::tuple_rest_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((owner, site, content)) = crate::some_ref_mut_match_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((anchor, site, content)) = crate::explicit_field_pattern_explanation::explain(self.src, node) { self.push(anchor, self.src.span(site), false, content); }
         if let Some((owner, site, content)) = crate::named_field_match_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
@@ -4273,6 +4282,7 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::two_element_array_let_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::for_tuple_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((anchor, site, content)) = crate::let_block_value_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::value_binding_transfer_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
