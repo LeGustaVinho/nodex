@@ -242,6 +242,7 @@ fn range(node: Node) -> Range {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Family {
     Bool,
+    Ordering,
     Option,
     Result,
     Map,
@@ -1910,6 +1911,7 @@ impl Reader<'_, '_> {
         let name = op.name.clone();
         match family {
             Family::Bool => self.bool_call(node, &name),
+            Family::Ordering => self.ordering_call(node, &name),
             Family::OneShot => self.oneshot_call(node, &name),
             Family::Option | Family::Result => self.container_call(node, family, &name),
             Family::Arc if matches!(name.as_str(), "make_mut" | "unwrap_or_clone") => self.arc_value(node, &name),
@@ -2623,6 +2625,38 @@ impl Reader<'_, '_> {
             ],
             None,
         );
+    }
+
+    fn ordering_call(&mut self, node: Node<'_>, name: &str) {
+        let Some(member) = call_member(node) else { return };
+        if name == "total_cmp" {
+            self.push(self.src.span(node), self.src.span(member), true, detail(
+                "Compare floating-point values in a total order",
+                "Return Less, Equal, or Greater. This comparison also places NaN values in the order and treats negative zero as less than positive zero.",
+            ));
+            return;
+        }
+        let Some((first, receiver_argument)) = receiver(node) else { return };
+        let Some(tie) = argument(node, usize::from(receiver_argument.is_some())) else { return };
+        let first = self.written(first, 100);
+        let tie = self.written(tie, 100);
+        let (input, use_tie, keep_first) = if name == "then_with" {
+            (
+                format!("Use {first} as the first comparison. Evaluate {tie} to obtain the tie-breaking function."),
+                "Call the tie-breaking function and use its comparison result.",
+                "Keep the first result and skip calling the tie-breaking function.",
+            )
+        } else {
+            (
+                format!("Evaluate {first} first. If it completes, evaluate the tie-breaker {tie} before this call even when the first comparison already decides the order."),
+                "Use the tie-breaking result that has already been evaluated.",
+                "Keep the first result and discard the already evaluated tie-breaking result.",
+            )
+        };
+        self.paths(node, self.src.span(member), true, input, vec![
+            branch("First comparison is Equal", use_tie, "Tie-breaking ordering"),
+            branch("First comparison is Less or Greater", keep_first, "First ordering"),
+        ], self.known_type(node));
     }
 
     fn bool_call(&mut self, node: Node<'_>, name: &str) {
@@ -3509,6 +3543,7 @@ impl Reader<'_, '_> {
         self.map_callback_entry(node, parameters, async_);
         if !async_ {
             self.fold_callback_entry(node, parameters);
+            self.ordering_callback_entry(node, parameters);
         }
         if !async_ && moves {
             self.closure_result_borrow(node);
@@ -3569,6 +3604,24 @@ impl Reader<'_, '_> {
             span: self.src.span(parameters),
             basis: ValueBasis::TypeAnalysis,
             content: detail(label, text),
+            expression_target: Some(Concept::Entry),
+        });
+    }
+
+    fn ordering_callback_entry(&mut self, closure: Node<'_>, parameters: Node<'_>) {
+        let Some(call) = direct_argument_call(closure) else { return };
+        if !self.op(call).is_some_and(|op| op.family == Family::Ordering && op.name == "then_with") {
+            return;
+        }
+        let Some((_, receiver_argument)) = receiver(call) else { return };
+        if argument(call, usize::from(receiver_argument.is_some())) != Some(closure) {
+            return;
+        }
+        self.readings.push(ReadingFact {
+            anchor: self.src.header_span(closure, closure.child_by_field_name("body")),
+            span: self.src.span(parameters),
+            basis: ValueBasis::TypeAnalysis,
+            content: detail("Break a tie between equal values", "This function runs only when the first comparison returns Equal. Its return value becomes the ordering returned by then_with."),
             expression_target: Some(Concept::Entry),
         });
     }

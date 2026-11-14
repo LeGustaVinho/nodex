@@ -381,6 +381,12 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
         if sym.package == "core" && let Some(conversion) = numeric_conversion(descriptor) {
             return Some(conversion);
         }
+        if sym.package == "core" && matches!(descriptor,
+            "cmp/impl#[Ordering]then()." | "cmp/impl#[Ordering]then_with()."
+            | "f32/impl#[f32]total_cmp()." | "f64/impl#[f64]total_cmp().")
+        {
+            return Some((Family::Ordering, name.into()));
+        }
         if sym.package == "core"
             && let Some(method) = descriptor.strip_prefix("slice/impl#[`[T]`]").and_then(|name| name.strip_suffix("()."))
         {
