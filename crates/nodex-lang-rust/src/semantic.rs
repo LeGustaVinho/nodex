@@ -488,6 +488,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
                 if sym.from_registry(registry) => return Some((Family::Effect, "recv_mpsc".into())),
             (true, "tokio", "sync/broadcast/impl#[`Receiver<T>`]recv().")
                 if sym.from_registry(registry) => Family::BroadcastRecv,
+            (true, "tokio", "sync/broadcast/impl#[`Sender<T>`]send()." | "sync/broadcast/impl#[`Sender<T>`]subscribe().")
+                if sym.from_registry(registry) => Family::BroadcastSender,
             (true, "tokio", descriptor) if (descriptor.starts_with("time/") && name == "sleep")
                 || (descriptor.starts_with("sync/mpsc/") || descriptor.starts_with("sync/broadcast/") || descriptor.starts_with("sync/oneshot/"))
                     && matches!(name, "send" | "recv")

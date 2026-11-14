@@ -265,6 +265,7 @@ pub(crate) enum Family {
     FuturesOrderedPush,
     StreamNext,
     BroadcastRecv,
+    BroadcastSender,
     MemReplace,
     OnceLock,
     NonZero,
@@ -1973,6 +1974,7 @@ impl Reader<'_, '_> {
             }
             Family::Effect if matches!(name.as_str(), "timeout" | "timeout_at") => self.timeout(node, &name),
             Family::BroadcastRecv => self.broadcast_receive(node),
+            Family::BroadcastSender => self.broadcast_sender(node, &name),
             Family::Iter | Family::ParIter if matches!(name.as_str(), "collect" | "sum" | "count" | "for_each") => {
                 self.sequence(node, &name);
             }
@@ -2016,6 +2018,25 @@ impl Reader<'_, '_> {
             branch("The channel delivers a value", "Use the value the sender sent, including false or an error if that is the value.", "Ok(value)"),
             branch("The channel closes without delivering a value", "The receiver completes with an error because there is no message to read.", "Err(RecvError)"),
         ], self.known_type(node));
+    }
+
+    fn broadcast_sender(&mut self, call: Node<'_>, name: &str) {
+        let Some(member) = call_member(call) else { return };
+        let Some((sender, receiver_argument)) = receiver(call) else { return };
+        let span = self.src.span(member);
+        if name == "subscribe" {
+            self.push(self.src.span(call), span, true, detail(
+                "Subscribe to future broadcasts",
+                format!("Create a receiver for {}. It starts at the next send and receives a clone of each retained message when it reads it. Messages sent before this call are outside the subscription.", self.written(sender, 90)),
+            ));
+            return;
+        }
+        let Some(value) = argument(call, usize::from(receiver_argument.is_some())) else { return };
+        self.paths(call, span, true,
+            format!("Send {} through {}. This call returns without waiting for receivers to read the message.", self.written(value, 90), self.written(sender, 90)), vec![
+                branch("At least one receiver is active", "Put the message in the shared buffer and report how many receivers were active. A receiver may drop or fall behind before reading it.", "Ok(receiver count)"),
+                branch("No receivers are active", "Return a send error containing the original value.", "Err(SendError(value))"),
+            ], self.known_type(call));
     }
 
     fn broadcast_receive(&mut self, call: Node<'_>) {
