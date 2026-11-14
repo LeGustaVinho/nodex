@@ -43,6 +43,55 @@ pub async fn nested(next_message: impl Future<Output = Option<u8>>) {
     }
 }
 
+pub async fn two_queues(input: impl Future<Output = u8>) {
+    use futures_util::stream::{FuturesOrdered as Queue, StreamExt as Extension};
+    use tokio::select as choose;
+    let mut first: Queue<Reply> = Queue::new();
+    let mut second = Queue::<Reply>::new();
+    choose! {
+        Some(_) = /* ação */ first.next(), if !first.is_empty() => {}
+        Some(_) = Extension::next(&mut second), if !second.is_empty() => {}
+        incoming = input => {
+            /* após receber */ first.push_back(Box::pin(std::future::ready(incoming)));
+            FuturesOrdered::push_back(&mut second, Box::pin(std::future::ready(incoming + 1)));
+            let mut first = Queue::<Reply>::new();
+            first.push_back(Box::pin(std::future::ready(100)));
+        }
+    }
+}
+
+pub async fn different_select(input: impl Future<Output = u8>) {
+    let mut queue = FuturesOrdered::<Reply>::new();
+    tokio::select! { _ = queue.next() => {} }
+    tokio::select! { incoming = input => queue.push_back(Box::pin(std::future::ready(incoming))) }
+}
+
+struct Wrapped(FuturesOrdered<Reply>);
+
+impl std::ops::Deref for Wrapped {
+    type Target = FuturesOrdered<Reply>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+impl std::ops::DerefMut for Wrapped {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+
+impl futures_util::Stream for Wrapped {
+    type Item = u8;
+    fn poll_next(self: Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Option<u8>> {
+        std::task::Poll::Ready(Some(99))
+    }
+}
+
+pub async fn wrapped(input: impl Future<Output = u8>) {
+    let mut queue = Wrapped(FuturesOrdered::new());
+    tokio::select! {
+        _ = queue.next() => {}
+        incoming = input => queue.push_back(Box::pin(std::future::ready(incoming))),
+    }
+}
+
 pub struct Local;
 
 impl Local {

@@ -472,6 +472,8 @@ fn reading_operation(sym: &Sym<'_>, path: &str, external: bool, registry: &Regis
             (true, "tokio", "macros/try_join/try_join!") => return Some((Family::Macro, "try_join".into())),
             (true, "futures-util", "stream/futures_ordered/impl#[`FuturesOrdered<Fut>`]push_back().")
                 if sym.version.starts_with("0.3.") && sym.from_registry(registry) => Family::FuturesOrderedPush,
+            (true, "futures-util", "stream/stream/StreamExt#next().")
+                if sym.version.starts_with("0.3.") && sym.from_registry(registry) => Family::StreamNext,
             (true, "tokio", "time/timeout/timeout()." | "time/timeout/timeout_at().") if sym.from_registry(registry) => Family::Effect,
             (true, "tokio", "sync/oneshot/channel()." | "sync/oneshot/impl#[`Sender<T>`]send()."
                 | "sync/oneshot/impl#[`Receiver<T>`]blocking_recv()."
@@ -1360,6 +1362,8 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
         let mut alias_values = HashMap::new();
         let mut default_values = HashMap::new();
         let mut result_calls = HashMap::new();
+        let mut ordered_queue_bindings = HashSet::new();
+        let mut registry_selects = HashMap::new();
         let vec_macros: HashSet<_> = doc.occurrences.iter().filter_map(|occurrence| {
             let symbol = parse_symbol(&occurrence.symbol)?;
             (symbol.standard() && matches!(display(&symbol).as_str(), "alloc::macros::vec!" | "alloc::vec!" | "std::vec!"))
@@ -1411,10 +1415,32 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                         Some(LineIndex::new(text).span(&definition.file, definition.start as usize, definition.end as usize))
                     });
                     let builtin = reading_operation(&sym, &display(&sym), external, registry);
+                    record_unambiguous(&mut registry_selects, (invocation.start_byte(), invocation.end_byte()),
+                        builtin.as_ref().is_some_and(|(_, name)| name == "select")
+                            && sym.descriptors == "macros/select/select!" && sym.from_registry(registry));
                     let name = builtin.map_or_else(String::new, |(_, name)| name);
                     record_operation(&mut operations, invocation, Resolved { family: Family::Macro, name, definition });
                 }
                 continue;
+            }
+            if external && sym.package == "futures-util" && sym.version.starts_with("0.3.")
+                && name.start_byte() == s && name.end_byte() == e
+            {
+                let bindings = match sym.descriptors {
+                    "stream/futures_ordered/FuturesOrdered#" if sym.from_registry(registry) => {
+                        outer_type_declaration(name).filter(|(_, by_reference)| !by_reference)
+                            .and_then(|(decl, _)| named_value_site(decl))
+                            .filter(|(_, target)| *target == ValueFactTarget::Binding)
+                            .map(|(binding, _)| vec![(binding, false)]).unwrap_or_default()
+                    }
+                    "stream/futures_ordered/impl#[`FuturesOrdered<Fut>`]new()." if sym.from_registry(registry) => {
+                        enclosing_call(name).map(constructor_type_sites).unwrap_or_default()
+                    }
+                    _ => Vec::new(),
+                };
+                ordered_queue_bindings.extend(bindings.into_iter()
+                    .filter(|(node, by_reference)| node.kind() == "identifier" && !by_reference)
+                    .map(|(node, _)| (node.start_byte(), node.end_byte())));
             }
             let kind = kind_of(sym.descriptors);
             let segs = segments(sym.descriptors);
@@ -1494,7 +1520,7 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
                 } else if family == Family::OneShot && operation == "poll" {
                     name.parent().filter(|parent| name.kind() == "await" && name.start_byte() == s
                         && name.end_byte() == e && parent.kind() == "await_expression")
-                } else if family == Family::FuturesOrderedPush && name.start_byte() == s && name.end_byte() == e
+                } else if matches!(family, Family::FuturesOrderedPush | Family::StreamNext) && name.start_byte() == s && name.end_byte() == e
                     && name.parent().is_some_and(|parent| parent.kind() == "token_tree")
                 {
                     // A proven select handler can recover the call from its original tokens.
@@ -1697,6 +1723,9 @@ fn convert(index: &scip::types::Index, root: &Path, prefix: &str, local_packages
             default_collections: default_values.into_iter()
                 .filter_map(|(range, proof)| Some((range, proof.flatten()?))).collect(),
             result_calls: result_calls.into_iter()
+                .filter_map(|(range, proof)| (proof == Some(true)).then_some(range)).collect(),
+            ordered_queue_bindings,
+            registry_selects: registry_selects.into_iter()
                 .filter_map(|(range, proof)| (proof == Some(true)).then_some(range)).collect(),
             definitions: Some(&local_definitions),
             uses: &local_uses,

@@ -263,6 +263,7 @@ pub(crate) enum Family {
     FutureReady,
     BoxPin,
     FuturesOrderedPush,
+    StreamNext,
     MemReplace,
     OnceLock,
     NonZero,
@@ -369,6 +370,8 @@ pub(crate) struct Evidence<'a> {
     pub default_types: Option<&'a HashMap<Range, DefaultType>>,
     pub default_collections: HashMap<Range, DefaultCollection>,
     pub result_calls: HashSet<Range>,
+    pub ordered_queue_bindings: HashSet<Range>,
+    pub registry_selects: HashSet<Range>,
     pub definitions: Option<&'a HashMap<&'a str, Range>>,
     pub uses: &'a [(usize, usize, &'a str)],
     pub precise_captures: Option<bool>,
@@ -2525,10 +2528,11 @@ impl Reader<'_, '_> {
 
     fn ordered_push(&mut self, node: Node<'_>) {
         let Some((member, future)) = ordered_push_parts(node) else { return };
-        self.ordered_push_steps(self.src.span(node), self.src.span(member), self.src.span(future));
+        self.ordered_push_steps(self.src.span(node), self.src.span(member), self.src.span(future), None);
     }
 
-    fn ordered_push_steps(&mut self, anchor: Span, member: Span, future: Span) {
+    fn ordered_push_steps(&mut self, anchor: Span, member: Span, future: Span, poll: Option<Span>) {
+        let linked = poll.is_some();
         let steps = vec![
             ReadingStep {
                 span: future,
@@ -2541,9 +2545,10 @@ impl Reader<'_, '_> {
                 action: "Put the future at the back of the queue without polling it.".into(),
             },
             ReadingStep {
-                span: member.clone(),
+                span: poll.unwrap_or_else(|| member.clone()),
                 timing: "When the queue is polled".into(),
-                action: "Polling the queue lets futures make progress concurrently. They can finish in a different order. The queue yields outputs in queue order, waiting for earlier entries when needed.".into(),
+                action: format!("{}Polling the queue lets futures make progress concurrently. They can finish in a different order. The queue yields outputs in queue order, waiting for earlier entries when needed.",
+                    if linked { "This select can poll the queue in this binding through the highlighted next() when its branch is enabled and polled. The insertion handler runs after a branch has already been chosen. " } else { "" }),
             },
         ];
         self.push(anchor, member, true, ReadingContent::Steps { label: "Queue a future at the back".into(), steps });
@@ -3401,6 +3406,7 @@ impl Reader<'_, '_> {
             (tree.start_byte() <= range.0 && range.1 <= tree.end_byte()
                 && operation.as_ref().is_some_and(|op| op.family == Family::FuturesOrderedPush)).then_some(range)
         }).collect();
+        let link_poll = !queue_calls.is_empty() && self.evidence.registry_selects.contains(&range(node));
         let mut start = if let [_, bias, separator, ..] = tokens.as_slice()
             && self.src.text(*bias) == "biased" && separator.kind() == ";"
         {
@@ -3410,6 +3416,8 @@ impl Reader<'_, '_> {
         };
         let mut steps = Vec::new();
         let mut handlers = Vec::new();
+        let mut polls = HashMap::new();
+        let mut handlers_complete = true;
         for (arrow, token) in tokens.iter().enumerate().filter(|(_, token)| self.src.text(**token) == "=>") {
             if arrow < start {
                 continue;
@@ -3423,6 +3431,9 @@ impl Reader<'_, '_> {
                 && select_branch_pattern(self.src, &before[..equal])
             {
                 let wait = self.src.text.get(first.start_byte()..last.end_byte()).unwrap_or("");
+                if link_poll && let Some((binding, span)) = self.select_queue_poll(&before[equal + 1..]) {
+                    polls.entry(binding).and_modify(|previous| *previous = None).or_insert(Some(span));
+                }
                 let (at, action) = exit.unwrap_or((*token, "run this branch"));
                 steps.push(self.step(at, "When ready and the pattern matches", format!("{wait} → {action}")));
             } else if let [otherwise] = before && self.src.text(*otherwise) == "else" {
@@ -3440,7 +3451,12 @@ impl Reader<'_, '_> {
             } else if let Some(comma) = select_handler_comma(self.src, body) {
                 (body[comma].start_byte(), comma + 1)
             } else {
-                (tree.end_byte().saturating_sub(1), body.len())
+                let end = tree.end_byte().saturating_sub(1);
+                if link_poll {
+                    handlers_complete &= body.first().and_then(|first| self.src.text.get(first.start_byte()..end))
+                        .and_then(parse_macro_operand).is_some();
+                }
+                (end, body.len())
             };
             if let Some(first) = body.first()
                 && queue_calls.iter().any(|&(at, stop)| first.start_byte() <= at && stop <= handler_end)
@@ -3455,19 +3471,56 @@ impl Reader<'_, '_> {
         if !steps.is_empty() {
             self.steps(node, "Wait for one eligible branch", steps);
         }
+        if !handlers_complete || start < tokens.len().saturating_sub(1) {
+            polls.clear();
+        }
         for (start, end) in handlers {
-            self.select_handler_queue_calls(node, start, end, &queue_calls);
+            self.select_handler_queue_calls(node, start, end, &queue_calls, &polls);
         }
     }
 
-    fn select_handler_queue_calls(&mut self, select: Node<'_>, start: usize, end: usize, queue_calls: &HashSet<Range>) {
+    fn select_queue_poll(&self, tokens: &[Node<'_>]) -> Option<(Range, Span)> {
+        let start = tokens.first()?.start_byte();
+        let end = match tokens.windows(2).position(|pair| pair[0].kind() == "," && self.src.text(pair[1]) == "if") {
+            Some(index) => {
+                let guard = self.src.text.get(tokens[index + 1].end_byte()..tokens.last()?.end_byte())?;
+                parse_macro_operand(guard)?;
+                tokens[index].start_byte()
+            }
+            None => tokens.last()?.end_byte(),
+        };
+        let parsed = parse_macro_operand(self.src.text.get(start..end)?)?;
+        let call = unparen(macro_operand(&parsed)?);
+        if call.kind() != "call_expression" {
+            return None;
+        }
+        let (receiver, member) = select_queue_call(call)?;
+        let method = macro_operand_range(start, member);
+        let proof = self.evidence.operations.get(&method)?.as_ref()?;
+        if proof.family != Family::StreamNext {
+            return None;
+        }
+        let binding = self.ordered_queue_binding(macro_operand_range(start, receiver))?;
+        let (start, end) = macro_operand_range(start, call);
+        Some((binding, self.src.index.span(self.src.file, start, end)))
+    }
+
+    fn ordered_queue_binding(&self, site: Range) -> Option<Range> {
+        let first = self.evidence.uses.partition_point(|&(start, _, _)| start < site.0);
+        let mut usages = self.evidence.uses[first..].iter().take_while(|&&(start, _, _)| start == site.0)
+            .filter(|&&(_, end, _)| end == site.1);
+        let &(_, _, symbol) = usages.next()?;
+        if usages.any(|&(_, _, other)| symbol != other) {
+            return None;
+        }
+        let binding = *self.evidence.definitions?.get(symbol)?;
+        self.evidence.ordered_queue_bindings.contains(&binding).then_some(binding)
+    }
+
+    fn select_handler_queue_calls(&mut self, select: Node<'_>, start: usize, end: usize, queue_calls: &HashSet<Range>, polls: &HashMap<Range, Option<Span>>) {
         let Some(parsed) = self.src.text.get(start..end).and_then(parse_macro_operand) else { return };
         let Some(handler) = macro_operand(&parsed) else { return };
-        let original = |node: Node<'_>| {
-            let offset = node.start_byte() - MACRO_OPERAND_PREFIX.len();
-            let first = start + offset;
-            (first, first + node.byte_range().len())
-        };
+        let original = |node| macro_operand_range(start, node);
         let mut pending = vec![handler];
         while let Some(part) = pending.pop() {
             if matches!(part.kind(), "closure_expression" | "async_block" | "gen_block" | "const_block" | "macro_invocation")
@@ -3479,8 +3532,10 @@ impl Reader<'_, '_> {
                 let (first, last) = original(member);
                 if queue_calls.contains(&(first, last)) {
                     let (arg_start, arg_end) = original(future);
+                    let poll = select_queue_call(part).and_then(|(receiver, _)| self.ordered_queue_binding(original(receiver)))
+                        .and_then(|binding| polls.get(&binding)).cloned().flatten();
                     self.ordered_push_steps(self.src.span(select), self.src.index.span(self.src.file, first, last),
-                        self.src.index.span(self.src.file, arg_start, arg_end));
+                        self.src.index.span(self.src.file, arg_start, arg_end), poll);
                 }
             }
             pending.extend(named_children(part).into_iter().rev());
@@ -4288,6 +4343,23 @@ fn parse_macro_operand(text: &str) -> Option<tree_sitter::Tree> {
 fn macro_operand(tree: &tree_sitter::Tree) -> Option<Node<'_>> {
     tree.root_node().named_child(0)?.child_by_field_name("body")?
         .named_child(0)?.child_by_field_name("value")
+}
+
+fn macro_operand_range(start: usize, node: Node<'_>) -> Range {
+    let first = start + node.start_byte() - MACRO_OPERAND_PREFIX.len();
+    (first, first + node.byte_range().len())
+}
+
+fn select_queue_call(call: Node<'_>) -> Option<(Node<'_>, Node<'_>)> {
+    let (receiver, member) = if let Some((receiver, member)) = method_call(call) {
+        (receiver, member)
+    } else {
+        let member = call.child_by_field_name("function")?.child_by_field_name("name")?;
+        let reference = argument(call, 0).filter(|arg| arg.kind() == "reference_expression")?;
+        (reference.child_by_field_name("value")?, member)
+    };
+    let receiver = unparen(receiver);
+    (receiver.kind() == "identifier").then_some((receiver, member))
 }
 
 fn select_loop_body(mut node: Node<'_>) -> Option<&'static str> {

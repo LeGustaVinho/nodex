@@ -79,6 +79,9 @@ fn scip_explains_ordered_queue_insertion_in_code_and_select_handler() {
             assert!(steps[2].action.contains("progress concurrently"));
             assert!(steps[2].action.contains("outputs in queue order"));
             if name == "gateway" {
+                assert_eq!(source(&steps[2].span), "replies.next()");
+                assert!(steps[2].action.contains("when its branch is enabled and polled"));
+                assert!(steps[2].action.contains("after a branch has already been chosen"));
                 assert!(source(&steps[0].span).starts_with("if message > 2"));
                 let first = graph
                     .reading
@@ -98,6 +101,18 @@ fn scip_explains_ordered_queue_insertion_in_code_and_select_handler() {
 
     for name in ["nested", "homonyms"] {
         assert!(enqueues(&flow(&mut project, name)).is_empty());
+    }
+    let graph = flow(&mut project, "two_queues");
+    let mut links = enqueues(&graph);
+    links.sort_by_key(|(site, _)| site.span.start_byte);
+    assert_eq!(links.iter().map(|(_, steps)| source(&steps[2].span)).collect::<Vec<_>>(),
+        ["first.next()", "Extension::next(&mut second)", "push_back"]);
+    assert!(links[2].1[2].action.starts_with("Polling the queue"));
+    for name in ["different_select", "wrapped"] {
+        let graph = flow(&mut project, name);
+        let links = enqueues(&graph);
+        assert_eq!(links.len(), 1, "{name}: {:?}", graph.reading);
+        assert_eq!(source(&links[0].1[2].span), "push_back");
     }
     let after = flow(&mut project, "gateway");
     let execution = |graph: &FlowGraph| {
