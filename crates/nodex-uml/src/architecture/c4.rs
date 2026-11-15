@@ -1,4 +1,6 @@
-use super::applications::{Application, exact_file_dependencies, membership, unit_for};
+use super::applications::{
+    Application, exact_file_dependencies, membership, scope_aliases, unit_for,
+};
 use super::*;
 
 const SYSTEM: &str = "system";
@@ -62,12 +64,17 @@ pub(super) fn build(
     );
     elements.insert(SYSTEM.into(), system.clone());
     result.applications = apps.iter().map(|a| a.node.clone()).collect();
+    let aliases = scope_aliases(&apps);
+    let excluded: BTreeSet<_> = config
+        .excluded_apps
+        .iter()
+        .map(|id| aliases.get(id).copied().unwrap_or(id))
+        .collect();
     let active: BTreeSet<&str> = apps
         .iter()
         .filter(|a| {
-            !config.excluded_apps.contains(&a.node.id)
-                && a.legacy_id()
-                    .is_none_or(|id| !config.excluded_apps.contains(id))
+            !excluded.contains(a.node.id.as_str())
+                && a.legacy_id().is_none_or(|id| !excluded.contains(id))
         })
         .map(|a| a.node.id.as_str())
         .collect();
@@ -114,9 +121,13 @@ pub(super) fn build(
     let mut explicit_paths = BTreeSet::new();
     let mut seeds = Vec::new();
     for item in &config.libraries {
-        if active.contains(item.application.as_str()) {
+        let application = aliases
+            .get(&item.application)
+            .copied()
+            .unwrap_or(&item.application);
+        if active.contains(application) {
             explicit_paths.insert(item.path.as_str());
-            seeds.push((item.application.as_str(), item.path.as_str()));
+            seeds.push((application, item.path.as_str()));
         } else if apps
             .iter()
             .any(|a| a.legacy_id() == Some(&item.application))
@@ -294,6 +305,7 @@ pub(super) fn build(
     add_database_links(
         index,
         config,
+        &aliases,
         &owners,
         &mut elements,
         &mut links,
@@ -309,10 +321,15 @@ pub(super) fn build(
     });
     links.retain(|link| elements.contains_key(&link.from) && elements.contains_key(&link.to));
     for relation in &config.relations {
-        if elements.contains_key(&relation.from) && elements.contains_key(&relation.to) {
+        let from = aliases
+            .get(&relation.from)
+            .copied()
+            .unwrap_or(&relation.from);
+        let to = aliases.get(&relation.to).copied().unwrap_or(&relation.to);
+        if elements.contains_key(from) && elements.contains_key(to) {
             links.push(Link {
-                from: relation.from.clone(),
-                to: relation.to.clone(),
+                from: from.into(),
+                to: to.into(),
                 from_symbol: None,
                 to_symbol: None,
                 kind: "Declared",
@@ -402,13 +419,14 @@ pub(super) fn build(
             let focus = request
                 .container
                 .as_deref()
+                .map(|id| aliases.get(id).copied().unwrap_or(id))
                 .filter(|id| active.contains(id))
                 .ok_or_else(|| UmlError::NotFound("application for the component view".into()))?;
             let application = &elements[focus];
             result.title = format!("C4 · {}", application.name);
             result.nodes.push(application.clone());
 
-            let root = application.path.as_deref().unwrap_or("");
+            let root = apps.iter().find(|app| app.node.id == focus).unwrap().root();
             let mut components = BTreeMap::new();
             let mut symbols = BTreeMap::new();
             for symbol in index
@@ -558,6 +576,7 @@ fn library_membership<'a>(
 fn add_database_links<'a>(
     index: &Index<'_>,
     config: &ArchitectureConfig,
+    aliases: &BTreeMap<String, &'a str>,
     owners: &impl Fn(&str) -> BTreeSet<&'a str>,
     elements: &mut BTreeMap<String, ArchitectureNode>,
     links: &mut Vec<Link>,
@@ -573,7 +592,12 @@ fn add_database_links<'a>(
                     .is_some_and(|n| n.kind == ArchitectureKind::Store)
                 && !config.excluded_stores.contains(&relation.to)
         })
-        .map(|relation| relation.from.as_str())
+        .map(|relation| {
+            aliases
+                .get(&relation.from)
+                .copied()
+                .unwrap_or(&relation.from)
+        })
         .collect();
     for fact in index
         .knowledge

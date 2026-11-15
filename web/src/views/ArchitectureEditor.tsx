@@ -43,7 +43,10 @@ function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram;
   const [draft, setDraft] = useState(() => {
     const excludedApps = initial.config.excluded_apps.flatMap((id) => {
       const split = diagram.applications.filter((app) => app.id.startsWith(id + "::"));
-      return split.length ? split.map((app) => app.id) : [id];
+      if (split.length) return split.map((app) => app.id);
+      if (diagram.applications.some((app) => app.id === id)) return [id];
+      const scoped = diagram.applications.filter((app) => app.id.includes("::") && "app:" + app.path === id);
+      return scoped.length === 1 ? [scoped[0].id] : [id];
     });
     return { ...initial, config: { ...initial.config, excluded_apps: [...new Set(excludedApps)] } };
   });
@@ -69,9 +72,13 @@ function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram;
   }, [close, save.isPending]);
 
   const apps = new Map(diagram.applications.map((n) => [n.id, n.name]));
-  const splitRoots = new Set(diagram.applications.filter((app) => app.id.includes("::")).map((app) => app.path));
+  const splitApps = diagram.applications.filter((app) => app.id.includes("::"));
   for (const app of config.applications) {
-    if (!splitRoots.has(app.root)) apps.set("app:" + app.root, app.name);
+    const id = "app:" + app.root;
+    const scoped = splitApps.filter((node) => node.path === app.root);
+    if (apps.has(id)) apps.set(id, app.name);
+    else if (scoped.length === 1) apps.set(scoped[0].id, app.name);
+    else if (!splitApps.some((node) => node.id.startsWith(id + "::"))) apps.set(id, app.name);
   }
   const included = Array.from(apps).filter(([id]) => !config.excluded_apps.includes(id));
   const stores = new Map(diagram.stores.filter((node) => node.provenance !== "Declared").map((n) => [n.id, n.name]));
@@ -116,7 +123,7 @@ function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram;
           {config.applications.map((item, i) => (
             <div className="architecture-fields" key={i}>
               <label>Name<input required value={item.name} onChange={(e) => patch({ applications: replace(config.applications, i, { name: e.target.value }) })} /></label>
-              <label>Project-relative folder<input value={item.root} placeholder="Project root" onChange={(e) => patch({ applications: replace(config.applications, i, { root: e.target.value }) })} /></label>
+              <label>Project-relative path<input value={item.root} placeholder="Project root" onChange={(e) => patch({ applications: replace(config.applications, i, { root: e.target.value }) })} /></label>
               <label>Technology<input value={item.technology} onChange={(e) => patch({ applications: replace(config.applications, i, { technology: e.target.value }) })} /></label>
               <Remove label="application" run={() => patch({ applications: without(config.applications, i) })} />
             </div>

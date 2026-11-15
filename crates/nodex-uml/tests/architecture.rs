@@ -354,6 +354,21 @@ fn c4_separates_browser_and_server_in_the_same_package() {
         name: "Shop".into(),
         technology: String::new(),
     });
+    config.applications.push(DeclaredApplication {
+        root: "src/server".into(),
+        name: "Orders API".into(),
+        technology: String::new(),
+    });
+    config.actors.push(DeclaredElement {
+        id: "operator".into(),
+        name: "Operator".into(),
+        technology: String::new(),
+    });
+    config.relations.push(DeclaredRelation {
+        from: "actor:operator".into(),
+        to: "app:src/server".into(),
+        label: "Checks orders".into(),
+    });
     let d = diagram_at(
         project.path(),
         request(ArchitectureView::Containers),
@@ -367,6 +382,8 @@ fn c4_separates_browser_and_server_in_the_same_package() {
             .unwrap()
     };
     let (client, server) = (app("React"), app("Node.js"));
+    assert_eq!(server.name, "Orders API");
+    assert_eq!(server.provenance, Provenance::Declared);
     assert!(
         d.edges
             .iter()
@@ -374,21 +391,35 @@ fn c4_separates_browser_and_server_in_the_same_package() {
         "{:?}",
         d.edges
     );
+    assert!(d.edges.iter().any(|e| e.from == "actor:operator"
+        && e.to == server.id
+        && e.provenance == Provenance::Declared));
     let mut req = request(ArchitectureView::Components);
-    req.container = Some(server.id.clone());
+    req.container = Some("app:src/server".into());
     let components = diagram_at(project.path(), req, &config);
     assert!(
         components
             .nodes
             .iter()
-            .any(|n| n.path.as_deref() == Some("src/server"))
+            .any(|n| n.kind == ArchitectureKind::Component
+                && n.path.as_deref() == Some("src/server"))
     );
     assert!(
         components
             .nodes
             .iter()
+            .filter(|n| n.kind == ArchitectureKind::Component)
             .all(|n| n.path.as_deref() != Some("src/frontend"))
     );
+    assert!(components.nodes.iter().any(|n| n.id == client.id));
+    config.excluded_apps.insert("app:src/server".into());
+    let scoped = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert!(scoped.nodes.iter().any(|n| n.id == client.id));
+    assert!(scoped.nodes.iter().all(|n| n.id != server.id));
     config.excluded_apps.insert("app:".into());
     let excluded = diagram_at(
         project.path(),

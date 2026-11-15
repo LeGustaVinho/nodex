@@ -4,6 +4,7 @@ use nodex_ir::Language;
 
 pub(super) struct Application {
     pub node: ArchitectureNode,
+    root: String,
     /// The entry directory or file used to assign code, within the build unit.
     scope: String,
     entries: BTreeSet<String>,
@@ -11,12 +12,16 @@ pub(super) struct Application {
 
 impl Application {
     pub fn root(&self) -> &str {
-        self.node.path.as_deref().expect("application has a root")
+        &self.root
     }
 
     pub fn legacy_id(&self) -> Option<&str> {
         let root = self.node.id.strip_prefix("app:")?.split_once("::")?.0;
         Some(&self.node.id[.."app:".len() + root.len()])
+    }
+
+    fn split_scope(&self) -> Option<&str> {
+        (self.scope != self.root && self.legacy_id().is_some()).then_some(&self.scope)
     }
 }
 
@@ -186,11 +191,12 @@ pub(super) fn infer<'a>(input: &'a UmlInput<'_>, index: &Index<'a>) -> Vec<Appli
                     ArchitectureKind::Application,
                     Provenance::Inferred,
                 );
-                node.path = Some(root.into());
+                node.path = Some(if split { scope.clone() } else { root.into() });
                 node.technology = Some(app.technology.into());
                 node.evidence = app.evidence;
                 Application {
                     node,
+                    root: root.into(),
                     scope: if exact_scope { scope } else { root.into() },
                     entries: app.entries,
                 }
@@ -257,6 +263,10 @@ pub(super) fn apply_declarations(
     mut apps: Vec<Application>,
     config: &ArchitectureConfig,
 ) -> Vec<Application> {
+    let scopes = scope_aliases(&apps)
+        .into_iter()
+        .map(|(alias, id)| (alias, id.to_owned()))
+        .collect::<BTreeMap<_, _>>();
     for app in &config.applications {
         let id = format!("app:{}", app.root);
         let mut node = ArchitectureNode::new(
@@ -273,12 +283,20 @@ pub(super) fn apply_declarations(
             None,
         );
         node.evidence.push(evidence.clone());
-        if let Some(inferred) = apps.iter_mut().find(|a| a.node.id == id) {
-            node.evidence.append(&mut inferred.node.evidence);
-            inferred.node = node;
+        let target = scopes.get(&id).unwrap_or(&id);
+        if let Some(inferred) = apps.iter_mut().find(|a| &a.node.id == target) {
+            inferred.node.name = node.name;
+            if inferred.legacy_id().is_none() || node.technology.is_some() {
+                inferred.node.technology = node.technology;
+            }
+            inferred.node.provenance = Provenance::Declared;
+            push_evidence(&mut inferred.node.evidence, evidence);
         } else if apps.iter().any(|a| a.legacy_id() == Some(&id)) {
             // A previously shared declaration is a label for the split boundary.
-            for inferred in apps.iter_mut().filter(|a| a.legacy_id() == Some(&id)) {
+            for inferred in apps
+                .iter_mut()
+                .filter(|a| a.legacy_id() == Some(&id) && a.node.provenance != Provenance::Declared)
+            {
                 inferred.node.name = format!("{} · {}", app.name, inferred.node.name);
                 inferred.node.provenance = Provenance::Declared;
                 push_evidence(&mut inferred.node.evidence, evidence.clone());
@@ -286,12 +304,35 @@ pub(super) fn apply_declarations(
         } else {
             apps.push(Application {
                 node,
+                root: app.root.clone(),
                 scope: app.root.clone(),
                 entries: BTreeSet::new(),
             });
         }
     }
     apps
+}
+
+/// A project-relative declaration can name one inferred executable by its scope.
+pub(super) fn scope_aliases(apps: &[Application]) -> BTreeMap<String, &str> {
+    let mut aliases = BTreeMap::new();
+    let ids: BTreeSet<_> = apps.iter().map(|app| app.node.id.as_str()).collect();
+    for app in apps {
+        if let Some(scope) = app.split_scope() {
+            let alias = format!("app:{scope}");
+            if ids.contains(alias.as_str()) {
+                continue;
+            }
+            aliases
+                .entry(alias)
+                .and_modify(|value| *value = None)
+                .or_insert(Some(app.node.id.as_str()));
+        }
+    }
+    aliases
+        .into_iter()
+        .filter_map(|(path, id)| Some((path, id?)))
+        .collect()
 }
 
 pub(super) fn membership<'a>(
