@@ -93,7 +93,8 @@ fn loop_chain_short_circuits_and_question_mark_success_keeps_checking() {
         let order = sites.iter().find(|site| site.node == node.id && snippet(source, site) == "&&").unwrap();
         assert!(matches!(&order.content, ReadingContent::Steps { steps, .. }
             if steps[0].timing == "First on each attempt" && steps[1].timing == "If all earlier checks pass"));
-        let question = sites.iter().find(|site| site.node == node.id && snippet(source, site) == "?").unwrap();
+        let question = sites.iter().find(|site| site.node == node.id && snippet(source, site) == "?"
+            && matches!(&site.content, ReadingContent::Paths { .. })).unwrap();
         assert!(matches!(&question.content, ReadingContent::Paths { branches, .. }
             if branches[0].pin.is_none() && branches[0].output == "Continue checking the loop condition"
                 && branches[1].pin.as_deref() == Some("error") && branches[1].action.starts_with("Return from")));

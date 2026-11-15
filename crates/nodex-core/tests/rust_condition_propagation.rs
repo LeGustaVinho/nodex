@@ -4,7 +4,8 @@ use nodex_lang_rust::lower_source;
 fn question_marks<'a>(graph: &'a FlowGraph, source: &'a str) -> impl Iterator<Item = (&'a FlowNode, &'a ReadingSite)> {
     graph.reading.iter().flatten().filter_map(move |site| {
         let text = &source[site.span.start_byte as usize..site.span.end_byte as usize];
-        (text == "?").then(|| (graph.node(&site.node).unwrap(), site))
+        (text == "?" && matches!(&site.content, ReadingContent::Paths { .. }))
+            .then(|| (graph.node(&site.node).unwrap(), site))
     })
 }
 

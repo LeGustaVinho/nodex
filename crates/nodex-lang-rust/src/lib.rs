@@ -588,7 +588,6 @@ mod nested_tuple_variant_pattern_explanation;
 mod range_to_pattern_explanation;
 mod half_open_range_pattern_explanation;
 mod inline_const_block_explanation;
-mod question_mark_general_explanation;
 mod labeled_block_value_explanation;
 mod match_wildcard_arm_explanation;
 mod let_block_value_explanation;

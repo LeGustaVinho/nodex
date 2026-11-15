@@ -1755,10 +1755,7 @@ impl Reader<'_, '_> {
                 if let Some(content) = content { self.at(node, false, content); }
             }
             "call_expression" => self.call(node),
-            "try_expression" => {
-                if let Some((operand, token, content)) = crate::question_mark_general_explanation::explain(self.src, node) { self.push(self.src.span(operand), self.src.span(token), false, content); }
-                self.propagation(node);
-            }
+            "try_expression" => self.propagation(node),
             "type_cast_expression" => {
                 if let Some(content) = crate::cast_as_explanation::explain(self.src, node) { self.at(node, false, content); }
                 self.numeric_cast(node);
@@ -2447,15 +2444,18 @@ impl Reader<'_, '_> {
     }
 
     fn propagation(&mut self, node: Node<'_>) {
-        let Some(operand) = named_children(node).into_iter().next() else {
+        let Some(operand) = named_children(node).into_iter().find(|part| !part.is_extra()) else {
             return;
         };
-        let Some(token) = children(node).into_iter().find(|token| token.kind() == "?") else {
+        let Some(token) = children(node).into_iter().find(|part| part.kind() == "?" && !part.is_missing()) else {
             return;
         };
-        let scope = boundary(node);
         let kind = self.op(node).map(|op| op.family);
-        if let Some((value, token, content)) = crate::try_result_option_explanation::explain(self.src, node, kind) { self.push(self.src.span(value), self.src.span(token), matches!(kind, Some(Family::Result | Family::Option)), content); }
+        if !node.has_error() {
+            let content = crate::try_result_option_explanation::explain(self.src, operand, kind);
+            self.push(self.src.span(operand), self.src.span(token), matches!(kind, Some(Family::Result | Family::Option)), content);
+        }
+        let scope = boundary(node);
         let iterator_exit = scope.filter(|scope| scope.kind() == "closure_expression")
             .and_then(|closure| {
                 let call = direct_argument_call(closure)?;
