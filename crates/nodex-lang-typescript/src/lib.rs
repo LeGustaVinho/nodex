@@ -195,7 +195,7 @@ pub fn lower_source(rel_path: &str, text: &str) -> FileIr {
 
     ir.knowledge = knowledge::extract(src, root, &symbols, &function_ids, original);
     let from_scope = module_path(rel_path);
-    ir.imports = imports.into_iter().map(|target| ImportRef { from_scope: from_scope.clone(), target }).collect();
+    ir.imports = imports.into_iter().map(|target| ImportRef { from_scope: from_scope.clone(), target, site: None }).collect();
     ir.symbols = symbols;
     ir.type_refs = type_refs;
     nodex_lang_api::syntax_sites::annotate(&mut ir, root, src, is_javascript(rel_path));

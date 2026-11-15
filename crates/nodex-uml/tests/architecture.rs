@@ -97,6 +97,10 @@ fn layers_project_namespace_imports_onto_visible_modules() {
             "using Shop.Domain; namespace Shop.Controllers; public class Orders {}",
         ),
         (
+            "Views/OrderView.cs",
+            "namespace Shop.Controllers; public class OrderView {}",
+        ),
+        (
             "Domain/Order.cs",
             "namespace Shop.Domain; public class Order {}",
         ),
@@ -111,7 +115,11 @@ fn layers_project_namespace_imports_onto_visible_modules() {
     assert!(
         d.edges.iter().any(|e| e.kind == "Imports"
             && e.from == "module:Controllers"
-            && e.to == "module:Domain"),
+            && e.to == "module:Domain"
+            && e.evidence[0]
+                .span
+                .as_ref()
+                .is_some_and(|s| s.file == "Controllers/Orders.cs" && s.start_byte == 0)),
         "{:?}",
         d.edges
     );
@@ -616,8 +624,10 @@ fn connections_passed_to_ef_providers_are_inferred_and_can_be_excluded() {
             builder.Services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlServer(builder.Configuration.GetConnectionString("Orders")));
             builder.Services.AddDbContextPool<ReportsContext>((services, settings) => {
-                settings.UseNpgsql(reports);
+                settings.EnableDetailedErrors().UseNpgsql(reports);
             });
+            builder.Services.AddDbContext<AuditContext>(options =>
+                options.UseSqlServer(builder.Configuration.GetConnectionString("Audit")).EnableDetailedErrors());
             builder.Services.AddDbContext<OtherContext>(options => options.UseSqlServer(stale));
             builder.Services.AddDbContext<UnknownContext>(options =>
                 otherOptions.UseSqlServer(builder.Configuration.GetConnectionString("WrongReceiver")));
@@ -635,7 +645,7 @@ fn connections_passed_to_ef_providers_are_inferred_and_can_be_excluded() {
     let names: std::collections::BTreeSet<_> = d.stores.iter().map(|n| n.name.as_str()).collect();
     assert_eq!(
         names,
-        ["Shop · Orders", "Shop · Reports"].into(),
+        ["Shop · Audit", "Shop · Orders", "Shop · Reports"].into(),
         "{:?}",
         d.stores
     );

@@ -1,6 +1,6 @@
 //! Declarations → structure symbols, imports and type references.
 
-use nodex_ir::{ImportRef, Language, Symbol, SymbolId, SymbolKind, TypeRef, TypeRelation};
+use nodex_ir::{ImportRef, Language, Span, Symbol, SymbolId, SymbolKind, TypeRef, TypeRelation};
 use tree_sitter::Node;
 
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ pub struct Collector<'a, 't> {
     symbols: Vec<Symbol>,
     type_refs: Vec<TypeRef>,
     bodies: Vec<BodyJob<'t>>,
-    usings: Vec<String>,
+    usings: Vec<(String, Span)>,
     namespaces: Vec<String>,
     unity_file: bool,
     /// Build conditions (`#if DEBUG`) around the declaration being visited.
@@ -107,10 +107,11 @@ impl<'a, 't> Collector<'a, 't> {
         }
         let mut imports = Vec::new();
         for ns in &self.namespaces {
-            for target in &self.usings {
+            for (target, site) in &self.usings {
                 imports.push(ImportRef {
                     from_scope: ns.clone(),
                     target: target.clone(),
+                    site: Some(site.clone()),
                 });
             }
         }
@@ -129,7 +130,7 @@ impl<'a, 't> Collector<'a, 't> {
                 self.using_directive(child);
             }
         }
-        self.unity_file = self.usings.iter().any(|u| u == "UnityEngine" || u.starts_with("UnityEngine."));
+        self.unity_file = self.usings.iter().any(|(u, _)| u == "UnityEngine" || u.starts_with("UnityEngine."));
 
         let mut current_ns: Option<String> = None;
         let mut top_level = Vec::new();
@@ -167,8 +168,8 @@ impl<'a, 't> Collector<'a, 't> {
                     name = ns.to_owned();
                 }
             }
-            if !self.usings.contains(&name) {
-                self.usings.push(name);
+            if !self.usings.iter().any(|(target, _)| target == &name) {
+                self.usings.push((name, self.src.span(node)));
             }
         }
     }

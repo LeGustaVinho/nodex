@@ -979,21 +979,26 @@ fn database_connections<'t>(
         } else {
             vec![body]
         };
-        for node in calls {
-            let Some(provider) = Call::read(src, node) else { continue };
-            if provider.receiver != src.norm(options)
-                || !matches!(provider.name.as_str(), "UseSqlServer" | "UseNpgsql" | "UseSqlite" | "UseMySql" | "UseOracle" | "UseCosmos")
-            {
+        for expression in calls {
+            let chain: Vec<_> = std::iter::successors(Some(expression), |node| {
+                let receiver = node.child_by_field_name("function")?.child_by_field_name("expression")?;
+                (receiver.kind() == "invocation_expression").then_some(receiver)
+            }).filter_map(|node| Call::read(src, node).map(|call| (node, call))).collect();
+            if !chain.last().is_some_and(|(_, call)| call.receiver == src.norm(options)) {
                 continue;
             }
-            let Some(&argument) = provider.arg_nodes.first() else { continue };
-            let value = if argument.kind() == "identifier" {
-                local_connection_value(src, registration, argument)
-            } else {
-                Some(argument)
-            };
-            if let Some(key) = value.and_then(|value| connection_key(src, value)) {
-                connections.push((key, node));
+            for (node, provider) in chain.into_iter().rev().filter(|(_, call)| {
+                matches!(call.name.as_str(), "UseSqlServer" | "UseNpgsql" | "UseSqlite" | "UseMySql" | "UseOracle" | "UseCosmos")
+            }) {
+                let Some(&argument) = provider.arg_nodes.first() else { continue };
+                let value = if argument.kind() == "identifier" {
+                    local_connection_value(src, registration, argument)
+                } else {
+                    Some(argument)
+                };
+                if let Some(key) = value.and_then(|value| connection_key(src, value)) {
+                    connections.push((key, node));
+                }
             }
         }
     }

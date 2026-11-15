@@ -58,6 +58,7 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
     let renamed = merge_impl_blocks(&mut symbols);
 
     let mut edges: BTreeSet<(String, String, StructEdgeKind)> = BTreeSet::new();
+    let mut import_sites = BTreeMap::new();
     let mut external: BTreeMap<String, Symbol> = BTreeMap::new();
 
     // 2. Imports between namespaces/modules, and from modules to packages.
@@ -95,7 +96,12 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
                     ..external_symbol(&from, SymbolKind::Namespace, &imp.from_scope, file.language)
                 });
             }
-            edges.insert((from, to, StructEdgeKind::Imports));
+            let key = (from, to, StructEdgeKind::Imports);
+            if symbols.contains_key(&key.1) && let Some(site) = &imp.site {
+                import_sites.entry(key.clone()).or_insert_with(BTreeMap::new)
+                    .insert((site.file.clone(), site.start_byte), site.clone());
+            }
+            edges.insert(key);
         }
     }
 
@@ -167,7 +173,14 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
     StructureGraph {
         source_revisions: (!revisions.is_empty()).then_some(revisions),
         symbols: all,
-        edges: edges.into_iter().map(|(from, to, kind)| StructEdge::new(from, to, kind)).collect(),
+        edges: edges.into_iter().flat_map(|key| {
+            let sites = import_sites.remove(&key);
+            let (from, to, kind) = key;
+            let edge = StructEdge::new(from, to, kind);
+            let unlocated = sites.is_none().then_some(None);
+            unlocated.into_iter().chain(sites.into_iter().flat_map(BTreeMap::into_values).map(Some))
+                .map(move |site| StructEdge { site, ..edge.clone() })
+        }).collect(),
     }
 }
 

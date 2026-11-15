@@ -303,6 +303,10 @@ pub struct ImportRef {
     pub from_scope: String,
     /// Imported namespace or module.
     pub target: String,
+    /// Source of the import when the frontend retains individual directives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub site: Option<Span>,
 }
 
 /// External package declared in a project manifest.

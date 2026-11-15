@@ -134,7 +134,18 @@ pub(super) fn build(
         candidates.all(|other| other == Some(one)).then_some(one)
     };
     for edge in index.relations().filter(|e| static_relation(e.kind)) {
-        if let (Some(source), Some(dest)) = (target(&edge.from), target(&edge.to)) {
+        let source = match (&edge.kind, &edge.site) {
+            (StructEdgeKind::Imports, Some(site))
+                if scope.symbols.contains(&edge.from) && site_in_scope(site) =>
+            {
+                endpoints
+                    .get(&group_for_file(&site.file))
+                    .map(String::as_str)
+            }
+            (StructEdgeKind::Imports, Some(_)) => None,
+            _ => target(&edge.from),
+        };
+        if let (Some(source), Some(dest)) = (source, target(&edge.to)) {
             let confidence = edge.confidence.unwrap_or(Confidence::Exact);
             let kind = format!("{:?}", edge.kind);
             diagram_relations.add(
