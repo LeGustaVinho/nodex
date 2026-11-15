@@ -24,6 +24,9 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::public_safe_foreign_fn_detail::contract(src, node));
+    items.extend(crate::invalid_unsafe_module_detail::contract(src, node));
+    items.extend(crate::mixed_self_glob_import_detail::contract(src, node));
     items.extend(crate::trailing_param_comma_detail::contract(src, node));
     items.extend(crate::explicit_unit_return_detail::contract(src, node));
     items.extend(crate::impl_trait_const_detail::contract(src, node));
@@ -1499,6 +1502,13 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (anchor, site, content) in crate::match_block_comma_detail::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::const_range_pattern_detail::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::slice_ignore_all_pattern_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::mixed_field_binding_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::grouped_binding_pattern_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::double_reference_pattern_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, text)) = crate::unit_binding_pattern_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Unit binding pattern", text)); }
         for (span, content) in crate::invalid_numeric_token_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((owner, site, content)) = crate::raw_lifetime_edition_detail::label(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), site, false, content); }
         if let Some((site, content)) = crate::invalid_tuple_field_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }

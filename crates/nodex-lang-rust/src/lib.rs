@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod public_safe_foreign_fn_detail;
+mod invalid_unsafe_module_detail;
+mod grouped_binding_pattern_detail;
+mod double_reference_pattern_detail;
+mod mixed_self_glob_import_detail;
+mod unit_binding_pattern_detail;
+mod mixed_field_binding_detail;
+mod slice_ignore_all_pattern_detail;
+mod const_range_pattern_detail;
+mod match_block_comma_detail;
 mod trailing_param_comma_detail;
 mod explicit_unit_return_detail;
 mod impl_trait_const_detail;
