@@ -2,6 +2,7 @@
 //! its manifests declare, with the references between them (`<ProjectReference>`,
 //! `workspace:`/`file:` dependencies, `path =` dependencies). Component diagrams start from them.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use nodex_ir::{Language, PackageRef};
@@ -21,6 +22,9 @@ pub struct BuildUnit {
     pub refs: Vec<String>,
     /// External packages it depends on.
     pub packages: Vec<PackageRef>,
+    /// Cargo binary targets keyed by project-relative entry file.
+    #[serde(skip)]
+    pub rust_binaries: BTreeMap<String, String>,
 }
 
 /// Reads the build units of `manifests` (absolute paths under `root`).
@@ -46,15 +50,19 @@ pub fn read_units(root: &Path, manifests: &[(Language, std::path::PathBuf, Vec<P
         }
         let text = std::fs::read_to_string(manifest).unwrap_or_default();
         let folder = dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
+        let mut rust_binaries = BTreeMap::new();
         let (name, refs) = if file.ends_with(".csproj") {
             (file.trim_end_matches(".csproj").to_owned(), csproj_refs(&text, &dir, &rel))
         } else if file == "package.json" {
             package_json(&text, &dir, &rel)
         } else {
-            cargo(&text, &dir, &rel)
+            let table = text.parse::<toml::Table>().unwrap_or_default();
+            let (name, refs) = cargo(&table, &dir, &rel);
+            rust_binaries = cargo_binaries(&table, &name, &dir, &rel);
+            (name, refs)
         };
         let name = if name.is_empty() { folder } else { name };
-        units.push(BuildUnit { name, language: *language, root: root_rel, manifest: manifest_rel, refs: Vec::new(), packages: packages.clone() });
+        units.push(BuildUnit { name, language: *language, root: root_rel, manifest: manifest_rel, refs: Vec::new(), packages: packages.clone(), rust_binaries });
         raw.push(refs);
     }
     // A Cargo workspace root without a package of its own is not a unit.
@@ -120,8 +128,7 @@ fn package_json(text: &str, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -
 }
 
 /// The crate name and its `path = "..."` dependencies.
-fn cargo(text: &str, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -> (String, Vec<String>) {
-    let Ok(toml) = text.parse::<toml::Table>() else { return (String::new(), Vec::new()) };
+fn cargo(toml: &toml::Table, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -> (String, Vec<String>) {
     let name = toml.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or_default().to_owned();
     let mut refs = Vec::new();
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
@@ -135,6 +142,63 @@ fn cargo(text: &str, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -> (Stri
         }
     }
     (name, refs)
+}
+
+fn cargo_binaries(
+    manifest: &toml::Table,
+    package_name: &str,
+    dir: &Path,
+    rel: &dyn Fn(&Path) -> Option<String>,
+) -> BTreeMap<String, String> {
+    let Some(package) = manifest.get("package").filter(|_| !package_name.is_empty()) else {
+        return BTreeMap::new();
+    };
+    let declared = manifest.get("bin").and_then(toml::Value::as_array);
+    let legacy_edition = package.get("edition").is_none_or(|edition| edition.as_str() == Some("2015"));
+    let auto = package.get("autobins").and_then(toml::Value::as_bool)
+        .unwrap_or(!legacy_edition || declared.is_none_or(Vec::is_empty));
+    let mut binaries = BTreeMap::new();
+    let mut names = BTreeSet::new();
+    for bin in declared.into_iter().flatten() {
+        let Some(name) = bin.get("name").and_then(toml::Value::as_str) else { continue };
+        names.insert(name.to_owned());
+        let path = bin.get("path").and_then(toml::Value::as_str).map(|path| normalize(&dir.join(path)));
+        let candidates = [
+            dir.join("src/main.rs"),
+            dir.join(format!("src/bin/{name}.rs")),
+            dir.join(format!("src/bin/{name}/main.rs")),
+        ];
+        if let Some(file) = path.or_else(|| {
+            candidates.into_iter().skip(usize::from(name != package_name)).find(|p| p.is_file())
+        }).and_then(|p| rel(&p)) {
+            binaries.insert(file, name.to_owned());
+        }
+    }
+    if auto {
+        let main = dir.join("src/main.rs");
+        if !names.contains(package_name) && main.is_file()
+            && let Some(file) = rel(&main)
+        {
+            binaries.entry(file).or_insert_with(|| package_name.to_owned());
+        }
+        for entry in std::fs::read_dir(dir.join("src/bin")).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let (file, name) = if path.is_dir() {
+                (path.join("main.rs"), entry.file_name())
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                (path.clone(), path.file_stem().unwrap_or_default().to_owned())
+            } else {
+                continue;
+            };
+            if let Some(name) = name.to_str().filter(|name| !names.contains(*name) && !name.starts_with('.'))
+                && file.is_file()
+                && let Some(file) = rel(&file)
+            {
+                binaries.entry(file).or_insert_with(|| name.to_owned());
+            }
+        }
+    }
+    binaries
 }
 
 /// Resolves `..` and `.` without touching the file system.

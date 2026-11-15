@@ -5,14 +5,14 @@ pub(super) fn build(
     input: &UmlInput<'_>,
     request: &ArchitectureRequest,
     config: &ArchitectureConfig,
-    apps: &BTreeMap<String, ArchitectureNode>,
+    apps: &[applications::Application],
 ) -> Result<ArchitectureDiagram, UmlError> {
     let scope = Scoped::resolve(index, &request.scope)?;
     let roots: BTreeSet<&str> = input
         .units
         .iter()
         .map(|u| u.root.as_str())
-        .chain(apps.values().filter_map(|n| n.path.as_deref()))
+        .chain(apps.iter().map(|app| app.root()))
         .collect();
     let group_for_file = |file: &str| {
         let root = roots

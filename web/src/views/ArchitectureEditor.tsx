@@ -34,8 +34,19 @@ export function ArchitectureEditor({ diagram, close }: { diagram: ArchitectureDi
   );
 }
 
+function applicationPath(id: string) {
+  const [root, entry] = id.slice("app:".length).split("::");
+  return entry ? entry.slice(entry.indexOf(":") + 1) : root;
+}
+
 function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram; initial: ArchitectureSettings; close: () => void }) {
-  const [draft, setDraft] = useState(initial);
+  const [draft, setDraft] = useState(() => {
+    const excludedApps = initial.config.excluded_apps.flatMap((id) => {
+      const split = diagram.applications.filter((app) => app.id.startsWith(id + "::"));
+      return split.length ? split.map((app) => app.id) : [id];
+    });
+    return { ...initial, config: { ...initial.config, excluded_apps: [...new Set(excludedApps)] } };
+  });
   const client = useQueryClient();
   const session = useUi((s) => s.projectSession);
   const { config } = draft;
@@ -58,7 +69,10 @@ function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram;
   }, [close, save.isPending]);
 
   const apps = new Map(diagram.applications.map((n) => [n.id, n.name]));
-  for (const app of config.applications) apps.set("app:" + app.root, app.name);
+  const splitRoots = new Set(diagram.applications.filter((app) => app.id.includes("::")).map((app) => app.path));
+  for (const app of config.applications) {
+    if (!splitRoots.has(app.root)) apps.set("app:" + app.root, app.name);
+  }
   const included = Array.from(apps).filter(([id]) => !config.excluded_apps.includes(id));
   const stores = new Map(diagram.stores.filter((node) => node.provenance !== "Declared").map((n) => [n.id, n.name]));
   for (const store of config.stores) stores.set("store:" + store.id, store.name);
@@ -85,7 +99,7 @@ function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram;
               <input type="checkbox" checked={!config.excluded_apps.includes(id)} onChange={(e) => patch({
                 excluded_apps: e.target.checked ? config.excluded_apps.filter((a) => a !== id) : [...config.excluded_apps, id],
               })} />
-              <span>{name} <small className="muted">{id.slice(4) || "(root)"}</small></span>
+              <span>{name} <small className="muted">{applicationPath(id) || "(root)"}</small></span>
             </label>
           ))}
           {Array.from(stores, ([id, name]) => (

@@ -1,5 +1,6 @@
 //! Architectural views over the indexed project and the user's local declarations.
 
+mod applications;
 mod c4;
 mod layers;
 
@@ -314,7 +315,7 @@ pub fn build(
     config: &ArchitectureConfig,
 ) -> Result<ArchitectureDiagram, UmlError> {
     let index = Index::new(input.graph, input.knowledge);
-    let apps = c4::applications(input, &index);
+    let apps = applications::infer(input, &index);
     if request.view == ArchitectureView::Layers {
         layers::build(&index, input, request, config, &apps)
     } else {
@@ -323,7 +324,7 @@ pub fn build(
             input,
             request,
             config,
-            c4::apply_declarations(apps, config),
+            applications::apply_declarations(apps, config),
         )
     }
 }

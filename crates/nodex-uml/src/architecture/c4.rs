@@ -1,167 +1,7 @@
+use super::applications::{Application, membership, unit_for};
 use super::*;
 
-use nodex_ir::Language;
-
 const SYSTEM: &str = "system";
-
-fn unit_for<'a>(input: &'a UmlInput<'_>, file: &str) -> Option<&'a nodex_core::units::BuildUnit> {
-    input
-        .units
-        .iter()
-        .filter(|u| within(file, &u.root))
-        .max_by_key(|u| u.root.len())
-}
-
-pub(super) fn applications(
-    input: &UmlInput<'_>,
-    index: &Index<'_>,
-) -> BTreeMap<String, ArchitectureNode> {
-    let mut apps = BTreeMap::new();
-    let mut add = |symbol: &Symbol, site: &Span, technology: String, reason: &str| {
-        let unit = unit_for(input, &site.file);
-        let dir = dirname(&site.file);
-        let fallback = match dir.rsplit_once('/') {
-            Some((base, "src")) => base,
-            _ if dir == "src" => "",
-            _ => dir,
-        };
-        let root = unit.map_or(fallback, |u| u.root.as_str());
-        let id = format!("app:{root}");
-        let node = apps.entry(id.clone()).or_insert_with(|| {
-            let name = unit.map(|u| u.name.as_str()).unwrap_or(if root.is_empty() {
-                input.project
-            } else {
-                leaf(root)
-            });
-            let mut node = ArchitectureNode::new(
-                id,
-                name.into(),
-                ArchitectureKind::Application,
-                Provenance::Inferred,
-            );
-            node.path = Some(root.into());
-            node.technology = Some(technology);
-            if let Some(unit) = unit {
-                node.evidence
-                    .push(ArchitectureEvidence::file("Build unit", &unit.manifest));
-            }
-            node
-        });
-        push_evidence(
-            &mut node.evidence,
-            ArchitectureEvidence::at(reason, Some(site), Some(&symbol.id)),
-        );
-    };
-
-    for symbol in index
-        .graph
-        .symbols
-        .iter()
-        .filter(|s| diagram_symbol(s, index))
-    {
-        let site = &symbol.origins[0];
-        if matches!(
-            entry(index, &symbol.id),
-            Some(EntryKind::Main | EntryKind::ServerStart)
-        ) {
-            // A function named main in a Rust library module isn't a crate entry point.
-            if symbol.language == Language::Rust
-                && entry(index, &symbol.id) == Some(EntryKind::Main)
-            {
-                let root = unit_for(input, &site.file).map_or("", |u| u.root.as_str());
-                let path = relative(&site.file, root);
-                if path != "src/main.rs" && path != "main.rs" && !path.starts_with("src/bin/") {
-                    continue;
-                }
-            }
-            let info = &index.info[symbol.id.as_str()];
-            let technology = match symbol.language {
-                Language::Csharp => ".NET",
-                Language::Typescript => "Node.js",
-                Language::Rust => "Rust",
-            };
-            add(
-                symbol,
-                site,
-                technology.into(),
-                &info.entry.as_ref().unwrap().label,
-            );
-        }
-    }
-
-    let mut checked = BTreeSet::new();
-    for symbol in index
-        .graph
-        .symbols
-        .iter()
-        .filter(|s| diagram_symbol(s, index) && s.language == Language::Typescript)
-    {
-        let site = &symbol.origins[0];
-        let path = leaf(&site.file);
-        let entry_file = path
-            .split('.')
-            .next()
-            .is_some_and(|p| matches!(p, "main" | "index" | "bootstrap"));
-        if entry_file
-            && checked.insert(site.file.as_str())
-            && let Some(source) = input.flows.source(&site.file)
-        {
-            let framework = if source.contains("react-dom/client")
-                && source.contains("createRoot(")
-                && source.contains(".render(")
-            {
-                Some("React")
-            } else if source.contains("createApp(") && source.contains(".mount(") {
-                Some("Vue")
-            } else if source.contains("@angular/platform-browser")
-                && source.contains("bootstrapApplication(")
-            {
-                Some("Angular")
-            } else {
-                None
-            };
-            if let Some(framework) = framework {
-                add(
-                    symbol,
-                    site,
-                    framework.into(),
-                    "Browser application bootstrap",
-                );
-            }
-        }
-    }
-
-    apps
-}
-
-pub(super) fn apply_declarations(
-    mut apps: BTreeMap<String, ArchitectureNode>,
-    config: &ArchitectureConfig,
-) -> Vec<ArchitectureNode> {
-    for app in &config.applications {
-        let id = format!("app:{}", app.root);
-        let mut node = ArchitectureNode::new(
-            id.clone(),
-            app.name.clone(),
-            ArchitectureKind::Application,
-            Provenance::Declared,
-        );
-        node.path = Some(app.root.clone());
-        node.technology = Some(app.technology.clone()).filter(|s| !s.is_empty());
-        node.evidence.push(ArchitectureEvidence::at(
-            "Application declared in local architecture settings",
-            None,
-            None,
-        ));
-        if let Some(detected) = apps.insert(id.clone(), node) {
-            apps.get_mut(&id)
-                .unwrap()
-                .evidence
-                .extend(detected.evidence);
-        }
-    }
-    apps.into_values().collect()
-}
 
 #[derive(Clone)]
 struct Link {
@@ -201,7 +41,7 @@ pub(super) fn build(
     input: &UmlInput<'_>,
     request: &ArchitectureRequest,
     config: &ArchitectureConfig,
-    apps: Vec<ArchitectureNode>,
+    apps: Vec<Application>,
 ) -> Result<ArchitectureDiagram, UmlError> {
     let name = if config.system_name.is_empty() {
         input.project
@@ -221,13 +61,21 @@ pub(super) fn build(
         },
     );
     elements.insert(SYSTEM.into(), system.clone());
-    result.applications = apps.clone();
+    result.applications = apps.iter().map(|a| a.node.clone()).collect();
     let active: BTreeSet<&str> = apps
         .iter()
-        .filter(|n| !config.excluded_apps.contains(&n.id))
-        .map(|n| n.id.as_str())
+        .filter(|a| {
+            !config.excluded_apps.contains(&a.node.id)
+                && a.legacy_id()
+                    .is_none_or(|id| !config.excluded_apps.contains(id))
+        })
+        .map(|a| a.node.id.as_str())
         .collect();
-    for app in apps.iter().filter(|n| active.contains(n.id.as_str())) {
+    for app in result
+        .applications
+        .iter()
+        .filter(|n| active.contains(n.id.as_str()))
+    {
         elements.insert(app.id.clone(), app.clone());
     }
     declared(
@@ -249,44 +97,21 @@ pub(super) fn build(
         "store",
     );
 
-    let mut membership = BTreeMap::new();
-    let mut file_units = BTreeMap::new();
-    for symbol in index
-        .graph
-        .symbols
-        .iter()
-        .filter(|s| diagram_symbol(s, index))
-    {
-        let file = &symbol.origins[0].file;
-        let unit = *file_units
-            .entry(file.as_str())
-            .or_insert_with(|| unit_for(input, file));
-        if let Some(app) = apps
-            .iter()
-            .filter(|a| a.path.as_deref().is_some_and(|p| within(file, p)))
-            .max_by_key(|a| a.path.as_ref().map_or(0, String::len))
-            .filter(|a| active.contains(a.id.as_str()))
-            .filter(|a| {
-                unit.is_none_or(|u| {
-                    !within(&u.root, a.path.as_deref().unwrap_or(""))
-                        || a.path.as_ref() == Some(&u.root)
-                })
-            })
-        {
-            membership.insert(symbol.id.as_str(), app.id.as_str());
-        }
-    }
+    let membership = membership(index, input, &apps);
     let mut libraries: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for edge in index.relations().filter(|e| {
         static_relation(e.kind) && e.confidence.unwrap_or(Confidence::Exact) == Confidence::Exact
     }) {
-        if let (Some(app), Some(target)) =
+        if let (Some(owners), Some(target)) =
             (membership.get(edge.from.as_str()), index.file_of(&edge.to))
             && !membership.contains_key(edge.to.as_str())
             && let Some(unit) = unit_for(input, target)
-            && !apps.iter().any(|a| a.path.as_ref() == Some(&unit.root))
+            && !apps.iter().any(|a| a.root() == unit.root)
         {
-            libraries.entry(&unit.root).or_default().insert(app);
+            libraries
+                .entry(&unit.root)
+                .or_default()
+                .extend(owners.intersection(&active));
         }
     }
     for item in &config.libraries {
@@ -295,11 +120,22 @@ pub(super) fn build(
                 .entry(&item.path)
                 .or_default()
                 .insert(&item.application);
+        } else if apps
+            .iter()
+            .any(|a| a.legacy_id() == Some(&item.application))
+        {
+            push_evidence(
+                &mut result.pending,
+                ArchitectureEvidence::file(
+                    "Select an application for this library after the build unit was split",
+                    &item.path,
+                ),
+            );
         }
     }
     let owners = |id: &str| {
-        if let Some(app) = membership.get(id) {
-            return BTreeSet::from([*app]);
+        if let Some(owners) = membership.get(id) {
+            return owners.intersection(&active).copied().collect();
         }
         let Some(file) = index.file_of(id) else {
             return BTreeSet::new();
@@ -574,7 +410,9 @@ pub(super) fn build(
                 .filter(|s| diagram_symbol(s, index) && owners(&s.id).contains(focus))
             {
                 let site = &symbol.origins[0];
-                let local = membership.get(symbol.id.as_str()) == Some(&focus);
+                let local = membership
+                    .get(symbol.id.as_str())
+                    .is_some_and(|owners| owners.contains(focus));
                 let path = if local {
                     module_path(&site.file, root)
                 } else {

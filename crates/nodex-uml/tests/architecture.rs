@@ -312,6 +312,173 @@ fn browser_bootstraps_are_recognized() {
 }
 
 #[test]
+fn c4_separates_browser_and_server_in_the_same_package() {
+    let project = project_with_files(&[
+        (
+            "package.json",
+            r#"{"name":"shop","dependencies":{"express":"*","react-dom":"*"}}"#,
+        ),
+        (
+            "src/frontend/main.tsx",
+            r#"
+            import { createRoot } from "react-dom/client";
+            import { Orders } from "./Orders";
+            createRoot(document.getElementById("root")!).render(<Orders />);
+        "#,
+        ),
+        (
+            "src/frontend/Orders.tsx",
+            r#"
+            export function Orders() { fetch("/api/orders"); return <div />; }
+        "#,
+        ),
+        (
+            "src/server/index.ts",
+            r#"
+            import express from "express";
+            import { getOrders } from "./orders";
+            const app = express();
+            app.get("/api/orders", getOrders);
+            export function bootstrap() { app.listen(3000); }
+            bootstrap();
+        "#,
+        ),
+        (
+            "src/server/orders.ts",
+            "export function getOrders(req: any, res: any) { res.json([]); }",
+        ),
+    ]);
+    let mut config = ArchitectureConfig::default();
+    config.applications.push(DeclaredApplication {
+        root: "".into(),
+        name: "Shop".into(),
+        technology: String::new(),
+    });
+    let d = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert_eq!(d.applications.len(), 2, "{:?}", d.applications);
+    let app = |tech: &str| {
+        d.applications
+            .iter()
+            .find(|n| n.technology.as_deref() == Some(tech))
+            .unwrap()
+    };
+    let (client, server) = (app("React"), app("Node.js"));
+    assert!(
+        d.edges
+            .iter()
+            .any(|e| e.from == client.id && e.to == server.id && e.kind == "HTTP"),
+        "{:?}",
+        d.edges
+    );
+    let mut req = request(ArchitectureView::Components);
+    req.container = Some(server.id.clone());
+    let components = diagram_at(project.path(), req, &config);
+    assert!(
+        components
+            .nodes
+            .iter()
+            .any(|n| n.path.as_deref() == Some("src/server"))
+    );
+    assert!(
+        components
+            .nodes
+            .iter()
+            .all(|n| n.path.as_deref() != Some("src/frontend"))
+    );
+    config.excluded_apps.insert("app:".into());
+    let excluded = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert!(
+        excluded
+            .nodes
+            .iter()
+            .all(|n| n.kind != ArchitectureKind::Application)
+    );
+}
+
+#[test]
+fn c4_uses_cargo_targets_to_find_rust_executables() {
+    let project = project_with_files(&[
+        (
+            "Cargo.toml",
+            r#"
+            [package]
+            name = "tools"
+            version = "0.1.0"
+            edition = "2024"
+            [[bin]]
+            name = "exporter"
+            path = "src/cli/export.rs"
+        "#,
+        ),
+        ("src/main.rs", "fn main() {}"),
+        ("src/bin/producer.rs", "fn main() {}"),
+        ("src/bin/consumer/main.rs", "fn main() {}"),
+        ("src/bin/consumer/helper.rs", "pub fn helper() {}"),
+        (
+            "src/cli/export.rs",
+            "fn main() {} mod test_only { fn main() {} }",
+        ),
+        ("src/lib.rs", "pub fn main() {}"),
+        ("src/bin/consumer/nested/helper.rs", "pub fn main() {}"),
+        ("examples/demo.rs", "fn main() {}"),
+    ]);
+    let config = ArchitectureConfig::default();
+    let d = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    let names: std::collections::BTreeSet<_> =
+        d.applications.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(names, ["consumer", "exporter", "producer", "tools"].into());
+    let consumer = d
+        .applications
+        .iter()
+        .find(|n| n.name == "consumer")
+        .unwrap();
+    let mut req = request(ArchitectureView::Components);
+    req.container = Some(consumer.id.clone());
+    let components = diagram_at(project.path(), req, &config);
+    assert!(
+        components
+            .nodes
+            .iter()
+            .flat_map(|n| &n.evidence)
+            .any(|e| e.path.as_deref() == Some("src/bin/consumer/helper.rs"))
+    );
+    assert!(
+        components
+            .nodes
+            .iter()
+            .flat_map(|n| &n.evidence)
+            .all(|e| e.path.as_deref() != Some("src/bin/producer.rs"))
+    );
+
+    let manifest = project.path().join("Cargo.toml");
+    let original = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        original.replace("edition = \"2024\"", "edition = \"2024\"\nautobins = false"),
+    )
+    .unwrap();
+    let explicit = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert_eq!(explicit.applications.len(), 1);
+    assert_eq!(explicit.applications[0].name, "exporter");
+}
+
+#[test]
 fn named_database_is_inferred_and_can_be_removed_from_the_boundary() {
     let project = "knowledge/fullstack";
     let mut config = ArchitectureConfig::default();
