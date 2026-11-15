@@ -53,6 +53,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::named_struct_explanation::explain(src, node));
     items.extend(crate::tuple_struct_explanation::explain(src, node));
     items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::macro_literal_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_expr_2021_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_meta_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_ident_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_pattern_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_lifetime_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_pat_param_explanation::contract(src, node));
+    items.extend(crate::macro_block_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_item_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_expr_fragment_explanation::contract(src, node));
     items.extend(crate::qualified_macro_invocation_explanation::contract(src, node));
     items.extend(crate::macro_parenthesized_rule_explanation::contract(src, node));
     items.extend(crate::macro_expression_rule_explanation::contract(src, node));
