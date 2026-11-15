@@ -67,6 +67,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::unsafe_link_section_explanation::contract(src, node));
+    items.extend(crate::unsafe_export_name_explanation::contract(src, node));
+    items.extend(crate::repr_c_u8_explanation::contract(src, node));
+    items.extend(crate::no_main_attribute_explanation::contract(src, node));
+    items.extend(crate::crate_type_cdylib_explanation::contract(src, node));
+    items.extend(crate::inline_hint_explanation::contract(src, node));
+    items.extend(crate::crate_name_attribute_explanation::contract(src, node));
+    items.extend(crate::no_mangle_linking_explanation::contract(src, node));
+    items.extend(crate::crate_type_rlib_explanation::contract(src, node));
+    items.extend(crate::used_static_explanation::contract(src, node));
     items.extend(crate::repr_packed_explanation::contract(src, node));
     items.extend(crate::repr_packed_two_explanation::contract(src, node));
     items.extend(crate::link_static_library_explanation::contract(src, node));
