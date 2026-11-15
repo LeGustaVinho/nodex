@@ -200,7 +200,7 @@ pub(super) fn build(
             }
         }
     }
-    result.finish(diagram_relations);
+    result.collect_relations(diagram_relations);
     Ok(result)
 }
 

@@ -210,6 +210,21 @@ pub(super) fn build(
                     continue;
                 }
             }
+            for route in &routes {
+                for from in &apps {
+                    for to in owners(&route.handler) {
+                        if *from == to { continue; }
+                        result.http_candidates.push(HttpCandidate {
+                            from: (*from).into(), to: to.into(),
+                            label: format!("{} {}", call.method, route.path),
+                            evidence: vec![
+                                ArchitectureEvidence::at("HTTP request", Some(&call.span), Some(&call.owner)),
+                                ArchitectureEvidence::at("Matching route", Some(&route.span), Some(&route.handler)),
+                            ],
+                        });
+                    }
+                }
+            }
             push_evidence(
                 &mut result.pending,
                 ArchitectureEvidence::at(
@@ -570,7 +585,7 @@ pub(super) fn build(
             ),
         );
     }
-    result.finish(relations);
+    result.collect_relations(relations);
     Ok(result)
 }
 

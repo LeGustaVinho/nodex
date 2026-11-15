@@ -214,6 +214,17 @@ pub struct ArchitectureDiagram {
     pub modules: Vec<ArchitectureNode>,
     /// Older IDs and paths that resolve to a single current application or store.
     pub aliases: BTreeMap<String, String>,
+    #[serde(skip)]
+    #[ts(skip)]
+    pub http_candidates: Vec<HttpCandidate>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HttpCandidate {
+    pub from: String,
+    pub to: String,
+    pub label: String,
+    pub evidence: Vec<ArchitectureEvidence>,
 }
 
 impl ArchitectureDiagram {
@@ -231,18 +242,22 @@ impl ArchitectureDiagram {
             stores: Vec::new(),
             modules: Vec::new(),
             aliases: BTreeMap::new(),
+            http_candidates: Vec::new(),
         }
     }
 
-    fn finish(&mut self, relations: Relations) {
+    fn collect_relations(&mut self, relations: Relations) {
+        self.edges = relations.0.into_values().collect();
+    }
+
+    fn finish(&mut self) {
         // Producers place boundaries first, then their children, then supporting nodes.
         self.omitted_nodes = self.nodes.len().saturating_sub(60) as u32;
         self.nodes.truncate(60);
         let visible: BTreeSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
-        let total = relations.0.len();
-        self.edges = relations
-            .0
-            .into_values()
+        let total = self.edges.len();
+        self.edges = std::mem::take(&mut self.edges)
+            .into_iter()
             .filter(|r| visible.contains(r.from.as_str()) && visible.contains(r.to.as_str()))
             .take(200)
             .collect();
@@ -313,6 +328,16 @@ pub struct ArchitectureRequest {
 }
 
 pub fn build(
+    input: &UmlInput<'_>,
+    request: &ArchitectureRequest,
+    config: &ArchitectureConfig,
+) -> Result<ArchitectureDiagram, UmlError> {
+    let mut diagram = inventory(input, request, config)?;
+    diagram.finish();
+    Ok(diagram)
+}
+
+pub fn inventory(
     input: &UmlInput<'_>,
     request: &ArchitectureRequest,
     config: &ArchitectureConfig,
@@ -491,7 +516,8 @@ mod tests {
                 );
             }
         }
-        d.finish(relations);
+        d.collect_relations(relations);
+        d.finish();
         assert_eq!(d.nodes.len(), 60);
         assert_eq!(d.edges.len(), 200);
         assert_eq!(d.omitted_nodes, 11);

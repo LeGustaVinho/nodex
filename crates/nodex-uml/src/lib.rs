@@ -13,6 +13,7 @@
 
 mod activity;
 pub mod architecture;
+pub mod refinement;
 mod availability;
 mod calls;
 mod class;
