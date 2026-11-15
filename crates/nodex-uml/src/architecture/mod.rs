@@ -268,7 +268,7 @@ impl Relations {
         let key = (
             from.to_owned(),
             to.to_owned(),
-            if provenance == Provenance::Declared {
+            if provenance == Provenance::Declared || kind == "HTTP" {
                 format!("{kind}:{title}")
             } else {
                 kind.to_owned()

@@ -264,6 +264,62 @@ fn c4_rolls_up_http_and_places_only_the_selected_application_inside_the_componen
 }
 
 #[test]
+fn c4_preserves_the_method_and_each_http_call_site_for_a_shared_handler() {
+    let project = project_with_files(&[
+        (
+            "web/package.json",
+            r#"{"name":"browser","dependencies":{"react-dom":"*"}}"#,
+        ),
+        (
+            "web/src/main.tsx",
+            r#"
+            import { createRoot } from "react-dom/client";
+            export function App() {
+                fetch("/api/orders", { method: "POST" });
+                fetch("/api/orders", { method: "POST" });
+                fetch("/api/orders");
+                return <div />;
+            }
+            createRoot(document.getElementById("root")!).render(<App />);
+        "#,
+        ),
+        (
+            "backend/package.json",
+            r#"{"name":"server","dependencies":{"express":"*"}}"#,
+        ),
+        (
+            "backend/src/index.ts",
+            r#"
+            import express from "express";
+            const app = express();
+            export function orders(req: any, res: any) { res.json([]); }
+            app.get("/api/orders", orders);
+            app.post("/api/orders", orders);
+            export function bootstrap() { app.listen(3000); }
+            bootstrap();
+        "#,
+        ),
+    ]);
+    let d = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &ArchitectureConfig::default(),
+    );
+    let http = |method: &str| {
+        d.edges
+            .iter()
+            .find(|e| e.kind == "HTTP" && e.label == format!("{method} /api/orders"))
+            .unwrap()
+    };
+    let post = http("POST");
+    assert_eq!(post.count, 2);
+    assert_eq!(post.evidence.len(), 2);
+    assert_ne!(post.evidence[0].span, post.evidence[1].span);
+    assert_eq!(http("GET").count, 1);
+    assert!(d.pending.is_empty(), "{:?}", d.pending);
+}
+
+#[test]
 fn a_nest_global_prefix_does_not_establish_runtime_membership() {
     let project = "knowledge/nest-libs";
     let mut req = request(ArchitectureView::Components);

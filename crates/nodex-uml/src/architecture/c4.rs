@@ -168,58 +168,58 @@ pub(super) fn build(
     };
 
     let mut links = Vec::new();
-    let mut handled_http = BTreeSet::new();
-    for edge in index
-        .relations()
-        .filter(|e| e.kind == StructEdgeKind::HttpCalls)
-    {
-        if let Some(site) = &edge.site {
-            handled_http.insert((site.file.as_str(), site.start_byte));
-        }
-        let callers = owners(&edge.from);
-        if callers.is_empty() {
-            continue;
-        }
-        let confidence = edge.confidence.unwrap_or(Confidence::Exact);
-        if confidence == Confidence::Unresolved {
-            push_evidence(&mut result.pending, edge_evidence(index, edge));
-            continue;
-        }
-        let targets = owners(&edge.to);
-        if targets.len() != 1 {
-            push_evidence(&mut result.pending, edge_evidence(index, edge));
-            continue;
-        }
-        let target = *targets.first().unwrap();
-        let label = index
-            .knowledge
-            .routes
-            .iter()
-            .find(|r| r.handler == edge.to)
-            .map(|r| format!("{} {}", r.method, r.path))
-            .unwrap_or_else(|| "HTTP".into());
-        for app in callers {
-            links.push(Link {
-                from: app.into(),
-                to: target.into(),
-                from_symbol: Some(edge.from.clone()),
-                to_symbol: Some(edge.to.clone()),
-                kind: "HTTP",
-                label: label.clone(),
-                confidence,
-                provenance: from_confidence(confidence),
-                evidence: edge_evidence(index, edge),
-            });
-        }
-    }
     for call in &index.knowledge.http_calls {
-        if handled_http.contains(&(call.span.file.as_str(), call.span.start_byte))
-            || index.is_test(&call.owner)
-        {
+        if index.is_test(&call.owner) {
             continue;
         }
         let apps = owners(&call.owner);
         if apps.is_empty() {
+            continue;
+        }
+        let routes =
+            nodex_core::knowledge::global::matching_http_routes(call, &index.knowledge.routes);
+        if !routes.is_empty() {
+            if let [route] = routes.as_slice() {
+                let targets = owners(&route.handler);
+                if targets.len() == 1 {
+                    for app in apps {
+                        links.push(Link {
+                            from: app.into(),
+                            to: (*targets.first().unwrap()).into(),
+                            from_symbol: Some(call.owner.clone()),
+                            to_symbol: Some(route.handler.clone()),
+                            kind: "HTTP",
+                            label: format!("{} {}", call.method, route.path),
+                            confidence: Confidence::Inferred,
+                            provenance: Provenance::Inferred,
+                            evidence: ArchitectureEvidence::at(
+                                format!(
+                                    "{} {} matches {} {} ({})",
+                                    call.method,
+                                    call.url,
+                                    route.method,
+                                    route.path,
+                                    route.framework
+                                ),
+                                Some(&call.span),
+                                Some(&call.owner),
+                            ),
+                        });
+                    }
+                    continue;
+                }
+            }
+            push_evidence(
+                &mut result.pending,
+                ArchitectureEvidence::at(
+                    format!(
+                        "{} {} needs a confirmed route and application",
+                        call.method, call.url
+                    ),
+                    Some(&call.span),
+                    Some(&call.owner),
+                ),
+            );
             continue;
         }
         let Some((protocol, host)) = external_host(&call.url) else {

@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use nodex_ir::knowledge::{Confidence, DataModel, EntityFact, EntryKind, GlobalHandlerFact, ModelField, ModelInfo, SymbolInfo};
+use nodex_ir::knowledge::{Confidence, DataModel, EntityFact, EntryKind, GlobalHandlerFact, HttpCallFact, ModelField, ModelInfo, ResolvedRoute, SymbolInfo};
 use nodex_ir::{FileIr, StructEdge, StructEdgeKind, Symbol, SymbolId, SymbolKind};
 
 use super::{TypeLookup, namespace_of, simple_name};
@@ -298,27 +298,10 @@ pub fn test_edges(ctx: &Ctx, infos: &BTreeMap<SymbolId, SymbolInfo>) -> Vec<Stru
 /// Front-end requests linked to the back-end routes that serve them: one matching route is
 /// inferred; several are unresolved (an edge to each candidate). Requests to other hosts, and
 /// URLs that are only a variable, are left out.
-pub fn http_edges(files: &[&FileIr], routes: &[nodex_ir::knowledge::ResolvedRoute]) -> Vec<StructEdge> {
-    use super::routes::{normalize_route, url_matches};
+pub fn http_edges(files: &[&FileIr], routes: &[ResolvedRoute]) -> Vec<StructEdge> {
     let mut out: BTreeMap<(String, String), StructEdge> = BTreeMap::new();
     for h in files.iter().flat_map(|f| f.knowledge.http_calls.iter()) {
-        if h.url.starts_with("p:") {
-            continue;
-        }
-        if let Some((_, rest)) = h.url.split_once("://") {
-            let host = rest.split(['/', ':']).next().unwrap_or("");
-            if !matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0") {
-                continue;
-            }
-        }
-        let url = normalize_route(&h.url);
-        if url.trim_start_matches("{}").trim_matches('/').is_empty() {
-            continue;
-        }
-        let candidates: Vec<&nodex_ir::knowledge::ResolvedRoute> = routes
-            .iter()
-            .filter(|r| r.method != "PAGE" && (r.method == h.method || r.method == "ANY") && url_matches(&url, &r.normalized))
-            .collect();
+        let candidates = matching_http_routes(h, routes);
         let confidence = if candidates.len() == 1 { Confidence::Inferred } else { Confidence::Unresolved };
         for r in &candidates {
             let evidence = if candidates.len() == 1 {
@@ -335,6 +318,29 @@ pub fn http_edges(files: &[&FileIr], routes: &[nodex_ir::knowledge::ResolvedRout
         }
     }
     out.into_values().collect()
+}
+
+/// Match a single HTTP call to local routes, independently of graph edge aggregation.
+pub fn matching_http_routes<'a>(call: &HttpCallFact, routes: &'a [ResolvedRoute]) -> Vec<&'a ResolvedRoute> {
+    use super::routes::{normalize_route, url_matches};
+    if call.url.starts_with("p:") {
+        return Vec::new();
+    }
+    if let Some((_, rest)) = call.url.split_once("://") {
+        let host = rest.split(['/', ':']).next().unwrap_or("");
+        if !matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0") {
+            return Vec::new();
+        }
+    }
+    let url = normalize_route(&call.url);
+    if url.trim_start_matches("{}").trim_matches('/').is_empty() {
+        return Vec::new();
+    }
+    routes.iter().filter(|route| {
+        route.method != "PAGE"
+            && (route.method == call.method || route.method == "ANY")
+            && url_matches(&url, &route.normalized)
+    }).collect()
 }
 
 /// A call made by `owner` to `target` at a site protected by `catches` (exception types handled
