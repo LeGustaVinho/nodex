@@ -26,8 +26,7 @@ export function refinedProjection(diagram: Refined, focused: string | null, show
   };
   const priority = new Set(diagram.suggestions.filter((r) => r.suggestion.kind === "highlight").map((r) => r.suggestion.target));
   const visible = diagram.nodes.filter((n) => parent(n) === focused);
-  const list = visible.sort((a, b) => Number(priority.has(b.id)) - Number(priority.has(a.id))).slice(0, limit);
-  const ids = new Set(list.map((n) => n.id));
+  const local = new Set(visible.map((n) => n.id));
   const ancestors = new Set<string | null>([null, ...pathTo(focused)]);
   ancestors.delete(focused);
   const representative = (id: string) => {
@@ -36,7 +35,7 @@ export function refinedProjection(diagram: Refined, focused: string | null, show
       if (visited.has(n.id)) break;
       visited.add(n.id);
       const boundary = parent(n);
-      if (boundary === focused) return ids.has(n.id) ? n.id : undefined;
+      if (boundary === focused) return n.id;
       if (ancestors.has(boundary)) return n.id;
     }
     return undefined;
@@ -44,17 +43,27 @@ export function refinedProjection(diagram: Refined, focused: string | null, show
   const projected = diagram.edges.flatMap((edge) => {
     const from = representative(edge.from);
     const to = representative(edge.to);
-    if (!from || !to || from === to || (!ids.has(from) && !ids.has(to))) return [];
-    return [{ edge, from, to }];
+    if (!from || !to || from === to || (!local.has(from) && !local.has(to))) return [];
+    const external = local.has(from) ? (local.has(to) ? null : to) : from;
+    return [{ edge, from, to, external }];
   });
-  const featured = projected.some(({ edge }) => priority.has(edge.id));
-  const outside = new Set<string>();
+  const allOutside = new Set(projected.flatMap(({ external }) => external ? [external] : []));
+  const reserved = Math.min(allOutside.size, Math.floor(limit / 3));
+  const list = visible.sort((a, b) => Number(priority.has(b.id)) - Number(priority.has(a.id))).slice(0, limit - reserved);
+  const ids = new Set(list.map((n) => n.id));
+  const near = projected.filter(({ from, to }) => (!local.has(from) || ids.has(from)) && (!local.has(to) || ids.has(to)));
+  const outsidePriority = new Map<string, boolean>();
+  for (const { external, edge } of near) {
+    if (external) outsidePriority.set(external, !!outsidePriority.get(external) || priority.has(edge.id) || priority.has(external));
+  }
+  const outside = new Set([...outsidePriority.keys()]
+    .sort((a, b) => Number(outsidePriority.get(b)) - Number(outsidePriority.get(a)))
+    .slice(0, limit - list.length));
+  const displayed = near.filter(({ external }) => !external || outside.has(external));
+  const featured = displayed.some(({ edge }) => priority.has(edge.id));
   const edges = new Map<string, { edge: RefinedEdge; originals: string[] }>();
-  for (const { edge: e, from, to } of projected) {
-    const crossesBoundary = !ids.has(from) || !ids.has(to);
-    if (!showAll && featured && !priority.has(e.id) && !crossesBoundary) continue;
-    if (!ids.has(from)) outside.add(from);
-    if (!ids.has(to)) outside.add(to);
+  for (const { edge: e, from, to, external } of displayed) {
+    if (!showAll && featured && !priority.has(e.id) && !external) continue;
     const key = JSON.stringify([from, to, e.kind, e.label, e.confidence]);
     const rolled = edges.get(key);
     if (rolled) {
@@ -67,9 +76,21 @@ export function refinedProjection(diagram: Refined, focused: string | null, show
   }
   return {
     nodes: [...list, ...[...outside].map((id) => byId.get(id)!)], byId, pathTo,
-    edges: [...edges.values()], omitted: visible.length - list.length,
+    edges: [...edges.values()], omitted: visible.length - list.length + allOutside.size - outside.size,
     priority, outside, hasChildren: new Set(diagram.nodes.map(parent)), featured,
   };
+}
+
+export function refinedMermaid(diagram: Refined, projection: ReturnType<typeof refinedProjection>) {
+  const ident = new Map(projection.nodes.map((n, i) => [n.id, "n" + i]));
+  const safe = (s: string) => s.replace(/[#"<>%\x60\\|;]/g, (c) => "#" + c.charCodeAt(0) + ";").replace(/[\r\n]/g, " ");
+  const pending = new Set(diagram.pending);
+  const notes = diagram.evidence.filter((e) => pending.has(e.id));
+  const warnings = notes.length
+    ? [`  pending["Needs confirmation (${notes.length})"]`, ...notes.map((e) => `%% ${safe(e.text)}`)]
+    : [];
+  return ["flowchart LR", ...warnings, ...projection.nodes.map((n) => `  ${ident.get(n.id)}["${safe(n.label)}"]`),
+    ...projection.edges.map(({ edge }) => `  ${ident.get(edge.from)} ${edge.confidence === "Exact" ? "-->" : "-.->"}|"${safe(edge.label)}"| ${ident.get(edge.to)}`)].join("\n");
 }
 
 export function RefinedArchitecture({ diagram, historical, follow }: {
@@ -116,11 +137,7 @@ export function RefinedArchitecture({ diagram, historical, follow }: {
     })),
   };
   const exportMermaid = async () => {
-    const ident = new Map(projection.nodes.map((n, i) => [n.id, "n" + i]));
-    const safe = (s: string) => s.replace(/[#"<>`\\|;]/g, (c) => "#" + c.charCodeAt(0) + ";").replace(/[\r\n]/g, " ");
-    const text = ["flowchart LR", ...projection.nodes.map((n) => `  ${ident.get(n.id)}["${safe(n.label)}"]`),
-      ...projection.edges.map(({ edge }) => `  ${ident.get(edge.from)} ${edge.confidence === "Exact" ? "-->" : "-.->"}|"${safe(edge.label)}"| ${ident.get(edge.to)}`)].join("\n");
-    try { await saveFile("architecture-refined.mmd", "text/plain", text); }
+    try { await saveFile("architecture-refined.mmd", "text/plain", refinedMermaid(diagram, projection)); }
     catch (error) { toast.error(errorText(error)); }
   };
   return <>
@@ -135,7 +152,7 @@ export function RefinedArchitecture({ diagram, historical, follow }: {
       <button onClick={exportCanvas}>.png</button>
     </div>
     <RefinementSummary diagram={diagram} historical={historical} />
-    {projection.omitted > 0 && <p className="muted small"><button onClick={() => setLimit((n) => n + 60)}>Show more</button> {projection.omitted} more elements in this group.</p>}
+    {projection.omitted > 0 && <p className="muted small"><button onClick={() => setLimit((n) => n + 60)}>Show more</button> {projection.omitted} more elements in this view.</p>}
     <div className="architecture-content">
       <GraphCanvas graph={graph} layoutKey={JSON.stringify(["refined", path])} selectedId={selected}
         onNodeClick={(n) => setSelected(n.id)} onNodeDoubleClick={(n) => { const node = projection.byId.get(n.id); if (node) enter(node); }}
