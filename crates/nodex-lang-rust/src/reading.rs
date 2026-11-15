@@ -57,6 +57,10 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::custom_outer_attribute_explanation::contract(src, node));
     items.extend(crate::proc_macro_derive_explanation::contract(src, node));
     items.extend(crate::macro_dollar_crate_explanation::contract(src, node));
+    items.extend(crate::compile_error_macro_explanation::contract(src, node));
+    items.extend(crate::include_bytes_macro_explanation::contract(src, node));
+    items.extend(crate::include_str_macro_explanation::contract(src, node));
+    items.extend(crate::matches_macro_conditional_explanation::contract(src, node));
     items.extend(crate::proc_macro_function_explanation::explain(src, node));
     items.extend(crate::proc_macro_attribute_explanation::contract(src, node));
     items.extend(crate::macro_expr_repetition_explanation::contract(src, node));
@@ -1303,6 +1307,16 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::compile_error_macro_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::include_bytes_macro_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::panic_message_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::include_str_macro_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((span, content)) = crate::matches_macro_conditional_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::todo_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::unimplemented_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::cfg_linux_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::option_env_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::env_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((span, content)) = crate::println_positional_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((span, content)) = crate::debug_format_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::vec_list_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
