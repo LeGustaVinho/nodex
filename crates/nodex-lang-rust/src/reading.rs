@@ -68,6 +68,15 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
     items.extend(crate::global_asm_explanation::contract(src, node));
+    items.extend(crate::mutable_reference_trait_impl_explanation::contract(src, node));
+    items.extend(crate::array_four_trait_impl_explanation::contract(src, node));
+    items.extend(crate::result_unit_error_return_explanation::contract(src, node));
+    items.extend(crate::pin_mut_self_receiver_explanation::explain(src, node));
+    items.extend(crate::handler_fn_alias_explanation::explain(src, node));
+    items.extend(crate::shared_reference_trait_impl_explanation::explain(src, node));
+    if let Some(item) = crate::trait_self_return_requirement_explanation::explain(src, node) { items.push(item); }
+    items.extend(crate::trait_opaque_iterator_explanation::explain(src, node));
+    items.extend(crate::trait_default_const_explanation::explain(src, node));
     items.extend(crate::gat_self_outlives_explanation::contract(src, node));
     items.extend(crate::gat_lifetime_declaration_explanation::contract(src, node));
     items.extend(crate::mutable_parameter_explanation::contract(src, node));
@@ -2290,6 +2299,7 @@ impl Reader<'_, '_> {
         };
         let scope = boundary(node);
         let kind = self.op(node).map(|op| op.family);
+        if let Some((value, token, content)) = crate::try_result_option_explanation::explain(self.src, node, kind) { self.push(self.src.span(value), self.src.span(token), matches!(kind, Some(Family::Result | Family::Option)), content); }
         let iterator_exit = scope.filter(|scope| scope.kind() == "closure_expression")
             .and_then(|closure| {
                 let call = direct_argument_call(closure)?;
