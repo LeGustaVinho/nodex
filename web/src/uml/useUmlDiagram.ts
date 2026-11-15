@@ -27,5 +27,5 @@ export function useUmlDiagram() {
     retry: false,
     placeholderData: (prev) => prev,
   });
-  return { kind, scope, availability, available, diagram };
+  return { kind, scope, opts, availability, available, diagram };
 }

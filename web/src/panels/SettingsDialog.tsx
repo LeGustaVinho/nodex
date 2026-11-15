@@ -30,6 +30,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const env = useEnvironment();
   const [checking, setChecking] = useState(false);
+  const [codexPath, setCodexPath] = useState<string>();
   const save = useMutation({
     mutationFn: (s: Settings) => api.saveSettings(s),
     onSuccess: (s) => client.setQueryData(["settings"], s),
@@ -62,6 +63,23 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="settings-body">
+          <section>
+            <div className="section-title">Diagram refinement</div>
+            <label className="settings-row">
+              <input type="checkbox" checked={settings.data?.diagram_ai ?? false}
+                disabled={!settings.data || save.isPending}
+                onChange={(e) => settings.data && save.mutate({ ...settings.data, diagram_ai: e.target.checked })} />
+              Enable optional refinement with Codex CLI
+            </label>
+            <label className="settings-row">Codex executable
+              <input value={codexPath ?? settings.data?.codex_path ?? ""} placeholder="Find Codex on PATH"
+                onChange={(e) => setCodexPath(e.target.value)} />
+            </label>
+            <button disabled={codexPath === undefined || !settings.data || save.isPending} onClick={() => {
+              if (settings.data) save.mutate({ ...settings.data, codex_path: codexPath?.trim() || null });
+            }}>Save executable path</button>
+            <p className="muted small">Each generation sends the context you approve through your Codex CLI. Saved diagrams open offline.</p>
+          </section>
           {isDesktop && (
             <section>
               <div className="section-title">Updates</div>
@@ -96,7 +114,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               <span className="muted">Logs</span>
               <span className="mono small">{env.data?.logs ?? "…"}</span>
               <span className="muted">Privacy</span>
-              <span>Your code never leaves this computer. Nodex goes online only to check for updates and to download a debug adapter you install.</span>
+              <span>Code analysis runs locally. Optional Codex refinement sends the context you approve. Update checks and debug adapter downloads also use the network.</span>
             </div>
           </section>
         </div>

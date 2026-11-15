@@ -2,6 +2,7 @@ import type { BorrowOrigins } from "./gen/BorrowOrigins";
 import type { ArchitectureDiagram } from "./gen/ArchitectureDiagram";
 import type { ArchitectureSettings } from "./gen/ArchitectureSettings";
 import type { ArchitectureView } from "./gen/ArchitectureView";
+import type { RefinementTarget, RefinementPreview, RefinementProgress, RefinementHistory, RefinementSave } from "./uml/refinement";
 import type { Layer } from "./gen/Layer";
 import type { UnityStatus } from "./gen/UnityStatus";
 import type { CallsPage } from "./gen/CallsPage";
@@ -221,6 +222,24 @@ export const api = {
   },
   architectureSettings: async (signal: AbortSignal) =>
     (await request("/api/architecture/config", { signal })).json() as Promise<ArchitectureSettings>,
+  refinementHistory: (target: RefinementTarget) =>
+    json<RefinementHistory>("/api/diagram-refinements?target=" + encodeURIComponent(JSON.stringify(target))),
+  refinementPreview: async (target: RefinementTarget, exclude: string[], focus: string | null) =>
+    (await request("/api/diagram-refinements/context", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target, exclude, focus }),
+    })).json() as Promise<RefinementPreview>,
+  startRefinement: async (preview: RefinementPreview) =>
+    (await request("/api/diagram-refinements/jobs", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preview: preview.id, digest: preview.digest, confirmed: true }),
+    })).json() as Promise<string>,
+  refinementStatus: (job: string) => json<RefinementProgress>("/api/diagram-refinements/jobs/" + encodeURIComponent(job)),
+  cancelRefinement: async (job: string) =>
+    (await request("/api/diagram-refinements/jobs/" + encodeURIComponent(job), { method: "DELETE" })).json() as Promise<RefinementProgress>,
+  saveRefinement: async (save: RefinementSave) =>
+    (await request("/api/diagram-refinements", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(save),
+    })).json() as Promise<RefinementHistory>,
   saveArchitecture: async (settings: ArchitectureSettings) =>
     (await request("/api/architecture/config", {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(settings),

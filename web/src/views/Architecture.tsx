@@ -14,6 +14,8 @@ import { errorText, toast } from "../toast";
 import { ArchitectureEditor, useArchitectureSettings } from "./ArchitectureEditor";
 import { exportCanvas, GraphCanvas } from "./GraphCanvas";
 import { PackagesView, useStructure } from "./Views";
+import { RefinementControls, useDiagramRefinement } from "./DiagramRefinement";
+import { RefinedArchitecture } from "./RefinedArchitecture";
 
 const modes = [
   ["packages", "Packages"], ["layers", "Layers"], ["c4", "C4"],
@@ -91,6 +93,13 @@ export function architectureGraph(diagram: ArchitectureDiagram, ui: Architecture
 export function ArchitectureView() {
   const ui = useUi((s) => s.architecture);
   const set = useUi((s) => s.setArchitecture);
+  const items = useUi((s) => s.context);
+  const target = ui.mode === "packages"
+    ? { kind: "packages" as const, scope: toUmlScope(items) }
+    : { kind: "architecture" as const, view: ui.mode === "layers" ? "layers" as const : ui.level,
+        scope: ui.mode === "layers" ? toUmlScope(items) : { kind: "Project" as const },
+        container: ui.mode === "c4" && ui.level === "components" ? ui.container : null };
+  const refinement = useDiagramRefinement(target);
   return (
     <div className="architecture-workspace">
       <div className="uml-bar architecture-modes" role="group" aria-label="Architecture views">
@@ -99,8 +108,28 @@ export function ArchitectureView() {
             {title}
           </button>
         ))}
+        <span className="spacer" />
+        <RefinementControls controller={refinement} />
       </div>
-      {ui.mode === "packages" ? <div className="architecture-content"><PackagesView /></div> : <ArchitectureCanvas />}
+      {refinement.version ? <>
+        {ui.mode === "c4" && <nav className="uml-bar" aria-label="C4 level">
+          <button aria-current={ui.level === "context" ? "step" : undefined} onClick={() => set({ level: "context", selected: null })}>Context</button>
+          <button aria-current={ui.level === "containers" ? "step" : undefined} onClick={() => set({ level: "containers", selected: null })}>Containers</button>
+          {ui.level === "components" && <strong>Components</strong>}
+        </nav>}
+        <RefinedArchitecture key={refinement.version.id} diagram={refinement.version.diagram} historical={refinement.historical} follow={(node) => {
+          if (ui.mode !== "c4") return false;
+          if (ui.level === "context" && node.kind === "System") {
+            set({ level: "containers", selected: null });
+            return true;
+          }
+          if (ui.level === "containers" && node.kind === "Application") {
+            set({ level: "components", container: node.id, selected: null });
+            return true;
+          }
+          return false;
+        }} />
+      </> : ui.mode === "packages" ? <div className="architecture-content"><PackagesView /></div> : <ArchitectureCanvas />}
     </div>
   );
 }

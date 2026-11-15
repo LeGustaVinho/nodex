@@ -8,6 +8,7 @@ import { umlMenuItems } from "../uml/menu";
 import { elementIdOf, kindLabel, scopeLabel } from "../uml/uml";
 import { UmlControls } from "../uml/UmlControls";
 import { useUmlDiagram } from "../uml/useUmlDiagram";
+import { RefinementControls, RefinementEvidence, RefinementSummary, useDiagramRefinement } from "./DiagramRefinement";
 import { ConfidenceToggles } from "../components/ConfidenceToggles";
 import { saveFile } from "../desktop";
 import { errorText, toast } from "../toast";
@@ -65,7 +66,8 @@ let renders = 0;
 export function UmlView() {
   const ui = useUi();
   const { index } = useStructure();
-  const { kind, scope, availability, available, diagram } = useUmlDiagram();
+  const { kind, scope, opts, availability, available, diagram } = useUmlDiagram();
+  const refinement = useDiagramRefinement({ kind: "uml", diagram: kind, scope, options: opts }, !opts.runtime);
   const [svg, setSvg] = useState<string>("");
   const [renderError, setRenderError] = useState<string | null>(null);
   /** Mermaid is drawing the current text (it runs on the main thread). */
@@ -81,7 +83,13 @@ export function UmlView() {
   const fitPending = useRef(false);
   /** The reader zoomed or panned: resizing the canvas keeps their view. */
   const adjusted = useRef(false);
-  const data = diagram.data;
+  const refined = refinement.version?.diagram;
+  const data = useMemo(() => {
+    if (!refined?.uml) return diagram.data;
+    if (!refinement.historical) return refined.uml;
+    return { ...refined.uml, elements: refined.uml.elements.map((e) => ({ ...e, span: null, symbol: null })),
+      relations: refined.uml.relations.map((e) => ({ ...e, site: null })) };
+  }, [refined, refinement.historical, diagram.data]);
 
   // Draw the text; keep the previous drawing until the new one is ready.
   useEffect(() => {
@@ -240,6 +248,7 @@ export function UmlView() {
         )}
         {svg && (diagram.isFetching || availability.isFetching || drawing) && <LoadingBadge label="updating…" />}
         <span className="spacer" />
+        <RefinementControls controller={refinement} />
         <button onClick={() => ((adjusted.current = true), setView((v) => ({ ...v, scale: Math.min(4, v.scale * 1.25) })))} title="Zoom in">
           +
         </button>
@@ -268,6 +277,7 @@ export function UmlView() {
           .png
         </button>
       </div>
+      {refined && <RefinementSummary diagram={refined} historical={refinement.historical} />}
       {data && data.warnings.length > 0 && (
         <div className="uml-warnings">
           {data.warnings.map((w) => (
@@ -357,6 +367,13 @@ export function UmlView() {
         </div>
         {showText && data && <pre className="uml-text">{data.mermaid}</pre>}
         {pickedEl && <Details element={pickedEl} diagram={data!} relations={pickedRelations} onClose={() => setPicked(null)} />}
+        {refined && pickedEl && <aside className="refinement-inspector" aria-label="Refinement evidence">
+          {refined.suggestions.filter((r) => r.suggestion.target === pickedEl.mermaid_id
+            || refined.edges.some((e) => e.id === r.suggestion.target && (e.from === pickedEl.mermaid_id || e.to === pickedEl.mermaid_id)))
+            .map((r) => <div key={r.id}><p>{r.suggestion.text}</p>
+              <RefinementEvidence diagram={refined} ids={r.suggestion.evidence} historical={refinement.historical} />
+            </div>)}
+        </aside>}
       </div>
     </div>
   );

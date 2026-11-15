@@ -129,6 +129,7 @@ function useLiveUpdates() {
           }
           if (event.type === "architecture-changed") {
             void queryClient.invalidateQueries({ queryKey: ["architecture"] });
+            void queryClient.invalidateQueries({ queryKey: ["diagram-refinements"] });
           }
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys =
@@ -140,6 +141,9 @@ function useLiveUpdates() {
                     ["project", "navigation"];
             for (const key of keys) {
               void queryClient.invalidateQueries({ queryKey: [key] });
+            }
+            if (event.type === "graph-changed" || event.data.graph) {
+              void queryClient.invalidateQueries({ queryKey: ["diagram-refinements"] });
             }
           }
         },

@@ -191,7 +191,7 @@ flowchart LR
 
 ## Privacy and security
 
-- **Your code stays on your computer.** Nodex reads it locally and never uploads it. It goes online only to check for updates and to download a debug adapter you install.
+- **Code analysis runs locally.** Optional diagram refinement sends the context you explicitly approve to your installed Codex CLI. Saved refinements open offline. Update checks and debug adapter downloads also use the network.
 - **The local server is locked down.** It listens on `127.0.0.1` only, needs a random session token for every request, and rejects foreign `Host` and `Origin` headers.
 - **Updates are signed.** The app refuses an update whose signature does not match the key built into it.
 
