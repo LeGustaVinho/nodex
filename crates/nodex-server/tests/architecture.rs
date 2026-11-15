@@ -75,6 +75,27 @@ async fn saves_and_restores_local_adjustments_and_invalidates_the_diagram() {
 }
 
 #[tokio::test]
+async fn concurrent_servers_cannot_both_save_the_same_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = state(dir.path());
+    let second = state(dir.path());
+    let (_, mut a) = request(&first, CONFIG, None).await;
+    let (_, mut b) = request(&second, CONFIG, None).await;
+    a["config"]["system_name"] = json!("First");
+    b["config"]["system_name"] = json!("Second");
+    let (a, b) = tokio::join!(
+        request(&first, CONFIG, Some(a)),
+        request(&second, CONFIG, Some(b)),
+    );
+    let saved = match (a.0, b.0) {
+        (StatusCode::OK, StatusCode::CONFLICT) => a.1,
+        (StatusCode::CONFLICT, StatusCode::OK) => b.1,
+        _ => panic!("expected one successful save, got {a:?} and {b:?}"),
+    };
+    assert_eq!(request(&first, CONFIG, None).await.1, saved);
+}
+
+#[tokio::test]
 async fn malformed_config_and_failed_save_keep_the_inferred_diagram_available() {
     let dir = tempfile::tempdir().unwrap();
     let app = state(dir.path());

@@ -191,11 +191,22 @@ pub async fn put_config(
             return Err(conflict());
         }
         let generation = state.generation.load(Ordering::Acquire);
+        let path = project.root().join(CONFIG_PATH);
+        let parent = path.parent().expect("settings path has a parent");
+        fs::create_dir_all(parent).map_err(internal)?;
+        // The lock must survive replacement of the JSON file.
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(parent.join("architecture.lock"))
+            .map_err(internal)?;
+        lock.lock().map_err(internal)?;
         let previous = read_settings(project.root(), generation)?;
         if previous.revision != update.revision {
             return Err(conflict());
         }
-        let path = project.root().join(CONFIG_PATH);
         let bytes = serde_json::to_vec_pretty(&update.config).map_err(internal)?;
         write_atomic(&path, &bytes).map_err(internal)?;
         let _ = state.events.send(ServerEvent::ArchitectureChanged);
@@ -263,7 +274,6 @@ fn revision(root: &Path, generation: u64, bytes: Option<&[u8]>) -> String {
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path.parent().expect("settings path has a parent");
-    fs::create_dir_all(parent)?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
