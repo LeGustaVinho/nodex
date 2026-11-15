@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod rem_assign_detail;
+mod and_assign_detail;
+mod or_assign_detail;
+mod xor_assign_detail;
+mod shr_assign_detail;
+mod shl_assign_detail;
+mod parenthesized_callable_detail;
+mod grouped_arithmetic_detail;
+mod index_access_detail;
+mod method_receiver_lookup_detail;
 mod nested_attr_args_detail;
 mod inner_cfg_attr_detail;
 mod macro_multiple_rules_detail;

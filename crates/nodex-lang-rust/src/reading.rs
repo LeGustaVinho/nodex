@@ -24,6 +24,7 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::grouped_arithmetic_detail::contract(src, node));
     items.extend(crate::nested_attr_args_detail::contract(src, node));
     items.extend(crate::inner_cfg_attr_detail::contract(src, node));
     items.extend(crate::macro_multiple_rules_detail::contract(src, node));
@@ -1466,6 +1467,16 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::method_receiver_lookup_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::index_access_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::grouped_arithmetic_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::parenthesized_callable_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::shr_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::shl_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::and_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::or_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::xor_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::rem_assign_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::div_assign_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::mul_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::sub_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
