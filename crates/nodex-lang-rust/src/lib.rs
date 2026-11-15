@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod string_hex_escape_detail;
+mod line_comment_detail;
+mod block_comment_detail;
+mod outer_doc_equivalence_detail;
+mod macro_token_delimiters_detail;
+mod inner_doc_equivalence_detail;
+mod invalid_tuple_field_detail;
+mod reserved_raw_name_detail;
+mod raw_lifetime_edition_detail;
+mod invalid_numeric_token_detail;
 mod char_scalar_literal_detail;
 mod bool_keyword_literal_detail;
 mod unicode_binding_detail;

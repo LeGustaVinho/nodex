@@ -24,6 +24,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::string_hex_escape_detail::contract(src, node));
+    items.extend(crate::line_comment_detail::contract(src, node));
+    items.extend(crate::block_comment_detail::contract(src, node));
+    items.extend(crate::outer_doc_equivalence_detail::contract(src, node));
+    items.extend(crate::inner_doc_equivalence_detail::contract(src, node));
+    items.extend(crate::reserved_raw_name_detail::contract(src, node));
+    items.extend(crate::raw_lifetime_edition_detail::contract(src, node));
     items.extend(crate::char_scalar_literal_detail::contract(src, node));
     items.extend(crate::bool_keyword_literal_detail::contract(src, node));
     items.extend(crate::string_utf8_literal_detail::contract(src, node));
@@ -1472,6 +1479,11 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (span, content) in crate::invalid_numeric_token_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((owner, site, content)) = crate::raw_lifetime_edition_detail::label(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), site, false, content); }
+        if let Some((site, content)) = crate::invalid_tuple_field_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::macro_token_delimiters_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (span, content) in crate::string_hex_escape_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::hex_f32_digits_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::underscore_binding_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::standalone_underscore_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
