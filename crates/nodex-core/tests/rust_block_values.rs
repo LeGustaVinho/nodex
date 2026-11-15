@@ -203,7 +203,7 @@ fn embedded_match_values_explain_arms_without_execution_pins() {
         ReadingContent::Paths { input, .. } => Some(input.as_str()),
         _ => None,
     }).collect();
-    assert_eq!(fallback_inputs, ["Check whether input matches Some(value)"]);
+    assert_eq!(fallback_inputs, ["Evaluate input once, then check whether its result matches the pattern Some(value)."]);
 
     let wide = ir.flows.iter().find(|flow| flow.name == "wide").unwrap();
     let multiline = wide.reading.iter().flatten().find_map(|site| match &site.content {
