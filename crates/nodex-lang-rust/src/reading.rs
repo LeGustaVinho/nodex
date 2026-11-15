@@ -53,6 +53,12 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::named_struct_explanation::explain(src, node));
     items.extend(crate::tuple_struct_explanation::explain(src, node));
     items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::derive_clone_debug_explanation::contract(src, node));
+    items.extend(crate::custom_outer_attribute_explanation::contract(src, node));
+    items.extend(crate::proc_macro_derive_explanation::contract(src, node));
+    items.extend(crate::macro_dollar_crate_explanation::contract(src, node));
+    items.extend(crate::proc_macro_function_explanation::explain(src, node));
+    items.extend(crate::proc_macro_attribute_explanation::contract(src, node));
     items.extend(crate::macro_expr_repetition_explanation::contract(src, node));
     items.extend(crate::macro_comma_plus_expr_explanation::contract(src, node));
     items.extend(crate::macro_semicolon_repeat_explanation::contract(src, node));
@@ -1297,6 +1303,10 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((span, content)) = crate::println_positional_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::debug_format_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::vec_list_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::dbg_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::qualified_macro_invocation_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::bracket_macro_invocation_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::macro_paren_invocation_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
