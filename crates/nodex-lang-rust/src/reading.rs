@@ -24,6 +24,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::generic_type_args_explanation::contract(src, node));
+    items.extend(crate::constructed_where_explanation::contract(src, node));
+    items.extend(crate::higher_rank_where_explanation::contract(src, node));
+    items.extend(crate::associated_bound_explanation::contract(src, node));
+    items.extend(crate::independent_impl_args_explanation::contract(src, node));
+    items.extend(crate::opaque_inferred_lifetime_explanation::contract(src, node));
+    items.extend(crate::empty_capture_explanation::contract(src, node));
     items.extend(crate::const_explanation::explain(src, node));
     items.extend(crate::static_explanation::explain(src, node));
     items.extend(crate::static_mut_explanation::explain(src, node));
@@ -1449,6 +1456,9 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (site, content) in crate::named_fn_pointer_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::generic_type_args_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::inferred_const_args_explanation::explain(self.src, node) { self.push(self.src.span(owner), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::numeric_field_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((owner, site, content)) = crate::leading_or_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
         for (anchor, site, content) in crate::legacy_range_pattern_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
@@ -2462,6 +2472,7 @@ impl Reader<'_, '_> {
 
     fn call(&mut self, node: Node<'_>) {
         if let Some((site, text)) = crate::qualified_trait_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Call an item through a trait implementation", text)); }
+        if let Some((site, content)) = crate::qualified_assoc_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, text)) = crate::type_qualified_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Call through a type", text)); }
         if let Some((site, content)) = crate::method_turbofish_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, text)) = crate::turbofish_type_path_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Generic arguments on a type path", text)); }

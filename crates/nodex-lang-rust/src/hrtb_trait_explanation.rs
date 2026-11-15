@@ -14,6 +14,9 @@ pub(crate) fn contract(src: Src<'_>, declaration: Node<'_>) -> Vec<ContractItem>
     while let Some(node) = pending.pop() {
         if Some(node) == body { continue; }
         if node.kind() == "higher_ranked_trait_bound" {
+            // A binder on the left of a where predicate quantifies the whole
+            // predicate, not a trait bound on the reference type itself.
+            if node.parent().is_some_and(|parent| parent.kind() == "where_predicate" && parent.child_by_field_name("left") == Some(node)) { continue; }
             if let (Some(params), Some(bound)) = (node.child_by_field_name("type_parameters"), node.child_by_field_name("type")) {
                 let names = src.norm(params);
                 let bound_text = src.norm(bound);

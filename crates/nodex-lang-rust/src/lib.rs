@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod qualified_assoc_call_explanation;
+mod generic_type_args_explanation;
+mod inferred_const_args_explanation;
+mod constructed_where_explanation;
+mod higher_rank_where_explanation;
+mod associated_bound_explanation;
+mod independent_impl_args_explanation;
+mod opaque_inferred_lifetime_explanation;
+mod empty_capture_explanation;
+mod named_fn_pointer_explanation;
 mod expr;
 mod external_module_reading;
 mod flow;
