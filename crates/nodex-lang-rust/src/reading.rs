@@ -67,6 +67,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::doc_alias_explanation::contract(src, node));
+    items.extend(crate::must_use_attribute_explanation::contract(src, node));
+    items.extend(crate::clippy_tool_attribute_explanation::contract(src, node));
+    items.extend(crate::diagnostic_do_not_recommend_explanation::contract(src, node));
+    items.extend(crate::must_use_message_explanation::contract(src, node));
+    items.extend(crate::link_name_library_explanation::contract(src, node));
+    items.extend(crate::rustfmt_skip_explanation::contract(src, node));
+    items.extend(crate::diagnostic_on_unimplemented_explanation::contract(src, node));
+    items.extend(crate::doc_value_explanation::contract(src, node));
+    items.extend(crate::doc_hidden_explanation::contract(src, node));
     items.extend(crate::should_panic_expected_explanation::contract(src, node));
     items.extend(crate::derive_debug_attribute_explanation::contract(src, node));
     items.extend(crate::cfg_attr_derive_explanation::contract(src, node));
