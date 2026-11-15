@@ -313,7 +313,7 @@ impl<'a, 't> Collector<'a, 't> {
                             && let Some(name) = f.child_by_field_name("name").map(|n| src.norm(n))
                         {
                             let mut s = self.sym(&format!("{module}::{name}"), SymbolKind::Function, &name, Some(&module_id), f, vec!["extern".into()]);
-                            s.signature = Some(src.norm(f).trim_end_matches(';').to_owned());
+                            s.signature = Some(crate::foreign_safe_fn_explanation::written_signature(src, f).unwrap_or_else(|| src.norm(f).trim_end_matches(';').to_owned()));
                             self.push(s);
                         }
                     }

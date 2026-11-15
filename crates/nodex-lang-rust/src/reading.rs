@@ -67,6 +67,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::foreign_fn_default_unsafe_explanation::contract(src, node));
+    items.extend(crate::foreign_safe_static_explanation::contract(src, node));
+    items.extend(crate::foreign_safe_fn_explanation::contract(src, node));
+    items.extend(crate::unsafe_extern_c_block_explanation::contract(src, node));
+    items.extend(crate::foreign_static_default_explanation::contract(src, node));
+    items.extend(crate::foreign_explicit_unsafe_fn_explanation::contract(src, node));
+    items.extend(crate::extern_system_fn_explanation::contract(src, node));
+    items.extend(crate::extern_c_fn_explanation::contract(src, node));
+    items.extend(crate::collapse_debuginfo_no_explanation::contract(src, node));
+    items.extend(crate::collapse_debuginfo_external_explanation::contract(src, node));
     items.extend(crate::debugger_natvis_explanation::contract(src, node));
     items.extend(crate::type_length_limit_explanation::contract(src, node));
     items.extend(crate::collapse_debuginfo_yes_explanation::contract(src, node));
