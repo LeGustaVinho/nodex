@@ -67,6 +67,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::debugger_natvis_explanation::contract(src, node));
+    items.extend(crate::type_length_limit_explanation::contract(src, node));
+    items.extend(crate::collapse_debuginfo_yes_explanation::contract(src, node));
+    items.extend(crate::debugger_gdb_script_explanation::contract(src, node));
+    items.extend(crate::recursion_limit_explanation::contract(src, node));
+    items.extend(crate::panic_handler_explanation::contract(src, node));
+    items.extend(crate::non_exhaustive_enum_explanation::contract(src, node));
+    items.extend(crate::windows_subsystem_explanation::contract(src, node));
+    items.extend(crate::global_allocator_explanation::contract(src, node));
+    items.extend(crate::non_exhaustive_struct_explanation::contract(src, node));
     items.extend(crate::arm_instruction_set_explanation::contract(src, node));
     items.extend(crate::no_implicit_prelude_explanation::contract(src, node));
     items.extend(crate::no_std_explanation::contract(src, node));
