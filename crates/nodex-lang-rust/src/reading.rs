@@ -68,6 +68,14 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
     items.extend(crate::global_asm_explanation::contract(src, node));
+    items.extend(crate::reserved_virtual_explanation::contract(src, node));
+    items.extend(crate::reserved_typeof_explanation::contract(src, node));
+    items.extend(crate::reserved_try_explanation::contract(src, node));
+    items.extend(crate::reserved_do_explanation::contract(src, node));
+    items.extend(crate::reserved_final_explanation::contract(src, node));
+    items.extend(crate::reserved_abstract_explanation::explain(src, node));
+    items.extend(crate::reserved_override_explanation::contract(src, node));
+    items.extend(crate::align_of_call_explanation::contract(src, node));
     items.extend(crate::mutable_reference_trait_impl_explanation::contract(src, node));
     items.extend(crate::array_four_trait_impl_explanation::contract(src, node));
     items.extend(crate::result_unit_error_return_explanation::contract(src, node));
@@ -1425,6 +1433,11 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::reserved_typeof_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::reserved_try_explanation::reading(self.src, node) { self.push(self.src.span(node), site, false, content); }
+        if let Some((site, content)) = crate::align_of_call_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, text)) = crate::std_drop_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Drop a value early", text)); }
+        if let Some((site, content)) = crate::size_of_call_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::asm_pure_nomem_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::asm_raw_option_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::asm_label_operand_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
