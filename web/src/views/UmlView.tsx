@@ -207,17 +207,18 @@ export function UmlView() {
   const pickedEl = picked ? byId.get(picked) : undefined;
   const pickedRelations = data && picked ? data.relations.filter((r) => r.from === picked || r.to === picked) : [];
 
-  if (availability.isError) {
+  if (availability.isError && !refined) {
     return (
       <div className="empty">
         <div>
           <p>{String(availability.error).replace(/^Error: \d+ /, "")}</p>
           {ui.umlExplicitScope && <button onClick={() => ui.showUml()}>Use the project context</button>}
+          <RefinementControls controller={refinement} />
         </div>
       </div>
     );
   }
-  if (available && !available.available) {
+  if (available && !available.available && !refined) {
     return (
       <div className="empty uml-empty">
         <p>
@@ -226,6 +227,7 @@ export function UmlView() {
         {availability.data?.suggested && availability.data.suggested !== kind && (
           <button onClick={() => ui.showUml(undefined, availability.data!.suggested!)}>Show {kindLabel(availability.data.suggested)} instead</button>
         )}
+        <RefinementControls controller={refinement} />
       </div>
     );
   }

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useUi } from "../store";
 import { errorText } from "../toast";
@@ -38,7 +38,12 @@ function Controls({ controller: c }: { controller: Controller }) {
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
   const [failure, setFailure] = useState<string>();
-  const sameProject = () => useUi.getState().projectSession === c.session;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const sameProject = () => mounted.current && useUi.getState().projectSession === c.session;
   const progress = useQuery({
     queryKey: ["diagram-refinement-job", c.identity, job],
     queryFn: () => api.refinementStatus(job!),
@@ -48,6 +53,9 @@ function Controls({ controller: c }: { controller: Controller }) {
   });
   const suggestions = progress.data?.phase === "ready" ? progress.data.suggestions : undefined;
   useEffect(() => { setSelected([]); }, [job]);
+  useEffect(() => () => {
+    if (job) void api.cancelRefinement(job).catch(() => {});
+  }, [job]);
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
     setFailure(undefined);

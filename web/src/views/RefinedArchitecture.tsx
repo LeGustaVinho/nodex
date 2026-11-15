@@ -22,8 +22,11 @@ export function refinedProjection(diagram: Refined, focused: string | null, show
   const list = visible.sort((a, b) => Number(priority.has(b.id)) - Number(priority.has(a.id))).slice(0, limit);
   const ids = new Set(list.map((n) => n.id));
   const representative = (id: string) => {
+    const visited = new Set<string>();
     for (let n = byId.get(id); n; n = byId.get(parent(n) ?? "")) {
       if (ids.has(n.id)) return n.id;
+      if (visited.has(n.id)) break;
+      visited.add(n.id);
     }
     return undefined;
   };
