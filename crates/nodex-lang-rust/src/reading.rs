@@ -57,6 +57,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::custom_outer_attribute_explanation::contract(src, node));
     items.extend(crate::proc_macro_derive_explanation::contract(src, node));
     items.extend(crate::macro_dollar_crate_explanation::contract(src, node));
+    items.extend(crate::deny_unused_variables_explanation::contract(src, node));
+    items.extend(crate::forbid_unsafe_code_explanation::contract(src, node));
+    items.extend(crate::deprecated_note_explanation::contract(src, node));
+    items.extend(crate::macro_use_attribute_explanation::contract(src, node));
+    items.extend(crate::automatically_derived_explanation::contract(src, node));
+    items.extend(crate::deprecated_attribute_explanation::contract(src, node));
+    items.extend(crate::warn_missing_docs_explanation::contract(src, node));
+    items.extend(crate::expect_unused_variables_explanation::contract(src, node));
+    items.extend(crate::macro_export_attribute_explanation::contract(src, node));
+    items.extend(crate::allow_dead_code_explanation::contract(src, node));
     items.extend(crate::should_panic_expected_explanation::contract(src, node));
     items.extend(crate::derive_debug_attribute_explanation::contract(src, node));
     items.extend(crate::cfg_attr_derive_explanation::contract(src, node));
