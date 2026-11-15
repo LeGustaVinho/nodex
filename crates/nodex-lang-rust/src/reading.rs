@@ -24,6 +24,11 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::char_scalar_literal_detail::contract(src, node));
+    items.extend(crate::bool_keyword_literal_detail::contract(src, node));
+    items.extend(crate::string_utf8_literal_detail::contract(src, node));
+    items.extend(crate::negative_i32_token_detail::contract(src, node));
+    items.extend(crate::integer_shaped_f32_detail::contract(src, node));
     items.extend(crate::grouped_arithmetic_detail::contract(src, node));
     items.extend(crate::nested_attr_args_detail::contract(src, node));
     items.extend(crate::inner_cfg_attr_detail::contract(src, node));
@@ -1467,6 +1472,16 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::hex_f32_digits_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::underscore_binding_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::standalone_underscore_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::negative_i32_token_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((span, content)) = crate::integer_shaped_f32_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::trailing_dot_float_detail::explain(self.src, node) { self.push(self.src.span(node), site, false, content); }
+        if let Some((span, content)) = crate::bool_keyword_literal_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::unicode_binding_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((span, content)) = crate::string_utf8_literal_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::char_scalar_literal_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::method_receiver_lookup_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::index_access_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::grouped_arithmetic_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }

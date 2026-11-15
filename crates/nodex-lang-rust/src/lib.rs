@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod char_scalar_literal_detail;
+mod bool_keyword_literal_detail;
+mod unicode_binding_detail;
+mod string_utf8_literal_detail;
+mod underscore_binding_detail;
+mod standalone_underscore_detail;
+mod negative_i32_token_detail;
+mod integer_shaped_f32_detail;
+mod trailing_dot_float_detail;
+mod hex_f32_digits_detail;
 mod rem_assign_detail;
 mod and_assign_detail;
 mod or_assign_detail;
