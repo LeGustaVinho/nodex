@@ -1,4 +1,4 @@
-use super::applications::{Application, membership, unit_for};
+use super::applications::{Application, exact_file_dependencies, membership, unit_for};
 use super::*;
 
 const SYSTEM: &str = "system";
@@ -97,29 +97,26 @@ pub(super) fn build(
         "store",
     );
 
-    let membership = membership(index, input, &apps);
-    let mut libraries: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for edge in index.relations().filter(|e| {
-        static_relation(e.kind) && e.confidence.unwrap_or(Confidence::Exact) == Confidence::Exact
-    }) {
-        if let (Some(owners), Some(target)) =
-            (membership.get(edge.from.as_str()), index.file_of(&edge.to))
-            && !membership.contains_key(edge.to.as_str())
-            && let Some(unit) = unit_for(input, target)
-            && !apps.iter().any(|a| a.root() == unit.root)
-        {
-            libraries
-                .entry(&unit.root)
-                .or_default()
-                .extend(owners.intersection(&active));
-        }
-    }
+    let files = membership(index, input, &apps);
+    let direct_owners = |id: &str| {
+        index
+            .get(id)
+            .filter(|s| diagram_symbol(s, index))
+            .into_iter()
+            .flat_map(|s| &s.origins)
+            .filter_map(|site| files.get(site.file.as_str()))
+            .flatten()
+            .copied()
+            .collect::<BTreeSet<_>>()
+    };
+
+    let executable_roots: BTreeSet<_> = apps.iter().map(Application::root).collect();
+    let mut explicit_paths = BTreeSet::new();
+    let mut seeds = Vec::new();
     for item in &config.libraries {
         if active.contains(item.application.as_str()) {
-            libraries
-                .entry(&item.path)
-                .or_default()
-                .insert(&item.application);
+            explicit_paths.insert(item.path.as_str());
+            seeds.push((item.application.as_str(), item.path.as_str()));
         } else if apps
             .iter()
             .any(|a| a.legacy_id() == Some(&item.application))
@@ -133,18 +130,29 @@ pub(super) fn build(
             );
         }
     }
-    let owners = |id: &str| {
-        if let Some(owners) = membership.get(id) {
-            return owners.intersection(&active).copied().collect();
-        }
-        let Some(file) = index.file_of(id) else {
-            return BTreeSet::new();
-        };
-        libraries
+    let library_path = |file: &str| {
+        let unit = unit_for(input, file).map(|unit| unit.root.as_str());
+        let explicit = explicit_paths
             .iter()
-            .filter(|(path, _)| within(file, path))
-            .max_by_key(|(path, _)| path.len())
-            .map(|(_, owners)| owners.clone())
+            .copied()
+            .filter(|path| within(file, path))
+            .max_by_key(|path| path.len());
+        if explicit.is_some_and(|path| unit.is_none_or(|root| path.len() >= root.len())) {
+            return explicit;
+        }
+        unit.filter(|root| !executable_roots.contains(root))
+    };
+    let libraries = library_membership(index, &files, &active, &library_path, seeds);
+    let owners = |id: &str| {
+        let direct = direct_owners(id);
+        if !direct.is_empty() {
+            return direct.intersection(&active).copied().collect();
+        }
+        index
+            .file_of(id)
+            .and_then(library_path)
+            .and_then(|path| libraries.get(path))
+            .cloned()
             .unwrap_or_default()
     };
 
@@ -410,19 +418,11 @@ pub(super) fn build(
                 .filter(|s| diagram_symbol(s, index) && owners(&s.id).contains(focus))
             {
                 let site = &symbol.origins[0];
-                let local = membership
-                    .get(symbol.id.as_str())
-                    .is_some_and(|owners| owners.contains(focus));
+                let local = direct_owners(&symbol.id).contains(focus);
                 let path = if local {
                     module_path(&site.file, root)
                 } else {
-                    libraries
-                        .keys()
-                        .copied()
-                        .filter(|p| within(&site.file, p))
-                        .max_by_key(|p| p.len())
-                        .unwrap_or(&site.file)
-                        .to_owned()
+                    library_path(&site.file).unwrap_or(&site.file).to_owned()
                 };
                 let node = components.entry(path.clone()).or_insert_with(|| {
                     let mut node = ArchitectureNode::new(
@@ -515,6 +515,44 @@ pub(super) fn build(
     }
     result.finish(relations);
     Ok(result)
+}
+
+fn library_membership<'a>(
+    index: &Index<'_>,
+    files: &BTreeMap<&str, BTreeSet<&'a str>>,
+    active: &BTreeSet<&'a str>,
+    library_path: &impl Fn(&str) -> Option<&'a str>,
+    mut visit: Vec<(&'a str, &'a str)>,
+) -> BTreeMap<&'a str, BTreeSet<&'a str>> {
+    let mut dependencies = BTreeMap::<&str, BTreeSet<&str>>::new();
+    for (from, to) in exact_file_dependencies(index) {
+        if files.get(to).is_some_and(|owners| !owners.is_empty()) {
+            continue;
+        }
+        let Some(target) = library_path(to) else {
+            continue;
+        };
+        if let Some(owners) = files.get(from).filter(|owners| !owners.is_empty()) {
+            visit.extend(owners.intersection(active).map(|&app| (app, target)));
+        } else if let Some(source) = library_path(from)
+            && source != target
+        {
+            dependencies.entry(source).or_default().insert(target);
+        }
+    }
+    let mut libraries = BTreeMap::<&str, BTreeSet<&str>>::new();
+    while let Some((app, path)) = visit.pop() {
+        if libraries.entry(path).or_default().insert(app) {
+            visit.extend(
+                dependencies
+                    .get(path)
+                    .into_iter()
+                    .flatten()
+                    .map(|&target| (app, target)),
+            );
+        }
+    }
+    libraries
 }
 
 fn add_database_links<'a>(

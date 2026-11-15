@@ -479,6 +479,72 @@ fn c4_uses_cargo_targets_to_find_rust_executables() {
 }
 
 #[test]
+fn c4_follows_transitive_libraries_without_crossing_into_another_executable() {
+    let project = project_with_files(&[
+        (
+            "app/package.json",
+            r#"{"name":"app","devDependencies":{"dev":"file:../libs/dev"}}"#,
+        ),
+        (
+            "app/index.ts",
+            r#"
+            import { outer } from "../libs/outer";
+            import { bootstrap as other } from "../other";
+            import express from "express";
+            const app = express();
+            export function bootstrap() { outer(); app.listen(3000); }
+            bootstrap();
+        "#,
+        ),
+        ("libs/outer/package.json", r#"{"name":"outer"}"#),
+        (
+            "libs/outer/index.ts",
+            r#"import { inner } from "../inner"; export function outer() { inner(); }"#,
+        ),
+        ("libs/inner/package.json", r#"{"name":"inner"}"#),
+        (
+            "libs/inner/index.ts",
+            r#"import { outer } from "../outer"; export function inner() {}"#,
+        ),
+        ("libs/dev/package.json", r#"{"name":"dev"}"#),
+        ("libs/dev/index.ts", "export function dev() {}"),
+        ("other/package.json", r#"{"name":"other"}"#),
+        (
+            "other/index.ts",
+            r#"
+            import { dev } from "../libs/dev";
+            import express from "express";
+            const app = express();
+            export function bootstrap() { dev(); app.listen(3001); }
+            bootstrap();
+        "#,
+        ),
+    ]);
+    let mut req = request(ArchitectureView::Components);
+    req.container = Some("app:app".into());
+    let components = diagram_at(project.path(), req, &ArchitectureConfig::default());
+    for library in ["libs/outer", "libs/inner"] {
+        assert!(
+            components
+                .nodes
+                .iter()
+                .any(|n| n.path.as_deref() == Some(library)),
+            "{:?}",
+            components.nodes
+        );
+    }
+    assert!(components.edges.iter().any(|e| e.kind == "Imports"
+        && e.from.ends_with(":libs/outer")
+        && e.to.ends_with(":libs/inner")));
+    assert!(
+        components
+            .nodes
+            .iter()
+            .all(|n| !matches!(n.path.as_deref(), Some("other" | "libs/dev")))
+    );
+}
+
+#[test]
 fn named_database_is_inferred_and_can_be_removed_from_the_boundary() {
     let project = "knowledge/fullstack";
     let mut config = ArchitectureConfig::default();

@@ -361,22 +361,7 @@ pub(super) fn membership<'a>(
     for (file, owners) in reached {
         files.insert(file, owners);
     }
-    index
-        .graph
-        .symbols
-        .iter()
-        .filter(|s| diagram_symbol(s, index))
-        .filter_map(|s| {
-            let owners: BTreeSet<_> = s
-                .origins
-                .iter()
-                .filter_map(|o| files.get(o.file.as_str()))
-                .flatten()
-                .copied()
-                .collect();
-            (!owners.is_empty()).then_some((s.id.as_str(), owners))
-        })
-        .collect()
+    files
 }
 
 fn same_unit(unit: Option<&BuildUnit>, app: &Application) -> bool {
