@@ -67,6 +67,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::extern_sysv64_fn_explanation::contract(src, node));
+    items.extend(crate::foreign_c_variadic_explanation::contract(src, node));
+    items.extend(crate::extern_c_fn_pointer_explanation::contract(src, node));
+    items.extend(crate::extern_stdcall_fn_explanation::contract(src, node));
+    items.extend(crate::extern_cdecl_fn_explanation::contract(src, node));
+    items.extend(crate::extern_rust_fn_explanation::contract(src, node));
+    items.extend(crate::extern_win64_fn_explanation::contract(src, node));
+    items.extend(crate::extern_custom_abi_explanation::contract(src, node));
+    items.extend(crate::extern_c_unwind_explanation::contract(src, node));
+    if let Some(item) = crate::extern_system_unwind_explanation::contract(src, node) { items.push(item); }
     items.extend(crate::foreign_fn_default_unsafe_explanation::contract(src, node));
     items.extend(crate::foreign_safe_static_explanation::contract(src, node));
     items.extend(crate::foreign_safe_fn_explanation::contract(src, node));
@@ -4475,6 +4485,7 @@ impl Reader<'_, '_> {
     }
 
     fn binding(&mut self, node: Node<'_>) {
+        for (site, content) in crate::extern_c_fn_pointer_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::two_element_array_let_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::for_tuple_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(node, node.child_by_field_name("body")), self.src.span(site), false, content); }
         if let Some((anchor, site, content)) = crate::let_block_value_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
