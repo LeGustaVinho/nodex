@@ -7,6 +7,7 @@
 
 pub mod adapters;
 pub mod api;
+mod architecture;
 mod rust_expansion;
 pub mod assets;
 pub mod builds;
@@ -43,6 +44,7 @@ pub use server::{ServerHandle, ServerOptions, frontends, start};
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", content = "data", rename_all = "kebab-case")]
 pub enum ServerEvent {
+    ArchitectureChanged,
     /// Files changed on disk and were re-lowered.
     GraphChanged { files: Vec<String> },
     /// Semantic analysis progressed (loading, ready, unavailable) or produced new facts.
@@ -94,6 +96,7 @@ pub struct AppState {
     pub debug: debugger::DebugManager,
     /// Recent UML diagrams.
     pub uml: uml::UmlCache,
+    pub(crate) architecture: architecture::ArchitectureCache,
     /// One structure build at a time ([`builds::graphs`]).
     pub build_lock: tokio::sync::Mutex<()>,
     /// JSON of the current structure graph and knowledge.
@@ -123,6 +126,7 @@ impl AppState {
             run: runner::RunManager::default(),
             debug: debugger::DebugManager::default(),
             uml: uml::UmlCache::default(),
+            architecture: architecture::ArchitectureCache::default(),
             build_lock: tokio::sync::Mutex::new(()),
             json: builds::JsonCache::default(),
             loading: Mutex::new(None),
@@ -167,6 +171,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/knowledge", get(api::knowledge))
         .route("/api/uml", get(uml::diagram))
         .route("/api/uml/availability", get(uml::availability))
+        .route("/api/architecture", get(architecture::diagram))
+        .route("/api/architecture/config", get(architecture::get_config).put(architecture::put_config))
         .route("/api/borrow-origin", get(api::borrow_origin))
         .route("/api/rust/macro-expansion", get(api::rust_macro_expansion))
         .route("/api/flow", get(api::flow))

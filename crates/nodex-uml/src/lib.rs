@@ -12,6 +12,7 @@
 //! TypeScript bindings are generated with `ts-rs` into `web/src/gen` by `cargo test -p nodex-uml`.
 
 mod activity;
+pub mod architecture;
 mod availability;
 mod calls;
 mod class;
