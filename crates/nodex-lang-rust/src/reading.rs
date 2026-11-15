@@ -24,6 +24,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::empty_braced_struct_detail::contract(src, node));
+    items.extend(crate::unnamed_unit_const_detail::contract(src, node));
+    items.extend(crate::empty_tuple_struct_detail::contract(src, node));
+    items.extend(crate::named_field_visibility_detail::contract(src, node));
+    items.extend(crate::named_struct_where_position_detail::contract(src, node));
+    items.extend(crate::tuple_field_visibility_detail::contract(src, node));
+    items.extend(crate::tuple_struct_where_position_detail::explain(src, node));
+    items.extend(crate::empty_enum_detail::contract(src, node));
+    items.extend(crate::empty_enum_variants_detail::contract(src, node));
+    items.extend(crate::unnamed_const_assert_detail::contract(src, node));
     items.extend(crate::string_hex_escape_detail::contract(src, node));
     items.extend(crate::line_comment_detail::contract(src, node));
     items.extend(crate::block_comment_detail::contract(src, node));

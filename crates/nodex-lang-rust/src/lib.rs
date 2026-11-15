@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod empty_braced_struct_detail;
+mod unnamed_unit_const_detail;
+mod empty_tuple_struct_detail;
+mod named_field_visibility_detail;
+mod named_struct_where_position_detail;
+mod tuple_field_visibility_detail;
+mod tuple_struct_where_position_detail;
+mod empty_enum_detail;
+mod empty_enum_variants_detail;
+mod unnamed_const_assert_detail;
 mod string_hex_escape_detail;
 mod line_comment_detail;
 mod block_comment_detail;

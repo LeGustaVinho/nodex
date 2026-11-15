@@ -20,7 +20,8 @@ pub(crate) fn explain(src: Src<'_>, node: Node<'_>) -> Option<ContractItem> {
                 let types: Vec<_> = named_children(fields).into_iter()
                     .filter(|n| !n.is_extra() && !matches!(n.kind(), "attribute_item" | "visibility_modifier"))
                     .map(|n| src.norm(n)).collect();
-                Some(format!("{variant_name} carries positional fields of types {}", types.join(", ")))
+                if types.is_empty() { Some(format!("{variant_name} is tuple-style and carries no fields")) }
+                else { Some(format!("{variant_name} carries positional fields of types {}", types.join(", "))) }
             }
             Some(_) => Some(format!("{variant_name} carries named fields")),
         }

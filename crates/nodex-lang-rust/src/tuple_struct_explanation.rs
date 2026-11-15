@@ -16,9 +16,10 @@ pub(crate) fn explain(src: Src<'_>, node: Node<'_>) -> Option<ContractItem> {
     } else {
         format!("Its {} positional field{} {}: {}.", fields.len(), if fields.len() == 1 { "" } else { "s" }, if fields.len() == 1 { "has this type" } else { "have these types in order" }, fields.join(", "))
     };
+    let access = if fields.is_empty() { " There are no fields to access." } else { " Access its fields with .0, .1, and so on, subject to field visibility." };
     Some(ContractItem {
         group: "Tuple struct".into(),
-        text: format!("`struct` defines {name} as a distinct named type. Parentheses list fields by position instead of giving them field names. {description} Create a value with the type's constructor, supplying values in the same order (when the constructor is accessible); access its fields with .0, .1, and so on, subject to field visibility."),
+        text: format!("`struct` defines {name} as a distinct named type. Parentheses list fields by position instead of giving them field names. {description} Create a value with the type's constructor, supplying values in the same order (when the constructor is accessible).{access}"),
         span: src.span(node),
         type_info: None,
     })
