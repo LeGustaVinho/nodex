@@ -57,6 +57,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::custom_outer_attribute_explanation::contract(src, node));
     items.extend(crate::proc_macro_derive_explanation::contract(src, node));
     items.extend(crate::macro_dollar_crate_explanation::contract(src, node));
+    items.extend(crate::should_panic_expected_explanation::contract(src, node));
+    items.extend(crate::derive_debug_attribute_explanation::contract(src, node));
+    items.extend(crate::cfg_attr_derive_explanation::contract(src, node));
+    items.extend(crate::derive_copy_clone_explanation::contract(src, node));
+    items.extend(crate::derive_clone_attribute_explanation::contract(src, node));
+    items.extend(crate::cfg_not_explanation::contract(src, node));
+    items.extend(crate::test_attribute_explanation::contract(src, node));
+    items.extend(crate::should_panic_attribute_explanation::contract(src, node));
+    items.extend(crate::cfg_any_explanation::contract(src, node));
+    items.extend(crate::ignore_test_attribute_explanation::contract(src, node));
     items.extend(crate::cfg_feature_explanation::contract(src, node));
     items.extend(crate::cfg_all_explanation::contract(src, node));
     items.extend(crate::cfg_target_os_explanation::contract(src, node));
