@@ -68,6 +68,11 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
     items.extend(crate::global_asm_explanation::contract(src, node));
+    items.extend(crate::extern_self_alias_explanation::contract(src, node));
+    items.extend(crate::extern_crate_alias_explanation::contract(src, node));
+    items.extend(crate::empty_use_group_explanation::explain(src, node));
+    items.extend(crate::nested_use_tree_explanation::explain(src, node));
+    items.extend(crate::use_underscore_alias_explanation::contract(src, node));
     items.extend(crate::opaque_type_alias_explanation::contract(src, node));
     items.extend(crate::trait_alias_unstable_explanation::contract(src, node));
     items.extend(crate::negative_trait_impl_explanation::contract(src, node));
@@ -1444,6 +1449,11 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::numeric_field_pattern_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::leading_or_pattern_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        for (anchor, site, content) in crate::legacy_range_pattern_explanation::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((owner, site, content)) = crate::match_range_to_inclusive_explanation::explain(self.src, node) { self.push(self.src.header_span(owner, owner.child_by_field_name("body")), self.src.span(site), false, content); }
+        for (site, content) in crate::struct_ref_rest_binding_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::tuple_struct_assignment_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::struct_fields_assignment_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, text)) = crate::single_tuple_binding_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("One-element tuple pattern", text)); }
@@ -4651,6 +4661,10 @@ impl Reader<'_, '_> {
                     format!("let creates the variable {} and initializes it with the value on the right. mut allows assigning a new value to this variable later; it does not make other variables changeable.", self.short(pattern)),
                 ));
             }
+            return;
+        }
+        if let Some((site, content)) = crate::numeric_field_pattern_explanation::explain(self.src, pattern) {
+            self.push(self.src.span(node), self.src.span(site), false, content);
             return;
         }
         let input = value.map_or_else(|| "Input value".into(), |value| self.short(value));

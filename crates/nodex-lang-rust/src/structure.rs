@@ -299,7 +299,7 @@ impl<'a, 't> Collector<'a, 't> {
                 }
             }
             "extern_crate_declaration" => {
-                if let Some(n) = item.child_by_field_name("name") {
+                if let Some(n) = item.child_by_field_name("name") && src.text(n) != "self" {
                     let t = format!("pkg:{}", src.norm(n));
                     if !self.imports.contains(&t) {
                         self.imports.push(t);
