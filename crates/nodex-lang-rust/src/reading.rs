@@ -53,6 +53,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::named_struct_explanation::explain(src, node));
     items.extend(crate::tuple_struct_explanation::explain(src, node));
     items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::qualified_macro_invocation_explanation::contract(src, node));
+    items.extend(crate::macro_parenthesized_rule_explanation::contract(src, node));
+    items.extend(crate::macro_expression_rule_explanation::contract(src, node));
+    items.extend(crate::macro_square_transcriber_explanation::contract(src, node));
+    items.extend(crate::nested_block_comment_explanation::contract(src, node));
+    items.extend(crate::shebang_explanation::explain(src, node));
+    items.extend(crate::macro_rules_definition_explanation::explain(src, node));
     items.extend(crate::c_string_literal_explanation::contract(src, node));
     items.extend(crate::outer_line_doc_explanation::contract(src, node));
     items.extend(crate::inner_line_doc_explanation::contract(src, node));
@@ -1270,6 +1277,10 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::qualified_macro_invocation_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::bracket_macro_invocation_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::macro_paren_invocation_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::braced_macro_invocation_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((span, content)) = crate::c_string_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((span, content)) = crate::raw_c_string_hash_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         for (span, content) in crate::string_unicode_escape_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
