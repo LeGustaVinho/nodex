@@ -11,11 +11,12 @@ pub(crate) fn explain(src: Src<'_>, node: Node<'_>) -> Option<ContractItem> {
     let implementer = implementation.child_by_field_name("type")?;
     let name = node.child_by_field_name("name")?;
     let chosen = node.child_by_field_name("type")?;
+    let declared = format!("{}{}", src.norm(name), node.child_by_field_name("type_parameters").map(|p| src.norm(p)).unwrap_or_default());
     Some(ContractItem {
         group: "Associated type definition".into(),
         text: format!(
             "In this implementation of {} for {}, `type {} = {}` selects {} as the type associated with {} for this implementation. Code using the trait's associated type for this implementer refers to that selected type; this declaration chooses a type, not a value or a new distinct type. Other implementations may select different types, subject to the trait's requirements.",
-            src.norm(trait_name), src.norm(implementer), src.norm(name), src.norm(chosen),
+            src.norm(trait_name), src.norm(implementer), declared, src.norm(chosen),
             src.norm(chosen), src.norm(name),
         ),
         span: src.span(node),

@@ -24,6 +24,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::trailing_param_comma_detail::contract(src, node));
+    items.extend(crate::explicit_unit_return_detail::contract(src, node));
+    items.extend(crate::impl_trait_const_detail::contract(src, node));
+    items.extend(crate::allow_param_lint_detail::contract(src, node));
+    items.extend(crate::generic_pair_alias_detail::explain(src, node));
+    items.extend(crate::gat_type_where_decl_detail::contract(src, node));
+    items.extend(crate::inner_module_allow_detail::contract(src, node));
+    items.extend(crate::raw_abi_fn_detail::contract(src, node));
+    items.extend(crate::const_unsafe_fn_detail::contract(src, node));
+    items.extend(crate::gat_impl_where_position_detail::contract(src, node));
     items.extend(crate::empty_braced_struct_detail::contract(src, node));
     items.extend(crate::unnamed_unit_const_detail::contract(src, node));
     items.extend(crate::empty_tuple_struct_detail::contract(src, node));

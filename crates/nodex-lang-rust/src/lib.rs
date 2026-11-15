@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod trailing_param_comma_detail;
+mod explicit_unit_return_detail;
+mod impl_trait_const_detail;
+mod allow_param_lint_detail;
+mod generic_pair_alias_detail;
+mod gat_type_where_decl_detail;
+mod inner_module_allow_detail;
+mod raw_abi_fn_detail;
+mod const_unsafe_fn_detail;
+mod gat_impl_where_position_detail;
 mod empty_braced_struct_detail;
 mod unnamed_unit_const_detail;
 mod empty_tuple_struct_detail;
