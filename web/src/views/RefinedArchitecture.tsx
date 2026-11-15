@@ -17,26 +17,44 @@ export function refinedProjection(diagram: Refined, focused: string | null, show
     const container = n.parent && byId.get(n.parent);
     return container && (container.kind === "System" || container.kind === "Application") ? null : n.parent;
   };
+  const pathTo = (id: string | null) => {
+    const path = new Set<string>();
+    for (let n = id === null ? undefined : byId.get(id); n && !path.has(n.id); n = byId.get(parent(n) ?? "")) {
+      path.add(n.id);
+    }
+    return [...path].reverse();
+  };
   const priority = new Set(diagram.suggestions.filter((r) => r.suggestion.kind === "highlight").map((r) => r.suggestion.target));
   const visible = diagram.nodes.filter((n) => parent(n) === focused);
   const list = visible.sort((a, b) => Number(priority.has(b.id)) - Number(priority.has(a.id))).slice(0, limit);
   const ids = new Set(list.map((n) => n.id));
+  const ancestors = new Set<string | null>([null, ...pathTo(focused)]);
+  ancestors.delete(focused);
   const representative = (id: string) => {
     const visited = new Set<string>();
     for (let n = byId.get(id); n; n = byId.get(parent(n) ?? "")) {
-      if (ids.has(n.id)) return n.id;
       if (visited.has(n.id)) break;
       visited.add(n.id);
+      const boundary = parent(n);
+      if (boundary === focused) return ids.has(n.id) ? n.id : undefined;
+      if (ancestors.has(boundary)) return n.id;
     }
     return undefined;
   };
+  const projected = diagram.edges.flatMap((edge) => {
+    const from = representative(edge.from);
+    const to = representative(edge.to);
+    if (!from || !to || from === to || (!ids.has(from) && !ids.has(to))) return [];
+    return [{ edge, from, to }];
+  });
+  const featured = projected.some(({ edge }) => priority.has(edge.id));
+  const outside = new Set<string>();
   const edges = new Map<string, { edge: RefinedEdge; originals: string[] }>();
-  const featured = diagram.edges.some((e) => priority.has(e.id) && representative(e.from) && representative(e.to));
-  for (const e of diagram.edges) {
-    const from = representative(e.from);
-    const to = representative(e.to);
-    if (!from || !to || from === to) continue;
-    if (!showAll && featured && !priority.has(e.id)) continue;
+  for (const { edge: e, from, to } of projected) {
+    const crossesBoundary = !ids.has(from) || !ids.has(to);
+    if (!showAll && featured && !priority.has(e.id) && !crossesBoundary) continue;
+    if (!ids.has(from)) outside.add(from);
+    if (!ids.has(to)) outside.add(to);
     const key = JSON.stringify([from, to, e.kind, e.label, e.confidence]);
     const rolled = edges.get(key);
     if (rolled) {
@@ -48,8 +66,9 @@ export function refinedProjection(diagram: Refined, focused: string | null, show
     }
   }
   return {
-    nodes: list, byId, parent, edges: [...edges.values()], omitted: visible.length - list.length,
-    priority, hasChildren: new Set(diagram.nodes.map(parent)), featured,
+    nodes: [...list, ...[...outside].map((id) => byId.get(id)!)], byId, pathTo,
+    edges: [...edges.values()], omitted: visible.length - list.length,
+    priority, outside, hasChildren: new Set(diagram.nodes.map(parent)), featured,
   };
 }
 
@@ -64,7 +83,7 @@ export function RefinedArchitecture({ diagram, historical, follow }: {
   const projection = useMemo(() => refinedProjection(diagram, focused, all, limit), [diagram, focused, all, limit]);
   const show = (next: string[]) => { setPath(next); setSelected(null); setLimit(60); };
   const enter = (node: RefinedNode) => {
-    if (projection.hasChildren.has(node.id)) show([...path, node.id]);
+    if (projection.hasChildren.has(node.id)) show(projection.pathTo(node.id));
     else if (!historical && follow(node)) setSelected(null);
     else setSelected(node.id);
   };
@@ -81,7 +100,8 @@ export function RefinedArchitecture({ diagram, historical, follow }: {
         node: {
           id: n.id, name: n.label, kind: (kinds.has(n.kind) ? n.kind : "Component") as ArchitectureKind,
           parent: null, provenance: n.declared ? "Declared" : "Inferred",
-          technology: projection.priority.has(n.id) ? "Highlighted" : n.kind === "Group" ? "Group" : null,
+          technology: projection.outside.has(n.id) ? "Outside group"
+            : projection.priority.has(n.id) ? "Highlighted" : n.kind === "Group" ? "Group" : null,
           path: null, layer: n.layer, code: null, evidence: [],
         },
         boundary: projection.hasChildren.has(n.id), vertical: false,
