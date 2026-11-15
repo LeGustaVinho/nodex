@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod unsafe_c_fn_pointer_detail;
+mod default_extern_abi_detail;
+mod foreign_static_mut_detail;
+mod decimal_separators_detail;
+mod binary_separators_detail;
+mod named_c_variadic_detail;
+mod char_escapes_detail;
+mod exponent_suffix_detail;
+mod raw_keyword_detail;
+mod string_continuation_detail;
 mod qualified_assoc_call_explanation;
 mod generic_type_args_explanation;
 mod inferred_const_args_explanation;

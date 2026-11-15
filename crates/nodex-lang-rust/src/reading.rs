@@ -24,6 +24,12 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::default_extern_abi_detail::contract(src, node));
+    items.extend(crate::foreign_static_mut_detail::contract(src, node));
+    items.extend(crate::decimal_separators_detail::contract(src, node));
+    items.extend(crate::binary_separators_detail::contract(src, node));
+    items.extend(crate::named_c_variadic_detail::contract(src, node));
+    items.extend(crate::exponent_suffix_detail::contract(src, node));
     items.extend(crate::generic_type_args_explanation::contract(src, node));
     items.extend(crate::constructed_where_explanation::contract(src, node));
     items.extend(crate::higher_rank_where_explanation::contract(src, node));
@@ -1456,6 +1462,13 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (site, content) in crate::string_continuation_detail::reading(self.src,node) { self.push(self.src.span(node), site, false, content); }
+        if let Some((site, content)) = crate::raw_keyword_detail::reading(self.src,node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((span, content)) = crate::exponent_suffix_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::char_escapes_detail::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::binary_separators_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::decimal_separators_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::unsafe_c_fn_pointer_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::named_fn_pointer_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::generic_type_args_explanation::local(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((owner, site, content)) = crate::inferred_const_args_explanation::explain(self.src, node) { self.push(self.src.span(owner), self.src.span(site), false, content); }
