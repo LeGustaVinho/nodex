@@ -8,6 +8,7 @@
 pub mod adapters;
 pub mod api;
 mod architecture;
+mod refinements;
 mod rust_expansion;
 pub mod assets;
 pub mod builds;
@@ -97,6 +98,7 @@ pub struct AppState {
     /// Recent UML diagrams.
     pub uml: uml::UmlCache,
     pub(crate) architecture: architecture::ArchitectureCache,
+    pub(crate) refinements: refinements::Manager,
     /// One structure build at a time ([`builds::graphs`]).
     pub build_lock: tokio::sync::Mutex<()>,
     /// JSON of the current structure graph and knowledge.
@@ -127,6 +129,7 @@ impl AppState {
             debug: debugger::DebugManager::default(),
             uml: uml::UmlCache::default(),
             architecture: architecture::ArchitectureCache::default(),
+            refinements: refinements::Manager::default(),
             build_lock: tokio::sync::Mutex::new(()),
             json: builds::JsonCache::default(),
             loading: Mutex::new(None),
@@ -143,6 +146,7 @@ impl AppState {
     /// watcher) before the server exits.
     pub fn close(&self) {
         self.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.refinements.reset();
         self.run.stop();
         let _ = self.debug.command(debugger::DebugCommand::Stop);
         // Semantic workers end (and stop their sidecars) when their channel closes.
@@ -173,6 +177,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/uml/availability", get(uml::availability))
         .route("/api/architecture", get(architecture::diagram))
         .route("/api/architecture/config", get(architecture::get_config).put(architecture::put_config))
+        .route("/api/diagram-refinements", get(refinements::history).put(refinements::save))
+        .route("/api/diagram-refinements/context", post(refinements::context))
+        .route("/api/diagram-refinements/jobs", post(refinements::start))
+        .route("/api/diagram-refinements/jobs/{id}", get(refinements::status).delete(refinements::cancel))
         .route("/api/borrow-origin", get(api::borrow_origin))
         .route("/api/rust/macro-expansion", get(api::rust_macro_expansion))
         .route("/api/flow", get(api::flow))

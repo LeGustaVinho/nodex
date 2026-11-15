@@ -4,4 +4,4 @@ export type Settings = {
 /**
  * The desktop app looks for a new version when it starts.
  */
-check_updates: boolean, };
+check_updates: boolean, diagram_ai: boolean, codex_path: string | null, };

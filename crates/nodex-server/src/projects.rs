@@ -262,6 +262,7 @@ pub async fn open(state: &Arc<AppState>, path: String) -> Result<(), String> {
 /// watches it: the file watcher, the semantic workers and the background build.
 pub fn install(state: &Arc<AppState>, project: Project) -> Result<(), String> {
     state.generation.fetch_add(1, Ordering::SeqCst);
+    state.refinements.reset();
     // Old semantic workers exit when their channel closes.
     if let Ok(mut senders) = state.semantic_tx.lock() {
         senders.clear();

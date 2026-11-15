@@ -10,11 +10,13 @@ use ts_rs::TS;
 pub struct Settings {
     /// The desktop app looks for a new version when it starts.
     pub check_updates: bool,
+    pub diagram_ai: bool,
+    pub codex_path: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { check_updates: true }
+        Self { check_updates: true, diagram_ai: false, codex_path: None }
     }
 }
 

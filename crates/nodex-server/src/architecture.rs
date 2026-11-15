@@ -272,7 +272,7 @@ fn revision(root: &Path, generation: u64, bytes: Option<&[u8]>) -> String {
         .collect()
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path.parent().expect("settings path has a parent");
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
@@ -281,7 +281,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn validate(config: &ArchitectureConfig) -> std::result::Result<(), String> {
+pub(crate) fn validate(config: &ArchitectureConfig) -> std::result::Result<(), String> {
     let path_valid = |p: &str| {
         p.split('/').all(|part| {
             !part.trim().is_empty() && !matches!(part, "." | "..") && !part.contains(['\\', ':'])
