@@ -141,8 +141,8 @@ expression: "digest(\"csharp/Sample\")"
 {"from":"Sample.Services.OrderService.OrderShipped","to":"Sample.Domain.Order","kind":"References"}
 {"from":"Sample.Services.OrderService._repository","to":"Sample.Services.IOrderRepository","kind":"References"}
 {"from":"ns:Sample","to":"Sample.Program","kind":"Contains"}
-{"from":"ns:Sample","to":"ns:Sample.Domain","kind":"Imports"}
-{"from":"ns:Sample","to":"ns:Sample.Services","kind":"Imports"}
+{"from":"ns:Sample","to":"ns:Sample.Domain","kind":"Imports","site":{"file":"Program.cs","start_byte":44,"end_byte":64,"start_line":3,"start_col":1,"end_line":3,"end_col":21}}
+{"from":"ns:Sample","to":"ns:Sample.Services","kind":"Imports","site":{"file":"Program.cs","start_byte":65,"end_byte":87,"start_line":4,"start_col":1,"end_line":4,"end_col":23}}
 {"from":"ns:Sample","to":"ns:System","kind":"Imports"}
 {"from":"ns:Sample","to":"ns:System.Threading.Tasks","kind":"Imports"}
 {"from":"ns:Sample.Domain","to":"Sample.Domain.Circle","kind":"Contains"}
@@ -156,7 +156,7 @@ expression: "digest(\"csharp/Sample\")"
 {"from":"ns:Sample.Services","to":"Sample.Services.IOrderRepository","kind":"Contains"}
 {"from":"ns:Sample.Services","to":"Sample.Services.InMemoryOrderRepository","kind":"Contains"}
 {"from":"ns:Sample.Services","to":"Sample.Services.OrderService","kind":"Contains"}
-{"from":"ns:Sample.Services","to":"ns:Sample.Domain","kind":"Imports"}
+{"from":"ns:Sample.Services","to":"ns:Sample.Domain","kind":"Imports","site":{"file":"Services/OrderService.cs","start_byte":97,"end_byte":117,"start_line":5,"start_col":1,"end_line":5,"end_col":21}}
 {"from":"ns:Sample.Services","to":"ns:System","kind":"Imports"}
 {"from":"ns:Sample.Services","to":"ns:System.Collections.Generic","kind":"Imports"}
 {"from":"ns:Sample.Services","to":"ns:System.Linq","kind":"Imports"}

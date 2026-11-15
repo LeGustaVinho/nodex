@@ -134,20 +134,13 @@ pub(super) fn build(
         candidates.all(|other| other == Some(one)).then_some(one)
     };
     for edge in index.relations().filter(|e| static_relation(e.kind)) {
-        let source = match (&edge.kind, &edge.site) {
-            (StructEdgeKind::Imports, Some(site))
-                if scope.symbols.contains(&edge.from) && site_in_scope(site) =>
-            {
-                endpoints
-                    .get(&group_for_file(&site.file))
-                    .map(String::as_str)
-            }
-            (StructEdgeKind::Imports, Some(_)) => None,
-            _ => target(&edge.from),
+        let Some(dest) = target(&edge.to) else {
+            continue;
         };
-        if let (Some(source), Some(dest)) = (source, target(&edge.to)) {
-            let confidence = edge.confidence.unwrap_or(Confidence::Exact);
-            let kind = format!("{:?}", edge.kind);
+        let confidence = edge.confidence.unwrap_or(Confidence::Exact);
+        let kind = format!("{:?}", edge.kind);
+        let evidence = edge_evidence(index, edge);
+        let mut add = |source: &str, evidence| {
             diagram_relations.add(
                 source,
                 dest,
@@ -155,8 +148,22 @@ pub(super) fn build(
                 &kind,
                 confidence,
                 from_confidence(confidence),
-                edge_evidence(index, edge),
+                evidence,
             );
+        };
+        if edge.kind == StructEdgeKind::Imports && edge.site.is_some() {
+            if scope.symbols.contains(&edge.from) {
+                for site in edge.sites().filter(|site| site_in_scope(site)) {
+                    if let Some(source) = endpoints.get(&group_for_file(&site.file)) {
+                        add(
+                            source,
+                            ArchitectureEvidence::at(&evidence.text, Some(site), Some(&edge.from)),
+                        );
+                    }
+                }
+            }
+        } else if let Some(source) = target(&edge.from) {
+            add(source, evidence);
         }
     }
     for unit in input.units {

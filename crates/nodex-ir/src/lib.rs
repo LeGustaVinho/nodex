@@ -234,12 +234,16 @@ pub struct StructEdge {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub site: Option<Span>,
+    /// Other occurrences of the same relation, such as imports from a shared namespace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub additional_sites: Option<Box<[Span]>>,
 }
 
 impl StructEdge {
     /// An exact relation without evidence.
     pub fn new(from: impl Into<SymbolId>, to: impl Into<SymbolId>, kind: StructEdgeKind) -> Self {
-        Self { from: from.into(), to: to.into(), kind, confidence: None, evidence: None, site: None }
+        Self { from: from.into(), to: to.into(), kind, confidence: None, evidence: None, site: None, additional_sites: None }
     }
 
     pub fn with_confidence(mut self, confidence: knowledge::Confidence) -> Self {
@@ -256,6 +260,10 @@ impl StructEdge {
     pub fn with_site(mut self, site: Span) -> Self {
         self.site = Some(site);
         self
+    }
+
+    pub fn sites(&self) -> impl Iterator<Item = &Span> {
+        self.site.iter().chain(self.additional_sites.iter().flat_map(|sites| sites.iter()))
     }
 
     /// Same endpoints and relation (ignores confidence, evidence and site).

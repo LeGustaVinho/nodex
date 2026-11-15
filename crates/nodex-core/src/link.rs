@@ -173,13 +173,17 @@ pub fn link(files: &[&FileIr], packages: &[(Language, PackageRef)]) -> Structure
     StructureGraph {
         source_revisions: (!revisions.is_empty()).then_some(revisions),
         symbols: all,
-        edges: edges.into_iter().flat_map(|key| {
+        edges: edges.into_iter().map(|key| {
             let sites = import_sites.remove(&key);
             let (from, to, kind) = key;
-            let edge = StructEdge::new(from, to, kind);
-            let unlocated = sites.is_none().then_some(None);
-            unlocated.into_iter().chain(sites.into_iter().flat_map(BTreeMap::into_values).map(Some))
-                .map(move |site| StructEdge { site, ..edge.clone() })
+            let mut edge = StructEdge::new(from, to, kind);
+            if let Some(sites) = sites {
+                let mut sites = sites.into_values();
+                edge.site = sites.next();
+                let additional: Box<[_]> = sites.collect();
+                edge.additional_sites = (!additional.is_empty()).then_some(additional);
+            }
+            edge
         }).collect(),
     }
 }

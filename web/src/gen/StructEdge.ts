@@ -15,4 +15,8 @@ evidence?: string,
 /**
  * Where the relation is visible in the source (the call, the registration, the throw).
  */
-site?: Span, };
+site?: Span, 
+/**
+ * Other occurrences of the same relation, such as imports from a shared namespace.
+ */
+additional_sites?: Array<Span>, };
