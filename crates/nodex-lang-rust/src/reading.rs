@@ -68,6 +68,7 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
     items.extend(crate::global_asm_explanation::contract(src, node));
+    items.extend(crate::opaque_type_alias_explanation::contract(src, node));
     items.extend(crate::trait_alias_unstable_explanation::contract(src, node));
     items.extend(crate::negative_trait_impl_explanation::contract(src, node));
     items.extend(crate::reserved_priv_explanation::contract(src, node));
@@ -1443,6 +1444,14 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::tuple_struct_assignment_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::struct_fields_assignment_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, text)) = crate::single_tuple_binding_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("One-element tuple pattern", text)); }
+        if let Some((site, content)) = crate::unit_variant_braced_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::array_discard_assignment_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::tuple_swap_assignment_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::tuple_struct_update_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::unit_struct_braced_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((span, content)) = crate::reserved_gen_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((span, content)) = crate::reserved_yield_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::reserved_typeof_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -1636,7 +1645,7 @@ impl Reader<'_, '_> {
             "struct_expression" => {
                 if let Some((field, text)) = crate::union_initialization_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(field), false, detail("Initialize a union field", text)); }
                 if let Some((path, content)) = crate::enum_named_construction_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(path), false, content); }
-                if let Some(content) = crate::struct_shorthand_reading::explain(self.src, node).or_else(|| crate::record_construct_explanation::explain(self.src, node)) { self.at(node, false, content); }
+                if let Some(content) = crate::tuple_struct_braced_explanation::explain(self.src, node).or_else(|| crate::struct_shorthand_reading::explain(self.src, node)).or_else(|| crate::record_construct_explanation::explain(self.src, node)) { self.at(node, false, content); }
             }
             "range_expression" => self.range_expression(node),
             "assignment_expression" => {
