@@ -107,7 +107,6 @@ pub struct Edge {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Candidate {
     pub id: String,
-    pub choice: String,
     pub edge: Edge,
 }
 
@@ -237,15 +236,10 @@ pub fn inventory(
                 .into_iter()
                 .filter(|c| visible.contains(&c.from) && visible.contains(&c.to))
             {
-                let Some(site) = c.evidence.first().and_then(|e| e.span.as_ref()) else {
-                    continue;
-                };
-                let choice = format!("{}:{}:{}", c.from, site.file, site.start_byte);
                 let evidence = result.architecture_evidence(&c.evidence);
                 let id = format!("candidate:{}", result.candidates.len());
                 result.candidates.push(Candidate {
                     id: id.clone(),
-                    choice,
                     edge: Edge {
                         id,
                         from: c.from,
@@ -253,7 +247,7 @@ pub fn inventory(
                         label: c.label,
                         evidence,
                         kind: "HTTP".into(),
-                        confidence: "Inferred".into(),
+                        confidence: "Unresolved".into(),
                         count: 1,
                     },
                 });
@@ -493,7 +487,6 @@ pub fn review(
     sent_evidence: &BTreeSet<String>,
     sent_nodes: &BTreeSet<String>,
     sent_edges: &BTreeSet<String>,
-    sent_candidates: &BTreeSet<String>,
 ) -> Vec<Reviewed> {
     let groups: BTreeSet<_> = proposal
         .suggestions
@@ -523,7 +516,6 @@ pub fn review(
                             .is_some_and(|n| n.layer.is_some() && n.kind == "Module" && !n.declared)
                         && parse_layer(&s.text).is_some()
                 }
-                "association" => sent_candidates.contains(&s.target),
                 "group" => {
                     base.recursive
                         && s.target.starts_with("group:")
@@ -545,15 +537,9 @@ pub fn review(
                 _ => false,
             };
             let evidence_valid = s.evidence.iter().all(|e| sent_evidence.contains(e))
-                && (!matches!(s.kind.as_str(), "layer" | "group" | "association")
-                    || !s.evidence.is_empty());
+                && (!matches!(s.kind.as_str(), "layer" | "group") || !s.evidence.is_empty());
             let grounded = match s.kind.as_str() {
                 "layer" => node.is_some_and(|n| n.evidence.iter().any(|e| s.evidence.contains(e))),
-                "association" => base
-                    .candidates
-                    .iter()
-                    .find(|c| c.id == s.target)
-                    .is_some_and(|c| c.edge.evidence.iter().all(|e| s.evidence.contains(e))),
                 _ => true,
             };
             let valid = typed
@@ -626,12 +612,9 @@ pub fn apply(
         return Err("Select only validated suggestions.".into());
     }
     let mut nodes = base.nodes.clone();
-    let mut edges = base.edges.clone();
     let mut uml = base.uml.clone();
-    let mut choices = BTreeSet::new();
     let mut used = BTreeSet::new();
     let mut groups = BTreeMap::new();
-    let mut resolved = BTreeSet::new();
     for r in &suggestions {
         let s = &r.suggestion;
         if !used.insert((&s.kind, &s.target)) {
@@ -649,25 +632,11 @@ pub fn apply(
                 n.layer = parse_layer(&s.text);
                 n.parent = Some(format!("layer:{}", s.text));
             }
-            "association" => {
-                let c = base.candidates.iter().find(|c| c.id == s.target).unwrap();
-                if !choices.insert(&c.choice) {
-                    return Err("Choose a single route for each request.".into());
-                }
-                edges.push(c.edge.clone());
-                if let Some(site) = base
-                    .evidence
-                    .iter()
-                    .find(|e| e.id == c.edge.evidence[0])
-                    .and_then(|e| e.site.as_ref())
-                {
-                    resolved.insert((site.file.as_str(), site.start_byte));
-                }
-            }
             "group" => {
                 groups.insert(s.target.as_str(), s);
             }
-            _ => {}
+            "summary" | "highlight" => {}
+            _ => return Err("Unsupported suggestion.".into()),
         }
     }
     let mut membership = BTreeMap::new();
@@ -778,25 +747,13 @@ pub fn apply(
             code: None,
         });
     }
-    let pending = base
-        .pending
-        .iter()
-        .filter(|id| {
-            base.evidence
-                .iter()
-                .find(|e| &e.id == *id)
-                .and_then(|e| e.site.as_ref())
-                .is_none_or(|s| !resolved.contains(&(s.file.as_str(), s.start_byte)))
-        })
-        .cloned()
-        .collect();
     Ok(Refined {
         title: base.title.clone(),
         nodes,
-        edges,
+        edges: base.edges.clone(),
         evidence: base.evidence.clone(),
         suggestions,
-        pending,
+        pending: base.pending.clone(),
         uml,
     })
 }

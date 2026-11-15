@@ -2,7 +2,7 @@ import type { BorrowOrigins } from "./gen/BorrowOrigins";
 import type { ArchitectureDiagram } from "./gen/ArchitectureDiagram";
 import type { ArchitectureSettings } from "./gen/ArchitectureSettings";
 import type { ArchitectureView } from "./gen/ArchitectureView";
-import type { RefinementTarget, RefinementPreview, RefinementProgress, RefinementHistory, RefinementSave } from "./uml/refinement";
+import type { RefinementTarget, RefinementExcerpt, RefinementPreview, RefinementProgress, RefinementHistory, RefinementSave } from "./uml/refinement";
 import type { Layer } from "./gen/Layer";
 import type { UnityStatus } from "./gen/UnityStatus";
 import type { CallsPage } from "./gen/CallsPage";
@@ -224,7 +224,7 @@ export const api = {
     (await request("/api/architecture/config", { signal })).json() as Promise<ArchitectureSettings>,
   refinementHistory: (target: RefinementTarget) =>
     json<RefinementHistory>("/api/diagram-refinements?target=" + encodeURIComponent(JSON.stringify(target))),
-  refinementPreview: async (target: RefinementTarget, exclude: string[], focus: string | null) =>
+  refinementPreview: async (target: RefinementTarget, exclude: RefinementExcerpt[], focus: string | null) =>
     (await request("/api/diagram-refinements/context", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target, exclude, focus }),
     })).json() as Promise<RefinementPreview>,
@@ -258,6 +258,7 @@ export type OpenProgress = { phase: "scanning" | "reading"; done: number; total:
 
 export type ServerEvent =
   | { type: "architecture-changed" }
+  | { type: "diagram-evidence-changed" }
   | { type: "graph-changed"; data: { files: string[] } }
   /** `graph` is false when only the analysis status changed (the graphs are the same). */
   | { type: "semantic-changed"; data: { graph: boolean } }

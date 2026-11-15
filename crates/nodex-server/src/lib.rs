@@ -46,6 +46,8 @@ pub use server::{ServerHandle, ServerOptions, frontends, start};
 #[serde(tag = "type", content = "data", rename_all = "kebab-case")]
 pub enum ServerEvent {
     ArchitectureChanged,
+    /// A project document used as diagram evidence changed.
+    DiagramEvidenceChanged,
     /// Files changed on disk and were re-lowered.
     GraphChanged { files: Vec<String> },
     /// Semantic analysis progressed (loading, ready, unavailable) or produced new facts.

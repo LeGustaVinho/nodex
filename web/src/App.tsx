@@ -129,6 +129,8 @@ function useLiveUpdates() {
           }
           if (event.type === "architecture-changed") {
             void queryClient.invalidateQueries({ queryKey: ["architecture"] });
+          }
+          if (event.type === "architecture-changed" || event.type === "diagram-evidence-changed") {
             void queryClient.invalidateQueries({ queryKey: ["diagram-refinements"] });
           }
           if (event.type === "graph-changed" || event.type === "semantic-changed") {

@@ -11,6 +11,8 @@ export type RefinementTarget =
   | { kind: "packages"; scope: UmlScope }
   | { kind: "uml"; diagram: UmlKind; scope: UmlScope; options: Partial<UmlOptions> };
 
+export type RefinementExcerpt = { path: string; line: number };
+
 export interface RefinementPreview {
   id: string;
   digest: string;

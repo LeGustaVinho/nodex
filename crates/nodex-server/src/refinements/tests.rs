@@ -143,6 +143,23 @@ async fn consent_is_bound_to_the_preview_and_versions_are_local_and_revision_che
         "{input}"
     );
     assert!(!input.contains("SECRET123") && !input.contains("HIDDEN"));
+    let (status, reduced) = request(
+        &state,
+        "POST",
+        &format!("{URI}/context"),
+        Some(json!({
+            "target": target, "exclude": [{"path":"README.md", "line":1}]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reduced}");
+    assert!(
+        !reduced["input"]
+            .as_str()
+            .unwrap()
+            .contains("Handles orders.")
+    );
+
     let start = |digest: &Value, confirmed: bool| json!({"preview":preview["id"],"digest":digest,"confirmed":confirmed});
     let jobs = format!("{URI}/jobs");
     assert_eq!(
@@ -197,6 +214,30 @@ async fn consent_is_bound_to_the_preview_and_versions_are_local_and_revision_che
     let (_, offline) = request(&reopened, "GET", &uri, None).await;
     assert_eq!(offline["active"], saved_id);
     assert_eq!(offline["current"], saved["current"]);
+
+    let mut events = reopened.events.subscribe();
+    let watcher = crate::watch::spawn(reopened.clone()).unwrap();
+    let before_document_edit = capture(&reopened, serde_json::from_value(target.clone()).unwrap())
+        .await
+        .unwrap();
+    fs::write(root.join("README.md"), "# Workshop\nManages receipts.").unwrap();
+    assert!(matches!(
+        check_basis(&reopened, &before_document_edit),
+        Err((StatusCode::CONFLICT, _))
+    ));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !matches!(
+            events.recv().await.unwrap(),
+            crate::ServerEvent::DiagramEvidenceChanged
+        ) {}
+    })
+    .await
+    .unwrap();
+    let (_, documented) = request(&reopened, "GET", &uri, None).await;
+    assert_ne!(documented["current"], saved["current"]);
+    assert_eq!(documented["versions"][0], saved["versions"][0]);
+    drop(watcher);
+
     fs::write(
         root.join("Services/Workers.cs"),
         "namespace Demo; public class Worker { public void Updated() {} }",
@@ -257,4 +298,53 @@ async fn consent_is_bound_to_the_preview_and_versions_are_local_and_revision_che
         request(&changed, "GET", &job_uri, None).await.0,
         StatusCode::NOT_FOUND
     );
+}
+
+#[test]
+fn excluding_an_excerpt_rejects_overlapping_replacements() {
+    let temp = tempfile::tempdir().unwrap();
+    let lines = (1..=100)
+        .map(|i| format!("line-{i:03}"))
+        .collect::<Vec<_>>();
+    fs::write(temp.path().join("example.cs"), lines.join("\n")).unwrap();
+    let evidence = |id: &str, line| refinement::Evidence {
+        id: id.into(),
+        text: "Source reference".into(),
+        path: Some("example.cs".into()),
+        site: Some(nodex_ir::Span {
+            file: "example.cs".into(),
+            start_byte: 0,
+            end_byte: 0,
+            start_line: line,
+            end_line: line,
+            start_col: 1,
+            end_col: 1,
+        }),
+    };
+    let base = Inventory {
+        title: "Demo".into(),
+        nodes: Vec::new(),
+        edges: Vec::new(),
+        evidence: vec![evidence("e0", 4), evidence("e1", 20), evidence("e2", 60)],
+        candidates: Vec::new(),
+        pending: Vec::new(),
+        recursive: false,
+        layers: false,
+        uml: None,
+    };
+    let original = context::pack(&base, temp.path(), &[], None);
+    assert_eq!(original.snippets[0].id, "e0");
+    assert!(original.input.contains("line-020"));
+    for exclusion in [
+        context::ExcludedExcerpt::EvidenceId("e0".into()),
+        context::ExcludedExcerpt::Region {
+            path: "example.cs".into(),
+            line: 1,
+        },
+    ] {
+        let updated = context::pack(&base, temp.path(), &[exclusion], None);
+        assert_eq!(updated.snippets[0].id, "e2");
+        assert!(!updated.input.contains("line-020"));
+        assert!(updated.input.contains("line-060"));
+    }
 }

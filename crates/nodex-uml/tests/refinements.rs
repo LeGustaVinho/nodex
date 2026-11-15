@@ -59,7 +59,6 @@ fn review(base: &Inventory, suggestions: Vec<Suggestion>) -> Vec<Reviewed> {
         &base.evidence.iter().map(|e| e.id.clone()).collect(),
         &base.nodes.iter().map(|n| n.id.clone()).collect(),
         &base.edges.iter().map(|e| e.id.clone()).collect(),
-        &base.candidates.iter().map(|c| c.id.clone()).collect(),
     )
 }
 
@@ -242,7 +241,7 @@ fn cross_folder_groups_keep_citable_code_and_manual_layers_win() {
 }
 
 #[test]
-fn c4_resolves_only_a_cited_http_candidate_and_keeps_database_uncertainty() {
+fn c4_keeps_ambiguous_http_and_database_destinations_pending() {
     let tmp = tempfile::tempdir().unwrap();
     let files = [
         (
@@ -293,6 +292,12 @@ export function startup() { app.listen(3001); } startup();"#,
     assert_eq!(base.candidates.len(), 2, "{:?}", base.pending);
     let a = &base.candidates[0];
     let b = &base.candidates[1];
+    assert_ne!(a.edge.to, b.edge.to);
+    assert!(
+        base.candidates
+            .iter()
+            .all(|c| c.edge.confidence == "Unresolved")
+    );
     let edits = review(
         &base,
         vec![
@@ -318,22 +323,22 @@ export function startup() { app.listen(3001); } startup();"#,
                 vec![],
             ),
             proposal(
-                "association",
-                &b.id,
-                "Missing route evidence",
-                vec![b.edge.evidence[0].clone()],
+                "summary",
+                "",
+                "The web application requests orders.",
+                a.edge.evidence.clone(),
                 vec![],
             ),
         ],
     );
-    assert!(edits[2].error.is_some() && edits[3].error.is_some());
-    assert!(refinement::apply(&base, &edits, &BTreeSet::from([0, 1])).is_err());
-    let refined = refinement::apply(&base, &edits, &BTreeSet::from([0])).unwrap();
-    let edge = refined.edges.iter().find(|e| e.id == a.id).unwrap();
-    assert_eq!(edge.label, "GET /api/orders");
-    assert_eq!(edge.confidence, "Inferred");
-    assert_eq!(edge.from, a.edge.from);
-    assert_eq!(edge.to, a.edge.to);
+    assert!(edits[..3].iter().all(|edit| edit.error.is_some()));
+    assert!(refinement::apply(&base, &edits, &BTreeSet::from([0])).is_err());
+    let refined = refinement::apply(&base, &edits, &BTreeSet::from([3])).unwrap();
+    assert!(refined.edges.iter().all(|edge| edge.kind != "HTTP"));
+    assert_eq!(refined.pending, base.pending);
+    assert!(refined.evidence.iter().any(|e| {
+        refined.pending.contains(&e.id) && e.text.contains("needs a confirmed route")
+    }));
 
     let fullstack =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/knowledge/fullstack");

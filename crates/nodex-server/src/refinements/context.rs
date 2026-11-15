@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
-use nodex_uml::refinement::Inventory;
-use serde::Serialize;
+use nodex_uml::refinement::{Evidence, Inventory};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub(super) const BUDGET: usize = 96 * 1024;
+const SNIPPET_LINES: usize = 36;
+pub(crate) const DOCUMENTS: [&str; 2] = ["README.md", "ARCHITECTURE.md"];
 
 #[derive(Clone)]
 pub(super) struct Context {
@@ -13,7 +15,6 @@ pub(super) struct Context {
     pub snippets: Vec<Snippet>,
     pub nodes: BTreeSet<String>,
     pub edges: BTreeSet<String>,
-    pub candidates: BTreeSet<String>,
     pub evidence: BTreeSet<String>,
     pub omitted: usize,
     aliases: BTreeMap<String, String>,
@@ -44,6 +45,13 @@ pub(super) struct Snippet {
     pub path: String,
     pub line: usize,
     pub text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(super) enum ExcludedExcerpt {
+    Region { path: String, line: usize },
+    EvidenceId(String),
 }
 
 pub(super) fn path_allowed(path: &str) -> bool {
@@ -120,7 +128,7 @@ pub(super) fn scrub(text: &str) -> String {
 
 // Resolve canonical paths from this project rather than trusting paths
 // returned by the provider or supplied by the diagram client.
-pub(super) fn source(root: &Path, relative: &str) -> Option<String> {
+fn source_path(root: &Path, relative: &str) -> Option<PathBuf> {
     if !path_allowed(relative) {
         return None;
     }
@@ -133,13 +141,24 @@ pub(super) fn source(root: &Path, relative: &str) -> Option<String> {
     {
         return None;
     }
-    std::fs::read_to_string(file).ok()
+    Some(file)
+}
+
+pub(super) fn source(root: &Path, relative: &str) -> Option<String> {
+    std::fs::read_to_string(source_path(root, relative)?).ok()
+}
+
+fn snippet_start(evidence: &Evidence) -> usize {
+    evidence
+        .site
+        .as_ref()
+        .map_or(1, |s| (s.start_line as usize).saturating_sub(3).max(1))
 }
 
 pub(super) fn pack(
     base: &Inventory,
     root: &Path,
-    excluded: &BTreeSet<String>,
+    excluded: &[ExcludedExcerpt],
     focus: Option<&str>,
 ) -> Context {
     let mut remaining = BUDGET - 1024;
@@ -156,7 +175,7 @@ pub(super) fn pack(
     };
     let mut nodes = BTreeSet::new();
     let mut edges = BTreeSet::new();
-    let mut candidates = BTreeSet::new();
+    let mut candidate_evidence = BTreeSet::new();
     let mut evidence = BTreeSet::new();
     let mut snippets = Vec::new();
     let mut node_items = Vec::new();
@@ -217,11 +236,11 @@ pub(super) fn pack(
             && insert(
                 &mut candidate_items,
                 json!({"id":c.id,"from":node_aliases[c.edge.from.as_str()],"to":node_aliases[c.edge.to.as_str()],
-                "label":scrub(&c.edge.label),"evidence":c.edge.evidence}),
+                "label":scrub(&c.edge.label),"confidence":c.edge.confidence,"evidence":c.edge.evidence}),
                 44 * 1024,
             )
         {
-            candidates.insert(c.id.clone());
+            candidate_evidence.extend(c.edge.evidence.iter().map(String::as_str));
         }
     }
     for (i, e) in base.edges.iter().enumerate() {
@@ -244,12 +263,7 @@ pub(super) fn pack(
         .iter()
         .filter(|n| Some(n.id.as_str()) == focus)
         .flat_map(|n| n.evidence.iter().map(String::as_str))
-        .chain(
-            base.candidates
-                .iter()
-                .filter(|c| candidates.contains(&c.id))
-                .flat_map(|c| c.edge.evidence.iter().map(String::as_str)),
-        )
+        .chain(candidate_evidence)
         .collect();
     let mut sorted: Vec<_> = base.evidence.iter().collect();
     let node_evidence: BTreeSet<&str> = base
@@ -281,29 +295,57 @@ pub(super) fn pack(
             evidence.insert(e.id.clone());
         }
     }
-    let mut source_cache = BTreeMap::new();
-    let mut opened = BTreeSet::new();
+    let mut excluded_regions = BTreeMap::<PathBuf, BTreeSet<usize>>::new();
+    for exclusion in excluded {
+        let region = match exclusion {
+            ExcludedExcerpt::Region { path, line } => Some((path.as_str(), *line)),
+            ExcludedExcerpt::EvidenceId(id) => base
+                .evidence
+                .iter()
+                .find(|e| &e.id == id)
+                .and_then(|e| Some((e.path.as_deref()?, snippet_start(e)))),
+        };
+        if let Some((path, line)) = region
+            && let Some(file) = source_path(root, path)
+        {
+            excluded_regions.entry(file).or_default().insert(line);
+        }
+    }
+    let mut paths = BTreeMap::new();
+    let mut snippet_files = BTreeSet::new();
     for e in sorted {
-        if !evidence.contains(&e.id) || excluded.contains(&e.id) || snippets.len() >= 16 {
+        if snippets.len() >= 16 {
+            break;
+        }
+        if !evidence.contains(&e.id) {
             continue;
         }
         let Some(path) = &e.path else { continue };
-        if !opened.insert(path) {
+        let Some(file) = paths
+            .entry(path)
+            .or_insert_with(|| source_path(root, path))
+            .as_ref()
+        else {
+            continue;
+        };
+        let line = snippet_start(e);
+        if snippet_files.contains(file)
+            || excluded_regions.get(file).is_some_and(|starts| {
+                starts
+                    .iter()
+                    .any(|start| start.abs_diff(line) < SNIPPET_LINES)
+            })
+        {
             continue;
         }
-        let source = source_cache
-            .entry(path)
-            .or_insert_with(|| source(root, path));
-        let Some(source) = source else { continue };
-        let line = e
-            .site
-            .as_ref()
-            .map_or(1, |s| (s.start_line as usize).saturating_sub(3).max(1));
+        let Ok(source) = std::fs::read_to_string(file) else {
+            continue;
+        };
         let text = scrub(
             &source
                 .lines()
                 .skip(line - 1)
-                .take(36)
+                .take(SNIPPET_LINES)
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
@@ -315,6 +357,7 @@ pub(super) fn pack(
             text,
         };
         if !snippet.text.is_empty() && insert(&mut snippet_items, json!(snippet), 0) {
+            snippet_files.insert(file.clone());
             snippets.push(snippet);
         }
     }
@@ -326,7 +369,6 @@ pub(super) fn pack(
         snippets,
         nodes,
         edges,
-        candidates,
         evidence,
         omitted,
         aliases,

@@ -38,20 +38,26 @@ pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher>
                 while let Ok(p) = rx.recv_timeout(DEBOUNCE) {
                     batch.insert(p);
                 }
-                let (changed, changed_paths, revision, architecture_changed) = match state.project.lock() {
+                let (changed, changed_paths, revision, architecture_changed, evidence_changed) = match state.project.lock() {
                     Ok(mut project) => {
                         let architecture_changed = batch.iter().any(|p| {
                             p.strip_prefix(project.root()).is_ok_and(|p| p == Path::new(crate::architecture::CONFIG_PATH))
                         });
+                        let evidence_changed = batch.iter().any(|p| {
+                            p.strip_prefix(project.root()).is_ok_and(crate::refinements::is_document)
+                        });
                         let (changed, changed_paths): (Vec<_>, Vec<_>) = batch.iter()
                             .filter_map(|p| project.refresh_path(p).map(|rel| (rel, p.clone())))
                             .unzip();
-                        (changed, changed_paths, project.source_revision(), architecture_changed)
+                        (changed, changed_paths, project.source_revision(), architecture_changed, evidence_changed)
                     }
                     Err(_) => break,
                 };
                 if architecture_changed {
                     let _ = state.events.send(ServerEvent::ArchitectureChanged);
+                }
+                if evidence_changed {
+                    let _ = state.events.send(ServerEvent::DiagramEvidenceChanged);
                 }
                 semantic_worker::notify(&state, revision, &changed_paths);
                 state.run.files_changed(&state, &changed_paths);

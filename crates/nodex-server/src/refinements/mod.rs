@@ -34,6 +34,7 @@ struct Basis {
     source_revision: u64,
     graph: Arc<nodex_ir::StructureGraph>,
     config_digest: String,
+    documents: BTreeMap<String, Option<String>>,
     target: Target,
     inventory: Inventory,
 }
@@ -137,6 +138,17 @@ fn config_bytes(root: &Path) -> Result<Vec<u8>> {
     }
 }
 
+pub(crate) fn is_document(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            context::DOCUMENTS.iter().any(|document| {
+                *document == name || (cfg!(windows) && document.eq_ignore_ascii_case(name))
+            })
+        })
+        && context::path_allowed(&path.to_string_lossy().replace('\\', "/"))
+}
+
 async fn capture(state: &Arc<AppState>, mut target: Target) -> Result<Basis> {
     target.normalize();
     let generation = state.generation.load(Ordering::Acquire);
@@ -183,21 +195,24 @@ async fn capture(state: &Arc<AppState>, mut target: Target) -> Result<Basis> {
             nodex_uml::UmlScope::Folder { path } => Some(path.clone()),
             _ => None,
         };
+        let mut documents = BTreeMap::new();
         if let Some(dir) = docs_folder {
-            for name in ["README.md", "ARCHITECTURE.md"] {
+            for name in context::DOCUMENTS {
                 let path = if dir.is_empty() {
                     name.into()
                 } else {
                     format!("{dir}/{name}")
                 };
-                if context::source(&root, &path).is_some() {
+                let revision = context::source(&root, &path).map(hash);
+                if revision.is_some() {
                     inventory.evidence.push(refinement::Evidence {
                         id: format!("e{}", inventory.evidence.len()),
                         text: "Project documentation".into(),
                         site: None,
-                        path: Some(path),
+                        path: Some(path.clone()),
                     });
                 }
+                documents.insert(path, revision);
             }
         }
         let key = hash(serde_json::to_vec(&target).map_err(internal)?);
@@ -215,7 +230,11 @@ async fn capture(state: &Arc<AppState>, mut target: Target) -> Result<Basis> {
             .filter_map(|e| e.path.as_deref())
             .collect::<BTreeSet<_>>()
         {
-            if let Some(text) = context::source(&root, path) {
+            if let Some(revision) = documents.get(path) {
+                if let Some(revision) = revision {
+                    digest.update(revision.as_bytes());
+                }
+            } else if let Some(text) = context::source(&root, path) {
                 digest.update(hash(text).as_bytes());
             }
         }
@@ -227,6 +246,7 @@ async fn capture(state: &Arc<AppState>, mut target: Target) -> Result<Basis> {
             source_revision,
             graph,
             config_digest,
+            documents,
             target,
             inventory,
         };
@@ -238,6 +258,13 @@ async fn capture(state: &Arc<AppState>, mut target: Target) -> Result<Basis> {
 }
 
 fn check_basis(state: &AppState, basis: &Basis) -> Result<()> {
+    if basis
+        .documents
+        .iter()
+        .any(|(path, revision)| context::source(&basis.root, path).map(hash) != *revision)
+    {
+        return Err(conflict());
+    }
     let project = state.project.lock().map_err(internal)?;
     if state.generation.load(Ordering::Acquire) != basis.generation
         || project.root() != basis.root
@@ -258,7 +285,7 @@ fn check_basis(state: &AppState, basis: &Basis) -> Result<()> {
 pub(crate) struct ContextRequest {
     target: Target,
     #[serde(default)]
-    exclude: BTreeSet<String>,
+    exclude: Vec<context::ExcludedExcerpt>,
     focus: Option<String>,
 }
 
@@ -419,7 +446,6 @@ pub(crate) async fn start(
                     &context.evidence,
                     &context.nodes,
                     &context.edges,
-                    &context.candidates,
                 ),
             },
             Err(message) => Progress::Failed { message },

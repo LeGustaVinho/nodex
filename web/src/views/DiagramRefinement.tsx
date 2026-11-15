@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useUi } from "../store";
 import { errorText } from "../toast";
-import type { Refined, RefinementPreview, RefinementTarget, Reviewed } from "../uml/refinement";
+import type { Refined, RefinementExcerpt, RefinementPreview, RefinementTarget, Reviewed } from "../uml/refinement";
 
 export function useDiagramRefinement(target: RefinementTarget, enabled = true) {
   const session = useUi((s) => s.projectSession);
@@ -62,13 +62,13 @@ function Controls({ controller: c }: { controller: Controller }) {
     try { await action(); } catch (error) { if (sameProject()) setFailure(errorText(error)); }
     finally { setBusy(false); }
   };
-  const prepare = (exclude: string[], nextFocus: string | null) => run(async () => {
+  const prepare = (exclude: RefinementExcerpt[], nextFocus: string | null) => run(async () => {
     setJob(undefined);
     setPreview(undefined);
     const next = await api.refinementPreview(c.target, exclude, nextFocus);
     if (sameProject()) { setPreview(next); setFocus(nextFocus); }
   });
-  const [excluded, setExcluded] = useState<string[]>([]);
+  const [excluded, setExcluded] = useState<RefinementExcerpt[]>([]);
   const start = () => preview && run(async () => {
     const id = await api.startRefinement(preview);
     if (sameProject()) setJob(id);
@@ -122,7 +122,7 @@ function Controls({ controller: c }: { controller: Controller }) {
               {preview.snippets.map((s) => <div key={s.id} className="settings-row">
                 <span>{s.path}:{s.line}</span>
                 <button disabled={busy} onClick={() => {
-                  const next = [...excluded, s.id];
+                  const next = [...excluded, { path: s.path, line: s.line }];
                   setExcluded(next);
                   void prepare(next, focus);
                 }}>Remove excerpt</button>
