@@ -314,11 +314,17 @@ pub fn build(
     config: &ArchitectureConfig,
 ) -> Result<ArchitectureDiagram, UmlError> {
     let index = Index::new(input.graph, input.knowledge);
-    let apps = c4::applications(input, &index, config);
+    let apps = c4::applications(input, &index);
     if request.view == ArchitectureView::Layers {
         layers::build(&index, input, request, config, &apps)
     } else {
-        c4::build(&index, input, request, config, apps)
+        c4::build(
+            &index,
+            input,
+            request,
+            config,
+            c4::apply_declarations(apps, config),
+        )
     }
 }
 

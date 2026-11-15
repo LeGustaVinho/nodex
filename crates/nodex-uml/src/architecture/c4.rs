@@ -15,8 +15,7 @@ fn unit_for<'a>(input: &'a UmlInput<'_>, file: &str) -> Option<&'a nodex_core::u
 pub(super) fn applications(
     input: &UmlInput<'_>,
     index: &Index<'_>,
-    config: &ArchitectureConfig,
-) -> Vec<ArchitectureNode> {
+) -> BTreeMap<String, ArchitectureNode> {
     let mut apps = BTreeMap::new();
     let mut add = |symbol: &Symbol, site: &Span, technology: String, reason: &str| {
         let unit = unit_for(input, &site.file);
@@ -132,6 +131,13 @@ pub(super) fn applications(
         }
     }
 
+    apps
+}
+
+pub(super) fn apply_declarations(
+    mut apps: BTreeMap<String, ArchitectureNode>,
+    config: &ArchitectureConfig,
+) -> Vec<ArchitectureNode> {
     for app in &config.applications {
         let id = format!("app:{}", app.root);
         let mut node = ArchitectureNode::new(
@@ -737,7 +743,10 @@ fn add_database_links<'a>(
             continue;
         };
         let id = format!("database:{}:{app}:{}", app.len(), fact.key);
-        let connection = fact.key.strip_prefix("ConnectionStrings:").unwrap_or(&fact.key);
+        let connection = fact
+            .key
+            .strip_prefix("ConnectionStrings:")
+            .unwrap_or(&fact.key);
         let name = format!("{} · {connection}", elements[app].name);
         let mut node = ArchitectureNode::new(
             id.clone(),

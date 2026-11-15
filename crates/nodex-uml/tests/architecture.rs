@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use nodex_core::Project;
@@ -18,8 +19,16 @@ fn diagram(
     let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures")
         .join(project);
+    diagram_at(&folder, request, config)
+}
+
+fn diagram_at(
+    folder: &Path,
+    request: ArchitectureRequest,
+    config: &ArchitectureConfig,
+) -> ArchitectureDiagram {
     let mut project = Project::open(
-        &folder,
+        folder,
         vec![
             Arc::new(nodex_lang_csharp::CSharpFrontend),
             Arc::new(nodex_lang_typescript::TypeScriptFrontend),
@@ -49,6 +58,63 @@ fn request(view: ArchitectureView) -> ArchitectureRequest {
         expanded: Default::default(),
         container: None,
     }
+}
+
+fn project_with_files(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let project = tempfile::tempdir().unwrap();
+    for (path, source) in files {
+        let file = project.path().join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, source).unwrap();
+    }
+    project
+}
+
+#[test]
+fn a_c4_declaration_does_not_change_layer_module_keys() {
+    let project = project_with_files(&[
+        ("package.json", r#"{"name":"shop"}"#),
+        ("src/services/orders.ts", "export function orders() {}"),
+    ]);
+    let mut config = ArchitectureConfig::default();
+    config.layers.insert("src/services".into(), Layer::Domain);
+    config.applications.push(DeclaredApplication {
+        root: "src/services".into(),
+        name: "Orders".into(),
+        technology: "Node.js".into(),
+    });
+    let d = diagram_at(project.path(), request(ArchitectureView::Layers), &config);
+    assert!(d.modules.iter().any(|n| n.id == "module:src/services"
+        && n.layer == Some(Layer::Domain)
+        && n.provenance == Provenance::Declared));
+}
+
+#[test]
+fn layers_project_namespace_imports_onto_visible_modules() {
+    let project = project_with_files(&[
+        (
+            "Controllers/Orders.cs",
+            "using Shop.Domain; namespace Shop.Controllers; public class Orders {}",
+        ),
+        (
+            "Domain/Order.cs",
+            "namespace Shop.Domain; public class Order {}",
+        ),
+        (
+            "Domain/Warehouse.cs",
+            "namespace Shop.Domain; public class Warehouse {}",
+        ),
+    ]);
+    let mut req = request(ArchitectureView::Layers);
+    req.expanded.extend([Layer::Interface, Layer::Domain]);
+    let d = diagram_at(project.path(), req, &ArchitectureConfig::default());
+    assert!(
+        d.edges.iter().any(|e| e.kind == "Imports"
+            && e.from == "module:Controllers"
+            && e.to == "module:Domain"),
+        "{:?}",
+        d.edges
+    );
 }
 
 #[test]

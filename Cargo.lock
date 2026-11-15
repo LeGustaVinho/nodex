@@ -2904,6 +2904,7 @@ dependencies = [
  "nodex-trace",
  "serde",
  "serde_json",
+ "tempfile",
  "ts-rs",
 ]
 

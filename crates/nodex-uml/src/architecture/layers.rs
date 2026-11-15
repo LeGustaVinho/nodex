@@ -5,15 +5,28 @@ pub(super) fn build(
     input: &UmlInput<'_>,
     request: &ArchitectureRequest,
     config: &ArchitectureConfig,
-    apps: &[ArchitectureNode],
+    apps: &BTreeMap<String, ArchitectureNode>,
 ) -> Result<ArchitectureDiagram, UmlError> {
     let scope = Scoped::resolve(index, &request.scope)?;
     let roots: BTreeSet<&str> = input
         .units
         .iter()
         .map(|u| u.root.as_str())
-        .chain(apps.iter().filter_map(|n| n.path.as_deref()))
+        .chain(apps.values().filter_map(|n| n.path.as_deref()))
         .collect();
+    let group_for_file = |file: &str| {
+        let root = roots
+            .iter()
+            .copied()
+            .filter(|root| within(file, root))
+            .max_by_key(|r| r.len())
+            .unwrap_or("");
+        module_path(file, root)
+    };
+    let site_in_scope = |site: &Span| {
+        (scope.files.is_empty() || scope.files.contains(&site.file))
+            && scope.folder.as_ref().is_none_or(|f| within(&site.file, f))
+    };
     let mut groups: BTreeMap<String, Vec<(&Symbol, &Span)>> = BTreeMap::new();
     let mut visible = BTreeSet::new();
     let mut group_by_symbol = BTreeMap::new();
@@ -24,20 +37,12 @@ pub(super) fn build(
         .filter(|s| diagram_symbol(s, index))
     {
         for site in &symbol.origins {
-            let root = roots
-                .iter()
-                .copied()
-                .filter(|root| within(&site.file, root))
-                .max_by_key(|r| r.len())
-                .unwrap_or("");
-            let group = module_path(&site.file, root);
+            let group = group_for_file(&site.file);
             groups
                 .entry(group.clone())
                 .or_default()
                 .push((symbol, site));
-            let in_file = scope.files.is_empty() || scope.files.contains(&site.file);
-            let in_folder = scope.folder.as_ref().is_none_or(|f| within(&site.file, f));
-            if scope.symbols.contains(&symbol.id) && in_file && in_folder {
+            if scope.symbols.contains(&symbol.id) && site_in_scope(site) {
                 visible.insert(group.clone());
                 group_by_symbol.entry(symbol.id.as_str()).or_insert(group);
             }
@@ -108,10 +113,25 @@ pub(super) fn build(
     result.nodes.extend(modules);
 
     let target = |id: &str| {
-        group_by_symbol
-            .get(id)
-            .and_then(|g| endpoints.get(g))
-            .map(String::as_str)
+        if let Some(endpoint) = group_by_symbol.get(id).and_then(|g| endpoints.get(g)) {
+            return Some(endpoint.as_str());
+        }
+        let symbol = index.get(id)?;
+        if !matches!(symbol.kind, SymbolKind::Namespace | SymbolKind::Package)
+            || !scope.symbols.contains(id)
+            || index.is_test(id)
+        {
+            return None;
+        }
+        // Namespaces can span modules. Lift them only when their origins agree
+        // on a visible endpoint at the current expansion level.
+        let mut candidates = symbol
+            .origins
+            .iter()
+            .filter(|s| site_in_scope(s))
+            .map(|s| endpoints.get(&group_for_file(&s.file)).map(String::as_str));
+        let one = candidates.next()??;
+        candidates.all(|other| other == Some(one)).then_some(one)
     };
     for edge in index.relations().filter(|e| static_relation(e.kind)) {
         if let (Some(source), Some(dest)) = (target(&edge.from), target(&edge.to)) {
