@@ -479,7 +479,7 @@ impl<'a, 't> Collector<'a, 't> {
         }
         let trait_name = trait_node.map(|t| src.norm(t));
         if let Some(t) = trait_node {
-            let negative = src.text(item).contains(&format!("!{}", src.text(t)));
+            let negative = nodex_lang_api::syntax::children(item).iter().any(|part| part.kind() == "!");
             let base = bare_type_name(&src.norm(t));
             if !negative {
                 self.type_refs.push(TypeRef { from: owner.clone(), name: base.clone(), relation: TypeRelation::Base });

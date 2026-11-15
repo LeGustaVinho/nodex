@@ -68,6 +68,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
     items.extend(crate::global_asm_explanation::contract(src, node));
+    items.extend(crate::trait_alias_unstable_explanation::contract(src, node));
+    items.extend(crate::negative_trait_impl_explanation::contract(src, node));
+    items.extend(crate::reserved_priv_explanation::contract(src, node));
+    items.extend(crate::reserved_unsized_explanation::contract(src, node));
+    items.extend(crate::feature_gate_explanation::contract(src, node));
+    items.extend(crate::reserved_gen_explanation::contract(src, node));
+    items.extend(crate::reserved_macro_explanation::contract(src, node));
+    items.extend(crate::reserved_box_explanation::contract(src, node));
+    items.extend(crate::reserved_become_explanation::explain(src, node));
+    items.extend(crate::reserved_yield_explanation::contract(src, node));
     items.extend(crate::reserved_virtual_explanation::contract(src, node));
     items.extend(crate::reserved_typeof_explanation::contract(src, node));
     items.extend(crate::reserved_try_explanation::contract(src, node));
@@ -1433,6 +1443,8 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((span, content)) = crate::reserved_gen_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::reserved_yield_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::reserved_typeof_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::reserved_try_explanation::reading(self.src, node) { self.push(self.src.span(node), site, false, content); }
         if let Some((site, content)) = crate::align_of_call_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
