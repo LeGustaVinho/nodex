@@ -588,6 +588,11 @@ impl<'a, 't> Walker<'a, 't> {
             _ => None,
         };
         if let Some(lifetime) = lifetime {
+            if lifetime == "context" {
+                for (key, provider) in database_connections(src, node, &call) {
+                    self.config(&owner, Some(key), "database-connection", None, provider);
+                }
+            }
             let (service, implementation) = match call.generics.as_slice() {
                 [s, i, ..] => (Some(s.clone()), Some(i.clone())),
                 [s] => (Some(s.clone()), None),
@@ -951,6 +956,95 @@ impl<'t> Call<'t> {
     fn string_arg(&self, i: usize) -> Option<String> {
         self.args.get(i).and_then(|a| unquote(a))
     }
+}
+
+/// A named connection passed to the provider through the DbContext options callback.
+fn database_connections<'t>(
+    src: Src,
+    registration: Node<'t>,
+    call: &Call<'t>,
+) -> Vec<(String, Node<'t>)> {
+    let mut connections = Vec::new();
+    for lambda in call.arg_nodes.iter().filter(|arg| arg.kind() == "lambda_expression") {
+        let Some(parameters) = lambda.child_by_field_name("parameters") else { continue };
+        let options = if parameters.kind() == "implicit_parameter" {
+            Some(parameters)
+        } else {
+            named_children(parameters).last().and_then(|p| p.child_by_field_name("name"))
+        };
+        let (Some(options), Some(body)) = (options, lambda.child_by_field_name("body")) else { continue };
+        let calls = if body.kind() == "block" {
+            children_of_kind(body, "expression_statement")
+                .into_iter().filter_map(|stmt| first_child_of_kind(stmt, "invocation_expression")).collect()
+        } else {
+            vec![body]
+        };
+        for node in calls {
+            let Some(provider) = Call::read(src, node) else { continue };
+            if provider.receiver != src.norm(options)
+                || !matches!(provider.name.as_str(), "UseSqlServer" | "UseNpgsql" | "UseSqlite" | "UseMySql" | "UseOracle" | "UseCosmos")
+            {
+                continue;
+            }
+            let Some(&argument) = provider.arg_nodes.first() else { continue };
+            let value = if argument.kind() == "identifier" {
+                local_connection_value(src, registration, argument)
+            } else {
+                Some(argument)
+            };
+            if let Some(key) = value.and_then(|value| connection_key(src, value)) {
+                connections.push((key, node));
+            }
+        }
+    }
+    connections
+}
+
+fn connection_key(src: Src, mut value: Node<'_>) -> Option<String> {
+    if value.kind() == "binary_expression"
+        && value.child_by_field_name("operator").is_some_and(|op| op.kind() == "??")
+        && value.child_by_field_name("right").is_some_and(|right| right.kind() == "throw_expression")
+    {
+        value = value.child_by_field_name("left")?;
+    }
+    let lookup = Call::read(src, value)?;
+    (lookup.name == "GetConnectionString")
+        .then(|| lookup.string_arg(0)).flatten().map(|key| format!("ConnectionStrings:{key}"))
+}
+
+/// Accept a simple local initializer when the callback is the variable's only use.
+fn local_connection_value<'t>(src: Src, registration: Node<'t>, argument: Node<'t>) -> Option<Node<'t>> {
+    let name = src.norm(argument);
+    let mut statement = registration;
+    let scope = loop {
+        let parent = statement.parent()?;
+        if matches!(parent.kind(), "block" | "compilation_unit") {
+            break parent;
+        }
+        statement = parent;
+    };
+    let (declaration, value) = named_children(scope).into_iter()
+        .take_while(|node| *node != statement)
+        .filter_map(|node| if node.kind() == "global_statement" { node.named_child(0) } else { Some(node) })
+        .filter(|node| node.kind() == "local_declaration_statement")
+        .filter_map(|node| first_child_of_kind(node, "variable_declaration"))
+        .flat_map(|var| children_of_kind(var, "variable_declarator"))
+        .find_map(|declaration| {
+            let identifier = declaration.child_by_field_name("name")?;
+            let initializer = named_children(declaration).into_iter().last().filter(|value| *value != identifier)?;
+            (src.norm(identifier) == name).then_some((declaration, initializer))
+        })?;
+    let mut visit = vec![scope];
+    while let Some(node) = visit.pop() {
+        if node == declaration || node == argument {
+            continue;
+        }
+        if matches!(node.kind(), "identifier" | "implicit_parameter") && src.norm(node) == name {
+            return None;
+        }
+        visit.extend(named_children(node));
+    }
+    Some(value)
 }
 
 /// Minimal API group join: `MapGroup("/api")` + `MapGet("/orders")` is `/api/orders`.

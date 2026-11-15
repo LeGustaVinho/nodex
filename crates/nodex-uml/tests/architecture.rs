@@ -545,23 +545,86 @@ fn c4_follows_transitive_libraries_without_crossing_into_another_executable() {
 }
 
 #[test]
-fn named_database_is_inferred_and_can_be_removed_from_the_boundary() {
-    let project = "knowledge/fullstack";
+fn merely_reading_a_connection_name_leaves_database_access_pending() {
+    let d = diagram(
+        "knowledge/fullstack",
+        request(ArchitectureView::Containers),
+        &ArchitectureConfig::default(),
+    );
+    assert!(
+        d.stores
+            .iter()
+            .all(|n| n.name != "backend-dotnet · Default")
+    );
+    assert!(
+        d.pending.iter().any(|e| {
+            e.text.contains("Database access in backend-dotnet")
+                && e.path
+                    .as_ref()
+                    .is_some_and(|path| path.ends_with("OrderService.cs"))
+        }),
+        "{:?}",
+        d.pending
+    );
+}
+
+#[test]
+fn connections_passed_to_ef_providers_are_inferred_and_can_be_excluded() {
+    let project = project_with_files(&[
+        (
+            "Shop.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>",
+        ),
+        (
+            "Program.cs",
+            r#"
+            var builder = WebApplication.CreateBuilder(args);
+            var reports = builder.Configuration.GetConnectionString("Reports") ?? throw new Exception();
+            var stale = builder.Configuration.GetConnectionString("Stale");
+            stale = "replacement";
+            builder.Services.AddDbContext<AppDbContext>(options =>
+                options.UseSqlServer(builder.Configuration.GetConnectionString("Orders")));
+            builder.Services.AddDbContextPool<ReportsContext>((services, settings) => {
+                settings.UseNpgsql(reports);
+            });
+            builder.Services.AddDbContext<OtherContext>(options => options.UseSqlServer(stale));
+            builder.Services.AddDbContext<UnknownContext>(options =>
+                otherOptions.UseSqlServer(builder.Configuration.GetConnectionString("WrongReceiver")));
+            var app = builder.Build();
+            app.Run();
+        "#,
+        ),
+    ]);
     let mut config = ArchitectureConfig::default();
-    let d = diagram(project, request(ArchitectureView::Containers), &config);
+    let d = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    let names: std::collections::BTreeSet<_> = d.stores.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Shop · Orders", "Shop · Reports"].into(),
+        "{:?}",
+        d.stores
+    );
     let store = d
         .stores
         .iter()
-        .find(|node| node.name == "backend-dotnet · Default")
+        .find(|node| node.name == "Shop · Orders")
         .unwrap();
     assert_eq!(store.provenance, Provenance::Inferred);
     assert!(
-        d.edges
-            .iter()
-            .any(|e| e.from == "app:backend-dotnet" && e.to == store.id)
+        d.edges.iter().any(|e| e.from == "app:"
+            && e.to == store.id
+            && e.label == "Configures database access")
     );
     config.excluded_stores.insert(store.id.clone());
-    let updated = diagram(project, request(ArchitectureView::Containers), &config);
+    let updated = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
     assert!(updated.stores.iter().any(|n| n.id == store.id));
     assert!(updated.nodes.iter().all(|n| n.id != store.id));
     assert!(updated.edges.iter().all(|e| e.to != store.id));

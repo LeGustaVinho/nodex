@@ -183,7 +183,7 @@ pub struct DiFact {
 pub struct ConfigFact {
     pub owner: SymbolId,
     pub key: String,
-    /// `env`, `configuration`, `connection-string`, `player-prefs`, ...
+    /// `env`, `configuration`, `connection-string`, `database-connection` (passed to a provider), ...
     pub source: String,
     pub default: Option<String>,
     pub span: Span,

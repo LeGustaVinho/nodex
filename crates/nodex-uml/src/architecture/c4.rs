@@ -563,95 +563,81 @@ fn add_database_links<'a>(
     links: &mut Vec<Link>,
     pending: &mut Vec<ArchitectureEvidence>,
 ) {
-    let mut connections = BTreeMap::new();
+    let declared: BTreeSet<_> = config
+        .relations
+        .iter()
+        .filter(|relation| {
+            relation.to.starts_with("store:")
+                && elements
+                    .get(&relation.to)
+                    .is_some_and(|n| n.kind == ArchitectureKind::Store)
+                && !config.excluded_stores.contains(&relation.to)
+        })
+        .map(|relation| relation.from.as_str())
+        .collect();
     for fact in index
         .knowledge
         .config
         .iter()
-        .filter(|fact| fact.source == "connection-string")
+        .filter(|fact| fact.source == "database-connection")
     {
-        for app in owners(&fact.owner) {
-            connections
-                .entry(app)
-                .or_insert_with(BTreeMap::new)
-                .insert(fact.key.as_str(), fact);
+        for app in owners(&fact.owner).difference(&declared).copied() {
+            let id = format!("database:{}:{app}:{}", app.len(), fact.key);
+            let connection = fact
+                .key
+                .strip_prefix("ConnectionStrings:")
+                .unwrap_or(&fact.key);
+            let name = format!("{} · {connection}", elements[app].name);
+            let node = elements.entry(id.clone()).or_insert_with(|| {
+                ArchitectureNode::new(
+                    id.clone(),
+                    name,
+                    ArchitectureKind::Store,
+                    Provenance::Inferred,
+                )
+            });
+            let evidence = ArchitectureEvidence::at(
+                "Named connection passed to the database provider",
+                Some(&fact.span),
+                Some(&fact.owner),
+            );
+            push_evidence(&mut node.evidence, evidence.clone());
+            links.push(Link {
+                from: app.into(),
+                to: id,
+                from_symbol: Some(fact.owner.clone()),
+                to_symbol: None,
+                kind: "Storage",
+                label: "Configures database access".into(),
+                confidence: Confidence::Inferred,
+                provenance: Provenance::Inferred,
+                evidence,
+            });
         }
     }
-    let mut accesses = BTreeMap::new();
+    // A configured provider establishes its own connection. An operation still
+    // needs evidence tying it to a particular context before it can use that link.
+    let mut reported = BTreeSet::new();
     for symbol in index.knowledge.symbols.iter().filter(|s| {
         !s.test
             && s.capabilities
                 .iter()
                 .any(|c| matches!(c.as_str(), "DB_READ" | "DB_WRITE"))
     }) {
-        for app in owners(&symbol.symbol) {
-            accesses
-                .entry(app)
-                .or_insert_with(Vec::new)
-                .push(&symbol.symbol);
-        }
-    }
-    for (app, symbols) in accesses {
-        if config
-            .relations
-            .iter()
-            .any(|r| r.from == app && r.to.starts_with("store:") && elements.contains_key(&r.to))
-        {
-            continue;
-        }
-        let Some(fact) = connections
-            .get(app)
-            .filter(|c| c.len() == 1)
-            .and_then(|c| c.values().next())
-        else {
-            let symbol = symbols[0];
-            push_evidence(
-                pending,
-                ArchitectureEvidence::at(
-                    format!(
-                        "Database access in {} needs an associated data store",
-                        elements[app].name
+        for app in owners(&symbol.symbol).difference(&declared).copied() {
+            if reported.insert(app) {
+                push_evidence(
+                    pending,
+                    ArchitectureEvidence::at(
+                        format!(
+                            "Database access in {} needs an associated data store",
+                            elements[app].name
+                        ),
+                        index.get(&symbol.symbol).and_then(|s| s.origins.first()),
+                        Some(&symbol.symbol),
                     ),
-                    index.get(symbol).and_then(|s| s.origins.first()),
-                    Some(symbol),
-                ),
-            );
-            continue;
-        };
-        let id = format!("database:{}:{app}:{}", app.len(), fact.key);
-        let connection = fact
-            .key
-            .strip_prefix("ConnectionStrings:")
-            .unwrap_or(&fact.key);
-        let name = format!("{} · {connection}", elements[app].name);
-        let mut node = ArchitectureNode::new(
-            id.clone(),
-            name,
-            ArchitectureKind::Store,
-            Provenance::Inferred,
-        );
-        node.evidence.push(ArchitectureEvidence::at(
-            "Named connection string read by the application",
-            Some(&fact.span),
-            Some(&fact.owner),
-        ));
-        elements.insert(id.clone(), node);
-        for symbol in symbols {
-            links.push(Link {
-                from: app.into(),
-                to: id.clone(),
-                from_symbol: Some(symbol.clone()),
-                to_symbol: None,
-                kind: "Storage",
-                label: "Uses database".into(),
-                confidence: Confidence::Inferred,
-                provenance: Provenance::Inferred,
-                evidence: ArchitectureEvidence::at(
-                    "Database access in an application with one named connection",
-                    index.get(symbol).and_then(|s| s.origins.first()),
-                    Some(symbol),
-                ),
-            });
+                );
+            }
         }
     }
 }

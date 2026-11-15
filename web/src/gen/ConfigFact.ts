@@ -6,6 +6,6 @@ import type { Span } from "./Span";
  */
 export type ConfigFact = { owner: string, key: string, 
 /**
- * `env`, `configuration`, `connection-string`, `player-prefs`, ...
+ * `env`, `configuration`, `connection-string`, `database-connection` (passed to a provider), ...
  */
 source: string, default: string | null, span: Span, };

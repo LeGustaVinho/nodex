@@ -449,7 +449,7 @@ fn infrastructure(index: &Index, id_of: &dyn Fn(&str) -> Option<String>) -> Infr
     for c in &index.knowledge.config {
         let what = match c.source.as_str() {
             "env" => "environment",
-            "connection-string" => "connection string",
+            "connection-string" | "database-connection" => "connection string",
             _ => "settings",
         };
         add("config", Shape::Store, "Configuration".into(), id_of(&c.owner), what);
