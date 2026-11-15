@@ -1,4 +1,8 @@
 import type { BorrowOrigins } from "./gen/BorrowOrigins";
+import type { ArchitectureDiagram } from "./gen/ArchitectureDiagram";
+import type { ArchitectureSettings } from "./gen/ArchitectureSettings";
+import type { ArchitectureView } from "./gen/ArchitectureView";
+import type { Layer } from "./gen/Layer";
 import type { UnityStatus } from "./gen/UnityStatus";
 import type { CallsPage } from "./gen/CallsPage";
 import type { Catalog } from "./gen/Catalog";
@@ -206,6 +210,21 @@ export const api = {
   uml: (kind: UmlKind, scope: UmlScope, opts: Partial<UmlOptions>) =>
     json<UmlDiagram>(`/api/uml?kind=${kind}&scope=${encodeURIComponent(JSON.stringify(scope))}&opts=${encodeURIComponent(JSON.stringify(opts))}`),
   umlAvailability: (scope: UmlScope) => json<UmlAvailability>(`/api/uml/availability?scope=${encodeURIComponent(JSON.stringify(scope))}`),
+  architecture: async (view: ArchitectureView, scope: UmlScope, expanded: Layer[], container: string | null, signal: AbortSignal) => {
+    const q = new URLSearchParams({ view });
+    if (view === "layers") {
+      q.set("scope", JSON.stringify(scope));
+      q.set("expanded", JSON.stringify(expanded));
+    }
+    if (view === "components" && container) q.set("container", container);
+    return (await request(`/api/architecture?${q}`, { signal })).json() as Promise<ArchitectureDiagram>;
+  },
+  architectureSettings: async (signal: AbortSignal) =>
+    (await request("/api/architecture/config", { signal })).json() as Promise<ArchitectureSettings>,
+  saveArchitecture: async (settings: ArchitectureSettings) =>
+    (await request("/api/architecture/config", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(settings),
+    })).json() as Promise<ArchitectureSettings>,
   traceSteps: (symbol: string) => json<StepsPage>(`/api/trace/steps?symbol=${encodeURIComponent(symbol)}`),
   saveLayout: (key: string, positions: Positions) =>
     request(`/api/layout?key=${encodeURIComponent(key)}`, {
@@ -219,6 +238,7 @@ export const api = {
 export type OpenProgress = { phase: "scanning" | "reading"; done: number; total: number };
 
 export type ServerEvent =
+  | { type: "architecture-changed" }
   | { type: "graph-changed"; data: { files: string[] } }
   /** `graph` is false when only the analysis status changed (the graphs are the same). */
   | { type: "semantic-changed"; data: { graph: boolean } }

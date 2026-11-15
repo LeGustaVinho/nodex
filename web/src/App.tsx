@@ -16,7 +16,8 @@ import { Palette } from "./panels/Palette";
 import { Sidebar } from "./panels/Sidebar";
 import { type View, useUi } from "./store";
 import { Splitter } from "./components/Splitter";
-import { ArchitectureView, BlueprintView, CallsView, TypesView, indexOf, useStructure } from "./views/Views";
+import { BlueprintView, CallsView, TypesView, indexOf, useStructure } from "./views/Views";
+import { ArchitectureInspector, ArchitectureView } from "./views/Architecture";
 import { ConfidenceToggles } from "./components/ConfidenceToggles";
 import { ContextMenuHost, useContextMenu } from "./components/ContextMenu";
 import { ContextPicker } from "./panels/ContextPicker";
@@ -36,7 +37,8 @@ const CodePanel = lazy(() => loadCodePanel().then((m) => ({ default: m.CodePanel
 
 function InspectorSlot() {
   const active = useNavigation((s) => !!s.request);
-  return active ? <NavigationResults /> : <Inspector />;
+  const architecture = useUi((s) => s.view === "architecture" && s.architecture.mode !== "packages");
+  return active ? <NavigationResults /> : architecture ? <ArchitectureInspector /> : <Inspector />;
 }
 
 /** The code panel loads Monaco (megabytes): only once there is code to show, or when idle. */
@@ -65,7 +67,7 @@ const VIEWS: { id: View; label: string; hint: string }[] = [
   { id: "hierarchy", label: "Hierarchy", hint: "Folders, namespaces, types and members as boxes you can open" },
   { id: "knowledge", label: "Knowledge", hint: "HTTP calls, dependency injection, tests, throws and writes around a symbol" },
   { id: "uml", label: "UML", hint: "Class, package and component diagrams of the project, a folder, a file or the selected code" },
-  { id: "architecture", label: "Architecture", hint: "Namespaces, modules, packages and their dependencies" },
+  { id: "architecture", label: "Architecture", hint: "Packages, logical layers and C4 diagrams" },
   { id: "types", label: "Types", hint: "Classes, interfaces and how they relate" },
   { id: "calls", label: "Calls", hint: "Who calls a function, and what it calls" },
   { id: "timeline", label: "Timeline", hint: "Every function call of the last run, over time" },
@@ -125,12 +127,15 @@ function useLiveUpdates() {
             void queryClient.resetQueries();
             return;
           }
+          if (event.type === "architecture-changed") {
+            void queryClient.invalidateQueries({ queryKey: ["architecture"] });
+          }
           if (event.type === "graph-changed" || event.type === "semantic-changed") {
             const keys =
               event.type === "graph-changed"
-                ? ["structure", "knowledge", "project", "flow", "flows", "borrow-origin", "source", "uml", "uml-availability", "navigation"]
+                ? ["structure", "knowledge", "project", "flow", "flows", "borrow-origin", "source", "uml", "uml-availability", "navigation", "architecture"]
                 : event.data.graph
-                  ? ["structure", "knowledge", "project", "flow", "flows", "borrow-origin", "uml", "uml-availability", "navigation"]
+                  ? ["structure", "knowledge", "project", "flow", "flows", "borrow-origin", "uml", "uml-availability", "navigation", "architecture"]
                   : // Only the analysis status (shown from the project summary) changed.
                     ["project", "navigation"];
             for (const key of keys) {

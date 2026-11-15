@@ -20,6 +20,8 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api, type Positions as SavedPositions } from "../api";
 import { blueprintTypeColor } from "../graph/blueprintTypes";
 import { BlueprintNode } from "../components/BlueprintNode";
+import { ArchitectureCard } from "../components/ArchitectureNode";
+import { ArchitectureRelation } from "../components/ArchitectureRelation";
 import { CallNode } from "../components/CallNode";
 import { ClassBox, FieldCard, MethodNode } from "../components/ClassNodes";
 import { ExprNode } from "../components/ExprNode";
@@ -54,6 +56,7 @@ export function isTyping(target: EventTarget | null): boolean {
 }
 
 const nodeTypes: NodeTypes = {
+  architecture: ArchitectureCard,
   blueprint: BlueprintNode,
   expr: ExprNode,
   namespace: NamespaceNode,
@@ -67,7 +70,7 @@ const nodeTypes: NodeTypes = {
   fieldCard: FieldCard,
 };
 
-const edgeTypes: EdgeTypes = { ownership: OwnershipEdge };
+const edgeTypes: EdgeTypes = { architecture: ArchitectureRelation, ownership: OwnershipEdge };
 
 /** Colors of the knowledge relations (also used by legends). */
 export const KNOWLEDGE_COLORS: Record<string, string> = {
@@ -103,6 +106,11 @@ export function edgeStyle(e: GEdge): Partial<Edge> {
 function kindStyle(e: GEdge): Partial<Edge> {
   const { ty, shape, access, deferredBorrow } = (e.data as Partial<OwnershipData> | undefined) ?? {};
   switch (e.kind) {
+    case "architecture": {
+      const { label, http } = e.data as { label: string; http: boolean };
+      const color = http ? KNOWLEDGE_COLORS.httpcalls : "#8b98aa";
+      return { type: "architecture", label, style: { stroke: color, strokeWidth: http ? 2 : 1.5 }, markerEnd: { type: MarkerType.ArrowClosed, color } };
+    }
     case "exec":
       return { style: { stroke: "#e8e8e8", strokeWidth: 2.4 }, className: "edge-exec" };
     case "data": {
@@ -157,6 +165,7 @@ interface Props {
   observedEdge?: string;
   onNodeClick?: (node: Node) => void;
   onNodeDoubleClick?: (node: Node) => void;
+  onEdgeClick?: (id: string) => void;
   /** Right-click on a node (the app's context menu). */
   onNodeContextMenu?: (event: React.MouseEvent, node: Node) => void;
   emptyText?: string;
@@ -174,6 +183,8 @@ interface Props {
   savePositions?: boolean;
   /** Fit the whole graph after every layout, not only the first (views that grow in place). */
   refit?: boolean;
+  /** Skip viewport culling when exporting a bounded diagram. */
+  renderWholeGraph?: boolean;
   /**
    * Explorer behaviour: the selected node (`anchor`) lights up its relations and dims the rest,
    * `edgeMode` limits the edges drawn to the selection's, labels show on lit edges only.
@@ -446,6 +457,7 @@ function Canvas(props: Props) {
         onNodesChange={onNodesChange}
         onNodeClick={(_, n) => onNodeClick?.(n)}
         onNodeDoubleClick={(_, n) => onNodeDoubleClick?.(n)}
+        onEdgeClick={props.onEdgeClick ? (_, edge) => props.onEdgeClick?.(edge.id) : undefined}
         onNodeContextMenu={onNodeContextMenu ? (e, n) => onNodeContextMenu(e, n) : undefined}
         onNodeDragStop={(_, __, moved) => savePositions && persist(moved)}
         onPaneClick={props.onPaneClick}
@@ -458,10 +470,10 @@ function Canvas(props: Props) {
         onMoveStart={() => setTip(null)}
         nodesConnectable={false}
         zoomOnDoubleClick={false}
-        edgesFocusable={false}
+        edgesFocusable={Boolean(props.onEdgeClick)}
         minZoom={0.1}
         maxZoom={2}
-        onlyRenderVisibleElements
+        onlyRenderVisibleElements={!props.renderWholeGraph}
         proOptions={{ hideAttribution: true }}
         colorMode="dark"
       >

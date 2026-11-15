@@ -32,7 +32,7 @@ Press **Ctrl+K** (or `/`) anywhere to search symbols and views.
   - Tests, thrown and caught exceptions, and data writes.
   - Relations no compiler proves are drawn dashed (inferred) or dotted red (unresolved).
 - **UML**: the seven UML diagrams of the project, a folder, a file, a symbol or the selected code. See [UML diagrams](#uml-diagrams).
-- **Architecture**: namespaces, imported namespaces and packages.
+- **Architecture**: **Packages** shows namespaces, modules and their dependencies. **Layers** shows logical responsibilities in expandable bands. **C4** moves from system context to applications and data stores, then into a selected application's components.
 - **Types**: classes, interfaces and records, with *extends*, *implements*, *uses* and *creates* edges.
 - **Calls**: the callers and callees of a function, including the events it raises and who handles them. It needs the language's semantics.
 - **Timeline**: after a run, every function call as a bar over time (a flame chart). Double-click one to replay it.
@@ -80,6 +80,14 @@ Right-click a folder, a file, a symbol or a Hierarchy box, use the Inspector or 
 - **Use case**: the entry points by component, with their actors (roles from `[Authorize]`, `@Roles` or `requireRole`, visitors, operators, schedulers, brokers), «include» and «extend».
 
 Click an element to see why it is drawn. Copy the Mermaid text or a Markdown block, or save the diagram as `.mmd`, `.svg` or `.png`.
+
+## Architecture diagrams
+
+Layers follows the project context. Open a band to see its modules and click a box or relation for the evidence in the Inspector. Select a module to correct its layer, or choose **Use inference** to restore the suggested layer.
+
+C4 starts at the system context. Open the system to see its containers, then open an application to see its components. The Inspector can open the source, a Blueprint or the UML class diagram when the selected component has corresponding code. Use **Edit architecture** to adjust the boundary, declare people and integrations, or attach a library to an application. Unresolved associations appear in the Inspector under **Needs confirmation**.
+
+The **.mmd** and **.png** buttons export the current diagram. Nodex stores architecture declarations with the project's local state in `.nodex/architecture.json`.
 
 ## Run, traces and debugging
 

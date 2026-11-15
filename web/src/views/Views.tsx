@@ -40,7 +40,7 @@ export function useStructure() {
   return { index, error: q.error, isLoading: q.isLoading, refetch: q.refetch };
 }
 
-export function ArchitectureView() {
+export function PackagesView() {
   const { index, error, refetch } = useStructure();
   const { scope, items } = useContextSet(index);
   const { setNamespace, setView, select, selection } = useUi(

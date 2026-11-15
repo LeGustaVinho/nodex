@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { OpenProgress } from "./api";
 import type { Span } from "./gen/Span";
 import type { UmlKind } from "./gen/UmlKind";
+import type { ArchitectureView } from "./gen/ArchitectureView";
+import type { Layer } from "./gen/Layer";
 import type { UmlOptions } from "./gen/UmlOptions";
 import type { UmlScope } from "./gen/UmlScope";
 import type { StructEdgeKind } from "./gen/StructEdgeKind";
@@ -97,8 +99,22 @@ export type Selection = (
   | { kind: "container"; id: string }
   ) & { syntax?: string } | null;
 
+export interface ArchitectureUi {
+  mode: "packages" | "layers" | "c4";
+  level: Exclude<ArchitectureView, "layers">;
+  container: string | null;
+  expanded: Layer[];
+  selected: string | null;
+}
+
+const initialArchitecture: ArchitectureUi = {
+  mode: "packages", level: "context", container: null, expanded: [], selected: null,
+};
+
 interface UiState {
   view: View;
+  architecture: ArchitectureUi;
+  setArchitecture: (patch: Partial<ArchitectureUi>) => void;
   /** Symbol whose Blueprint is shown. */
   flowSymbol: string | null;
   /** Namespace filter for the Types view (null = all). */
@@ -279,6 +295,8 @@ export const useUi = create<UiState>((set, get) => {
   };
   return {
   view: startFlow ? "blueprint" : startUml ? "uml" : "overview",
+  architecture: initialArchitecture,
+  setArchitecture: (patch) => set((s) => ({ architecture: { ...s.architecture, ...patch } })),
   flowSymbol: startFlow,
   namespace: null,
   callFocus: null,
@@ -356,6 +374,7 @@ export const useUi = create<UiState>((set, get) => {
     writeHash("overview", null);
     set((s) => ({
       view: "overview",
+      architecture: initialArchitecture,
       flowSymbol: null,
       namespace: null,
       callFocus: null,
