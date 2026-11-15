@@ -53,6 +53,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::named_struct_explanation::explain(src, node));
     items.extend(crate::tuple_struct_explanation::explain(src, node));
     items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::macro_expr_repetition_explanation::contract(src, node));
+    items.extend(crate::macro_comma_plus_expr_explanation::contract(src, node));
+    items.extend(crate::macro_semicolon_repeat_explanation::contract(src, node));
+    items.extend(crate::macro_optional_tt_explanation::contract(src, node));
+    items.extend(crate::macro_transcriber_metavariable_explanation::contract(src, node));
+    items.extend(crate::macro_type_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_visibility_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_stmt_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_tt_fragment_explanation::contract(src, node));
+    items.extend(crate::macro_path_fragment_explanation::contract(src, node));
     items.extend(crate::macro_literal_fragment_explanation::contract(src, node));
     items.extend(crate::macro_expr_2021_fragment_explanation::contract(src, node));
     items.extend(crate::macro_meta_fragment_explanation::contract(src, node));
