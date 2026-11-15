@@ -67,6 +67,8 @@ pub enum UmlScope {
     Folder { path: String },
     /// One project-relative file.
     File { path: String },
+    /// A set of project-relative files.
+    Files { paths: Vec<String> },
     /// Selected code: byte range of one file.
     Range { file: String, start_byte: u32, end_byte: u32 },
     /// A symbol and what it contains (also `dir:<path>` and `grp:ns:<name>` containers).

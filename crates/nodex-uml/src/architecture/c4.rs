@@ -105,29 +105,18 @@ pub(super) fn build(
     );
 
     let files = membership(index, input, &apps);
-    let direct_owners = |id: &str| {
-        index
-            .get(id)
-            .filter(|s| diagram_symbol(s, index))
-            .into_iter()
-            .flat_map(|s| &s.origins)
-            .filter_map(|site| files.get(site.file.as_str()))
-            .flatten()
-            .copied()
-            .collect::<BTreeSet<_>>()
-    };
-
     let executable_roots: BTreeSet<_> = apps.iter().map(Application::root).collect();
-    let mut explicit_paths = BTreeSet::new();
-    let mut seeds = Vec::new();
+    let mut explicit_paths = BTreeMap::<&str, BTreeSet<&str>>::new();
     for item in &config.libraries {
         let application = aliases
             .get(&item.application)
             .copied()
             .unwrap_or(&item.application);
         if active.contains(application) {
-            explicit_paths.insert(item.path.as_str());
-            seeds.push((application, item.path.as_str()));
+            explicit_paths
+                .entry(application)
+                .or_default()
+                .insert(&item.path);
         } else if apps
             .iter()
             .any(|a| a.legacy_id() == Some(&item.application))
@@ -141,10 +130,12 @@ pub(super) fn build(
             );
         }
     }
-    let library_path = |file: &str| {
+    let library_path = |file: &str, app: &str| {
         let unit = unit_for(input, file).map(|unit| unit.root.as_str());
         let explicit = explicit_paths
-            .iter()
+            .get(app)
+            .into_iter()
+            .flatten()
             .copied()
             .filter(|path| within(file, path))
             .max_by_key(|path| path.len());
@@ -153,18 +144,28 @@ pub(super) fn build(
         }
         unit.filter(|root| !executable_roots.contains(root))
     };
-    let libraries = library_membership(index, &files, &active, &library_path, seeds);
+    let libraries = library_membership(index, &files, &active, &library_path, &explicit_paths);
     let owners = |id: &str| {
-        let direct = direct_owners(id);
-        if !direct.is_empty() {
-            return direct.intersection(&active).copied().collect();
-        }
         index
-            .file_of(id)
-            .and_then(library_path)
-            .and_then(|path| libraries.get(path))
-            .cloned()
-            .unwrap_or_default()
+            .get(id)
+            .filter(|s| diagram_symbol(s, index))
+            .into_iter()
+            .flat_map(|s| &s.origins)
+            .flat_map(|site| {
+                let file = site.file.as_str();
+                let local = files
+                    .get(file)
+                    .into_iter()
+                    .flatten()
+                    .filter(|app| active.contains(*app))
+                    .copied();
+                let library = libraries
+                    .get(file)
+                    .into_iter()
+                    .flat_map(|owners| owners.keys().copied());
+                local.chain(library)
+            })
+            .collect::<BTreeSet<_>>()
     };
 
     let mut links = Vec::new();
@@ -433,40 +434,54 @@ pub(super) fn build(
                 .graph
                 .symbols
                 .iter()
-                .filter(|s| diagram_symbol(s, index) && owners(&s.id).contains(focus))
+                .filter(|s| diagram_symbol(s, index))
             {
-                let site = &symbol.origins[0];
-                let local = direct_owners(&symbol.id).contains(focus);
-                let path = if local {
-                    module_path(&site.file, root)
-                } else {
-                    library_path(&site.file).unwrap_or(&site.file).to_owned()
-                };
-                let node = components.entry(path.clone()).or_insert_with(|| {
-                    let mut node = ArchitectureNode::new(
-                        format!("component:{focus}:{path}"),
-                        leaf(&path).into(),
-                        ArchitectureKind::Component,
-                        Provenance::Inferred,
-                    );
-                    node.parent = Some(focus.into());
-                    node.path = Some(path.clone());
-                    node.code = Some(if path == site.file {
-                        UmlScope::File { path }
+                for site in &symbol.origins {
+                    let file = site.file.as_str();
+                    let path = if files.get(file).is_some_and(|owners| owners.contains(focus)) {
+                        module_path(file, root)
+                    } else if let Some(path) =
+                        libraries.get(file).and_then(|owners| owners.get(focus))
+                    {
+                        (*path).to_owned()
                     } else {
-                        UmlScope::Folder { path }
+                        continue;
+                    };
+                    let (node, component_files) =
+                        components.entry(path.clone()).or_insert_with(|| {
+                            let mut node = ArchitectureNode::new(
+                                format!("component:{focus}:{path}"),
+                                leaf(&path).into(),
+                                ArchitectureKind::Component,
+                                Provenance::Inferred,
+                            );
+                            node.parent = Some(focus.into());
+                            node.path = Some(path);
+                            (node, BTreeSet::new())
+                        });
+                    component_files.insert(file);
+                    if symbol.kind.is_type() || symbol.has_flow {
+                        push_evidence(
+                            &mut node.evidence,
+                            ArchitectureEvidence::at(&symbol.name, Some(site), Some(&symbol.id)),
+                        );
+                    }
+                    symbols
+                        .entry(symbol.id.as_str())
+                        .or_insert_with(|| node.id.clone());
+                }
+            }
+            result
+                .nodes
+                .extend(components.into_values().map(|(mut node, files)| {
+                    let paths: Vec<String> = files.into_iter().map(str::to_owned).collect();
+                    node.code = Some(if let [path] = paths.as_slice() {
+                        UmlScope::File { path: path.clone() }
+                    } else {
+                        UmlScope::Files { paths }
                     });
                     node
-                });
-                if symbol.kind.is_type() || symbol.has_flow {
-                    push_evidence(
-                        &mut node.evidence,
-                        ArchitectureEvidence::at(&symbol.name, Some(site), Some(&symbol.id)),
-                    );
-                }
-                symbols.insert(symbol.id.as_str(), node.id.clone());
-            }
-            result.nodes.extend(components.into_values());
+                }));
             let component = |id: &str| symbols.get(id).map(String::as_str);
             for edge in index.relations().filter(|e| static_relation(e.kind)) {
                 if let (Some(a), Some(b)) = (component(&edge.from), component(&edge.to)) {
@@ -536,38 +551,60 @@ pub(super) fn build(
 }
 
 fn library_membership<'a>(
-    index: &Index<'_>,
-    files: &BTreeMap<&str, BTreeSet<&'a str>>,
+    index: &Index<'a>,
+    files: &BTreeMap<&'a str, BTreeSet<&'a str>>,
     active: &BTreeSet<&'a str>,
-    library_path: &impl Fn(&str) -> Option<&'a str>,
-    mut visit: Vec<(&'a str, &'a str)>,
-) -> BTreeMap<&'a str, BTreeSet<&'a str>> {
+    library_path: &impl Fn(&str, &str) -> Option<&'a str>,
+    explicit_paths: &BTreeMap<&'a str, BTreeSet<&'a str>>,
+) -> BTreeMap<&'a str, BTreeMap<&'a str, &'a str>> {
     let mut dependencies = BTreeMap::<&str, BTreeSet<&str>>::new();
     for (from, to) in exact_file_dependencies(index) {
-        if files.get(to).is_some_and(|owners| !owners.is_empty()) {
-            continue;
-        }
-        let Some(target) = library_path(to) else {
-            continue;
-        };
-        if let Some(owners) = files.get(from).filter(|owners| !owners.is_empty()) {
-            visit.extend(owners.intersection(active).map(|&app| (app, target)));
-        } else if let Some(source) = library_path(from)
-            && source != target
-        {
-            dependencies.entry(source).or_default().insert(target);
+        if files.get(to).is_some_and(BTreeSet::is_empty) {
+            dependencies.entry(from).or_default().insert(to);
         }
     }
-    let mut libraries = BTreeMap::<&str, BTreeSet<&str>>::new();
-    while let Some((app, path)) = visit.pop() {
-        if libraries.entry(path).or_default().insert(app) {
-            visit.extend(
-                dependencies
-                    .get(path)
-                    .into_iter()
-                    .flatten()
-                    .map(|&target| (app, target)),
-            );
+    let mut app_files = BTreeMap::<&str, Vec<&str>>::new();
+    for (&file, owners) in files {
+        for app in owners.intersection(active) {
+            app_files.entry(app).or_default().push(file);
+        }
+    }
+    let mut libraries = BTreeMap::<&str, BTreeMap<&str, &str>>::new();
+    for &app in active {
+        let outgoing = |file| {
+            dependencies
+                .get(file)
+                .into_iter()
+                .flatten()
+                .filter_map(|to| library_path(to, app))
+        };
+        let mut visit: Vec<_> = explicit_paths
+            .get(app)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect();
+        visit.extend(
+            app_files
+                .get(app)
+                .into_iter()
+                .flatten()
+                .flat_map(|file| outgoing(*file)),
+        );
+        let mut seen = BTreeSet::new();
+        while let Some(path) = visit.pop() {
+            if !seen.insert(path) {
+                continue;
+            }
+            for (&file, owners) in files
+                .range(path..)
+                .take_while(|(file, _)| file.starts_with(path))
+            {
+                if owners.is_empty() && library_path(file, app) == Some(path) {
+                    libraries.entry(file).or_default().insert(app, path);
+                    visit.extend(outgoing(file));
+                }
+            }
         }
     }
     libraries

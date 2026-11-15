@@ -3,4 +3,4 @@
 /**
  * What a diagram is about.
  */
-export type UmlScope = { "kind": "Project" } | { "kind": "Folder", path: string, } | { "kind": "File", path: string, } | { "kind": "Range", file: string, start_byte: number, end_byte: number, } | { "kind": "Symbol", id: string, } | { "kind": "Symbols", ids: Array<string>, };
+export type UmlScope = { "kind": "Project" } | { "kind": "Folder", path: string, } | { "kind": "File", path: string, } | { "kind": "Files", paths: Array<string>, } | { "kind": "Range", file: string, start_byte: number, end_byte: number, } | { "kind": "Symbol", id: string, } | { "kind": "Symbols", ids: Array<string>, };

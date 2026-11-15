@@ -49,6 +49,14 @@ impl Scoped {
                     return Err(UmlError::NotFound(format!("file {path}")));
                 }
             }
+            UmlScope::Files { paths } => {
+                out.files.extend(paths.iter().cloned());
+                out.title = format!("{} files", out.files.len());
+                out.symbols = all().filter(|s| s.origins.iter().any(|o| out.files.contains(&o.file))).map(|s| s.id.clone()).collect();
+                if out.symbols.is_empty() {
+                    return Err(UmlError::NotFound("selected files".into()));
+                }
+            }
             UmlScope::Range { file, start_byte, end_byte } => {
                 let (start, end) = (*start_byte, (*end_byte).max(*start_byte + 1));
                 out.title = format!("Selection in {file}");

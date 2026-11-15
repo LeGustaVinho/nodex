@@ -30,6 +30,8 @@ export function scopeLabel(scope: UmlScope, name?: (id: string) => string | unde
       return scope.path ? `${scope.path}/` : "whole project";
     case "File":
       return scope.path.split("/").pop() ?? scope.path;
+    case "Files":
+      return `${scope.paths.length} files`;
     case "Range":
       return `selection in ${scope.file.split("/").pop()}`;
     case "Symbol":

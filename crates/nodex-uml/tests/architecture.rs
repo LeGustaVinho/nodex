@@ -556,6 +556,25 @@ fn c4_uses_cargo_targets_to_find_rust_executables() {
             .flat_map(|n| &n.evidence)
             .all(|e| e.path.as_deref() != Some("src/bin/producer.rs"))
     );
+    let producer = d
+        .applications
+        .iter()
+        .find(|n| n.name == "producer")
+        .unwrap();
+    let mut req = request(ArchitectureView::Components);
+    req.container = Some(producer.id.clone());
+    let components = diagram_at(project.path(), req, &config);
+    assert_eq!(
+        components
+            .nodes
+            .iter()
+            .find(|n| n.kind == ArchitectureKind::Component)
+            .unwrap()
+            .code,
+        Some(UmlScope::File {
+            path: "src/bin/producer.rs".into()
+        })
+    );
 
     let manifest = project.path().join("Cargo.toml");
     let original = fs::read_to_string(&manifest).unwrap();
@@ -636,6 +655,71 @@ fn c4_follows_transitive_libraries_without_crossing_into_another_executable() {
             .nodes
             .iter()
             .all(|n| !matches!(n.path.as_deref(), Some("other" | "libs/dev")))
+    );
+}
+
+#[test]
+fn nested_library_declarations_are_independent_for_each_application() {
+    let serve = r#"import express from "express"; const app = express(); export function start() { app.listen(3000); } start();"#;
+    let project = project_with_files(&[
+        (
+            "app-a/package.json",
+            r#"{"name":"a","dependencies":{"express":"*"}}"#,
+        ),
+        ("app-a/index.ts", serve),
+        (
+            "app-b/package.json",
+            r#"{"name":"b","dependencies":{"express":"*"}}"#,
+        ),
+        ("app-b/index.ts", serve),
+        ("libs/shared/index.ts", "export function share() {}"),
+        ("libs/shared/sub/detail.ts", "export function detail() {}"),
+    ]);
+    let mut config = ArchitectureConfig::default();
+    config.libraries.extend([
+        LibraryMembership {
+            application: "app:app-a".into(),
+            path: "libs/shared".into(),
+        },
+        LibraryMembership {
+            application: "app:app-b".into(),
+            path: "libs/shared/sub".into(),
+        },
+    ]);
+    let mut req = request(ArchitectureView::Components);
+    req.container = Some("app:app-a".into());
+    let a = diagram_at(project.path(), req, &config);
+    let lib = a
+        .nodes
+        .iter()
+        .find(|n| n.path.as_deref() == Some("libs/shared"))
+        .unwrap();
+    assert_eq!(
+        lib.code,
+        Some(UmlScope::Files {
+            paths: ["libs/shared/index.ts", "libs/shared/sub/detail.ts"]
+                .map(str::to_owned)
+                .into()
+        })
+    );
+    let mut req = request(ArchitectureView::Components);
+    req.container = Some("app:app-b".into());
+    let b = diagram_at(project.path(), req, &config);
+    assert!(
+        b.nodes
+            .iter()
+            .all(|n| n.path.as_deref() != Some("libs/shared"))
+    );
+    let lib = b
+        .nodes
+        .iter()
+        .find(|n| n.path.as_deref() == Some("libs/shared/sub"))
+        .unwrap();
+    assert_eq!(
+        lib.code,
+        Some(UmlScope::File {
+            path: "libs/shared/sub/detail.ts".into()
+        })
     );
 }
 
