@@ -24,6 +24,10 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::nested_attr_args_detail::contract(src, node));
+    items.extend(crate::inner_cfg_attr_detail::contract(src, node));
+    items.extend(crate::macro_multiple_rules_detail::contract(src, node));
+    items.extend(crate::derive_helper_attr_detail::contract(src, node));
     items.extend(crate::default_extern_abi_detail::contract(src, node));
     items.extend(crate::foreign_static_mut_detail::contract(src, node));
     items.extend(crate::decimal_separators_detail::contract(src, node));
@@ -1462,6 +1466,12 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::div_assign_detail::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::mul_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::sub_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::add_assign_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::assignment_unit_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::asm_discard_output_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::string_continuation_detail::reading(self.src,node) { self.push(self.src.span(node), site, false, content); }
         if let Some((site, content)) = crate::raw_keyword_detail::reading(self.src,node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((span, content)) = crate::exponent_suffix_detail::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }

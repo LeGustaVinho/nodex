@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod nested_attr_args_detail;
+mod inner_cfg_attr_detail;
+mod macro_multiple_rules_detail;
+mod asm_discard_output_detail;
+mod sub_assign_detail;
+mod add_assign_detail;
+mod assignment_unit_detail;
+mod derive_helper_attr_detail;
+mod mul_assign_detail;
+mod div_assign_detail;
 mod unsafe_c_fn_pointer_detail;
 mod default_extern_abi_detail;
 mod foreign_static_mut_detail;
