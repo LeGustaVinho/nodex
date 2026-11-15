@@ -67,6 +67,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::arm_instruction_set_explanation::contract(src, node));
+    items.extend(crate::no_implicit_prelude_explanation::contract(src, node));
+    items.extend(crate::no_std_explanation::contract(src, node));
+    items.extend(crate::unsafe_naked_explanation::contract(src, node));
+    items.extend(crate::target_feature_avx2_explanation::contract(src, node));
+    items.extend(crate::no_builtins_explanation::contract(src, node));
+    items.extend(crate::track_caller_explanation::contract(src, node));
+    items.extend(crate::inline_always_explanation::contract(src, node));
+    items.extend(crate::cold_attribute_explanation::contract(src, node));
+    items.extend(crate::inline_never_explanation::contract(src, node));
     items.extend(crate::unsafe_link_section_explanation::contract(src, node));
     items.extend(crate::unsafe_export_name_explanation::contract(src, node));
     items.extend(crate::repr_c_u8_explanation::contract(src, node));
