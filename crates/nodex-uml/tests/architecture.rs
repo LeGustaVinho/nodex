@@ -101,6 +101,10 @@ fn layers_project_namespace_imports_onto_visible_modules() {
             "namespace Shop.Controllers; public class OrderView {}",
         ),
         (
+            "Ui/OrderEditor.cs",
+            "using Shop.Domain; namespace Shop.Controllers; public class OrderEditor {}",
+        ),
+        (
             "Domain/Order.cs",
             "namespace Shop.Domain; public class Order {}",
         ),
@@ -112,17 +116,26 @@ fn layers_project_namespace_imports_onto_visible_modules() {
     let mut req = request(ArchitectureView::Layers);
     req.expanded.extend([Layer::Interface, Layer::Domain]);
     let d = diagram_at(project.path(), req, &ArchitectureConfig::default());
-    assert!(
-        d.edges.iter().any(|e| e.kind == "Imports"
-            && e.from == "module:Controllers"
-            && e.to == "module:Domain"
-            && e.evidence[0]
-                .span
-                .as_ref()
-                .is_some_and(|s| s.file == "Controllers/Orders.cs" && s.start_byte == 0)),
-        "{:?}",
-        d.edges
-    );
+    let imports: Vec<_> = d
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == "Imports")
+        .collect();
+    assert_eq!(imports.len(), 2, "{imports:?}");
+    for (module, path) in [
+        ("module:Controllers", "Controllers/Orders.cs"),
+        ("module:Ui", "Ui/OrderEditor.cs"),
+    ] {
+        assert!(
+            imports.iter().any(|e| e.from == module
+                && e.to == "module:Domain"
+                && e.evidence[0]
+                    .span
+                    .as_ref()
+                    .is_some_and(|s| s.file == path && s.start_byte == 0)),
+            "{imports:?}"
+        );
+    }
 }
 
 #[test]
@@ -222,21 +235,21 @@ fn c4_rolls_up_http_and_places_only_the_selected_application_inside_the_componen
         request(ArchitectureView::Containers),
         &config,
     );
+    let frontend = containers
+        .aliases
+        .get("app:frontend-react")
+        .map_or("app:frontend-react", String::as_str);
+    let backend = containers.aliases["app:backend-dotnet"].as_str();
     assert!(
         containers
             .nodes
             .iter()
             .any(|n| n.id == "store:orders" && n.parent.as_deref() == Some("system"))
     );
-    assert!(
-        containers
-            .edges
-            .iter()
-            .any(|e| e.from == "app:frontend-react"
-                && e.to == "app:backend-dotnet"
-                && e.kind == "HTTP"
-                && e.confidence == Confidence::Inferred)
-    );
+    assert!(containers.edges.iter().any(|e| e.from == frontend
+        && e.to == backend
+        && e.kind == "HTTP"
+        && e.confidence == Confidence::Inferred));
     let mut req = request(ArchitectureView::Components);
     req.container = Some("app:backend-dotnet".into());
     let components = diagram("knowledge/fullstack", req, &config);
@@ -245,7 +258,7 @@ fn c4_rolls_up_http_and_places_only_the_selected_application_inside_the_componen
             .nodes
             .iter()
             .filter(|n| n.kind == ArchitectureKind::Component)
-            .all(|n| n.parent.as_deref() == Some("app:backend-dotnet"))
+            .all(|n| n.parent.as_deref() == Some(backend))
     );
     let orders = components
         .nodes
@@ -257,9 +270,14 @@ fn c4_rolls_up_http_and_places_only_the_selected_application_inside_the_componen
         components
             .edges
             .iter()
-            .any(|e| e.from == "app:frontend-react" && e.to == orders.id)
+            .any(|e| e.from == frontend && e.to == orders.id)
     );
-    assert!(!components.nodes.iter().any(|n| n.id == "app:backend-nest"));
+    assert!(
+        !components
+            .nodes
+            .iter()
+            .any(|n| n.id.starts_with("app:backend-nest::"))
+    );
     assert!(components.mermaid.contains("subgraph"));
 }
 
@@ -496,6 +514,88 @@ fn c4_separates_browser_and_server_in_the_same_package() {
             .iter()
             .all(|n| n.kind != ArchitectureKind::Application)
     );
+    config.excluded_apps.clear();
+    config.relations[0].to.clone_from(&server.id);
+    fs::remove_file(project.path().join("src/frontend/main.tsx")).unwrap();
+    let remaining = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert_eq!(remaining.applications.len(), 1);
+    assert_eq!(remaining.applications[0].id, server.id);
+    assert!(
+        remaining
+            .edges
+            .iter()
+            .any(|e| e.from == "actor:operator" && e.to == server.id)
+    );
+    config.excluded_apps.insert(server.id.clone());
+    let hidden = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert!(hidden.nodes.iter().all(|n| n.id != server.id));
+}
+
+#[test]
+fn c4_groups_imported_listeners_by_the_node_launch_script() {
+    let project = project_with_files(&[
+        (
+            "package.json",
+            r#"{"name":"shop","dependencies":{"express":"*"},"scripts":{"start":"node dist/index.js"}}"#,
+        ),
+        (
+            "src/index.ts",
+            r#"
+            import express from "express";
+            import { startHealth as health } from "./health";
+            const app = express();
+            export function startup() { health(); app.listen(3000); }
+            startup();
+        "#,
+        ),
+        (
+            "src/health.ts",
+            r#"
+            import express from "express";
+            const app = express();
+            export function startHealth() { app.listen(3001); }
+        "#,
+        ),
+    ]);
+    let config = ArchitectureConfig::default();
+    let single = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert_eq!(single.applications.len(), 1, "{:?}", single.applications);
+    let app = &single.applications[0];
+    assert!(app.id.ends_with(":src/index.ts"));
+    assert_eq!(single.aliases["app:::Node.js:src/health.ts"], app.id);
+    let mut req = request(ArchitectureView::Components);
+    req.container = Some(app.id.clone());
+    let components = diagram_at(project.path(), req, &config);
+    assert!(components.nodes.iter().any(
+        |n| n.kind == ArchitectureKind::Component && n.path.as_deref() == Some("src/health.ts")
+    ));
+
+    fs::write(project.path().join("package.json"),
+        r#"{"name":"shop","dependencies":{"express":"*"},"scripts":{"start":"node dist/index.js","health":"tsx src/health.ts"}}"#).unwrap();
+    let separate = diagram_at(
+        project.path(),
+        request(ArchitectureView::Containers),
+        &config,
+    );
+    assert_eq!(
+        separate.applications.len(),
+        2,
+        "{:?}",
+        separate.applications
+    );
+    assert!(separate.applications.iter().any(|n| n.id == app.id));
 }
 
 #[test]
@@ -795,12 +895,12 @@ fn connections_passed_to_ef_providers_are_inferred_and_can_be_excluded() {
         .find(|node| node.name == "Shop · Orders")
         .unwrap();
     assert_eq!(store.provenance, Provenance::Inferred);
-    assert!(
-        d.edges.iter().any(|e| e.from == "app:"
-            && e.to == store.id
-            && e.label == "Configures database access")
-    );
-    config.excluded_stores.insert(store.id.clone());
+    assert!(d.edges.iter().any(|e| e.from == d.aliases["app:"]
+        && e.to == store.id
+        && e.label == "Configures database access"));
+    let previous_id = "database:4:app::ConnectionStrings:Orders";
+    assert_eq!(d.aliases[previous_id], store.id);
+    config.excluded_stores.insert(previous_id.into());
     let updated = diagram_at(
         project.path(),
         request(ArchitectureView::Containers),

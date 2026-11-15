@@ -40,15 +40,22 @@ function applicationPath(id: string) {
 }
 
 function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram; initial: ArchitectureSettings; close: () => void }) {
+  const aliases = new Map(Object.entries(diagram.aliases));
+  const resolve = (id: string) => aliases.get(id) ?? id;
   const [draft, setDraft] = useState(() => {
     const excludedApps = initial.config.excluded_apps.flatMap((id) => {
+      if (resolve(id) !== id) return [resolve(id)];
       const split = diagram.applications.filter((app) => app.id.startsWith(id + "::"));
       if (split.length) return split.map((app) => app.id);
-      if (diagram.applications.some((app) => app.id === id)) return [id];
-      const scoped = diagram.applications.filter((app) => app.id.includes("::") && "app:" + app.path === id);
-      return scoped.length === 1 ? [scoped[0].id] : [id];
+      return [id];
     });
-    return { ...initial, config: { ...initial.config, excluded_apps: [...new Set(excludedApps)] } };
+    return { ...initial, config: {
+      ...initial.config,
+      excluded_apps: [...new Set(excludedApps)],
+      excluded_stores: [...new Set(initial.config.excluded_stores.map(resolve))],
+      libraries: initial.config.libraries.map((item) => ({ ...item, application: resolve(item.application) })),
+      relations: initial.config.relations.map((item) => ({ ...item, from: resolve(item.from), to: resolve(item.to) })),
+    } };
   });
   const client = useQueryClient();
   const session = useUi((s) => s.projectSession);
@@ -75,9 +82,8 @@ function EditorForm({ diagram, initial, close }: { diagram: ArchitectureDiagram;
   const splitApps = diagram.applications.filter((app) => app.id.includes("::"));
   for (const app of config.applications) {
     const id = "app:" + app.root;
-    const scoped = splitApps.filter((node) => node.path === app.root);
-    if (apps.has(id)) apps.set(id, app.name);
-    else if (scoped.length === 1) apps.set(scoped[0].id, app.name);
+    const resolved = resolve(id);
+    if (apps.has(resolved)) apps.set(resolved, app.name);
     else if (!splitApps.some((node) => node.id.startsWith(id + "::"))) apps.set(id, app.name);
   }
   const included = Array.from(apps).filter(([id]) => !config.excluded_apps.includes(id));

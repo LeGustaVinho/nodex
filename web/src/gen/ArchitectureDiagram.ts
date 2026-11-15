@@ -15,4 +15,8 @@ stores: Array<ArchitectureNode>,
 /**
  * Logical modules are selectable when a band is collapsed or trimmed.
  */
-modules: Array<ArchitectureNode>, };
+modules: Array<ArchitectureNode>, 
+/**
+ * Older IDs and paths that resolve to a single current application or store.
+ */
+aliases: { [key in string]: string }, };

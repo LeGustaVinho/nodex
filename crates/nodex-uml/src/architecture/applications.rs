@@ -19,10 +19,15 @@ impl Application {
         let root = self.node.id.strip_prefix("app:")?.split_once("::")?.0;
         Some(&self.node.id[.."app:".len() + root.len()])
     }
+}
 
-    fn split_scope(&self) -> Option<&str> {
-        (self.scope != self.root && self.legacy_id().is_some()).then_some(&self.scope)
-    }
+#[derive(Clone)]
+struct Candidate {
+    name: String,
+    technology: &'static str,
+    scope: String,
+    evidence: Vec<ArchitectureEvidence>,
+    entries: BTreeSet<String>,
 }
 
 pub(super) fn unit_for<'a>(input: &'a UmlInput<'_>, file: &str) -> Option<&'a BuildUnit> {
@@ -34,13 +39,6 @@ pub(super) fn unit_for<'a>(input: &'a UmlInput<'_>, file: &str) -> Option<&'a Bu
 }
 
 pub(super) fn infer<'a>(input: &'a UmlInput<'_>, index: &Index<'a>) -> Vec<Application> {
-    struct Candidate {
-        name: String,
-        technology: &'static str,
-        scope: String,
-        evidence: Vec<ArchitectureEvidence>,
-        entries: BTreeSet<String>,
-    }
     let mut roots: BTreeMap<&str, BTreeMap<(&str, String), Candidate>> = BTreeMap::new();
     let mut add = |symbol: &Symbol,
                    site: &'a Span,
@@ -152,9 +150,34 @@ pub(super) fn infer<'a>(input: &'a UmlInput<'_>, index: &Index<'a>) -> Vec<Appli
         }
     }
 
+    let mut javascript = BTreeSet::new();
+    let mut imports = BTreeMap::<&str, BTreeSet<&str>>::new();
+    if input.units.iter().any(|u| !u.node_entries.is_empty()) {
+        javascript.extend(
+            index
+                .graph
+                .symbols
+                .iter()
+                .filter(|s| s.language == Language::Typescript && diagram_symbol(s, index))
+                .flat_map(|s| &s.origins)
+                .map(|site| site.file.as_str()),
+        );
+        for (from, to) in exact_file_dependencies_of(index, |kind| {
+            matches!(kind, StructEdgeKind::Imports | StructEdgeKind::Calls)
+        }) {
+            imports.entry(from).or_default().insert(to);
+        }
+    }
     roots
         .into_iter()
-        .flat_map(|(root, apps)| {
+        .flat_map(|(root, mut apps)| {
+            if let Some(unit) = input
+                .units
+                .iter()
+                .find(|u| u.root == root && !u.node_entries.is_empty())
+            {
+                group_launched_listeners(unit, &javascript, &imports, &mut apps);
+            }
             let split = apps.len() > 1;
             let mut counts = BTreeMap::new();
             for app in apps.values() {
@@ -170,11 +193,7 @@ pub(super) fn infer<'a>(input: &'a UmlInput<'_>, index: &Index<'a>) -> Vec<Appli
                     || (app.technology == "Rust"
                         && relative(&scope, root) != "src/main.rs"
                         && relative(&scope, root) != "main.rs");
-                let id = if split {
-                    format!("app:{root}::{}:{key}", app.technology)
-                } else {
-                    format!("app:{root}")
-                };
+                let id = format!("app:{root}::{}:{key}", app.technology);
                 let name = if split && app.technology != "Rust" {
                     let location = if scope == root { "" } else { leaf(&scope) };
                     [app.name.as_str(), app.technology, location]
@@ -191,7 +210,7 @@ pub(super) fn infer<'a>(input: &'a UmlInput<'_>, index: &Index<'a>) -> Vec<Appli
                     ArchitectureKind::Application,
                     Provenance::Inferred,
                 );
-                node.path = Some(if split { scope.clone() } else { root.into() });
+                node.path = Some(scope.clone());
                 node.technology = Some(app.technology.into());
                 node.evidence = app.evidence;
                 Application {
@@ -203,6 +222,98 @@ pub(super) fn infer<'a>(input: &'a UmlInput<'_>, index: &Index<'a>) -> Vec<Appli
             })
         })
         .collect()
+}
+
+fn group_launched_listeners(
+    unit: &BuildUnit,
+    sources: &BTreeSet<&str>,
+    imports: &BTreeMap<&str, BTreeSet<&str>>,
+    apps: &mut BTreeMap<(&str, String), Candidate>,
+) {
+    let launches: BTreeSet<_> = unit
+        .node_entries
+        .iter()
+        .filter_map(|script| {
+            let (stem, extension) = script.rsplit_once('.')?;
+            let compiled = relative(stem, &unit.root);
+            let source = compiled
+                .strip_prefix("dist/")
+                .or_else(|| compiled.strip_prefix("build/"));
+            let rebased = source.map(|path| {
+                if unit.root.is_empty() {
+                    format!("src/{path}")
+                } else {
+                    format!("{}/src/{path}", unit.root)
+                }
+            });
+            let extensions: &[_] = match extension {
+                "mjs" => &["mts", "mjs"],
+                "cjs" => &["cts", "cjs"],
+                _ => &["ts", "tsx", "js"],
+            };
+            sources.get(script.as_str()).copied().or_else(|| {
+                rebased
+                    .as_deref()
+                    .into_iter()
+                    .chain([stem])
+                    .flat_map(|stem| {
+                        extensions
+                            .iter()
+                            .map(move |extension| format!("{stem}.{extension}"))
+                    })
+                    .find_map(|file| sources.get(file.as_str()).copied())
+            })
+        })
+        .collect();
+    let mut launched_by = BTreeMap::<&str, Vec<&str>>::new();
+    for &launch in &launches {
+        let mut visit = vec![launch];
+        let mut seen = BTreeSet::new();
+        while let Some(file) = visit.pop() {
+            if !seen.insert(file) {
+                continue;
+            }
+            launched_by.entry(file).or_default().push(launch);
+            visit.extend(
+                imports
+                    .get(file)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|file| within(file, &unit.root) && !launches.contains(file)),
+            );
+        }
+    }
+    let mut listeners = Vec::new();
+    apps.retain(|(technology, file), app| {
+        if *technology == "Node.js"
+            && !launches.contains(file.as_str())
+            && let Some(anchors) = launched_by.get(file.as_str())
+        {
+            listeners.push((anchors, app.clone()));
+            return false;
+        }
+        true
+    });
+    for (anchors, listener) in listeners {
+        for &entry in anchors {
+            let app = apps
+                .entry(("Node.js", entry.into()))
+                .or_insert_with(|| Candidate {
+                    scope: module_path(entry, &unit.root),
+                    entries: BTreeSet::from([entry.into()]),
+                    evidence: vec![ArchitectureEvidence::file(
+                        "Node.js launch script",
+                        &unit.manifest,
+                    )],
+                    ..listener.clone()
+                });
+            app.entries.extend(listener.entries.iter().cloned());
+            for evidence in &listener.evidence {
+                push_evidence(&mut app.evidence, evidence.clone());
+            }
+        }
+    }
 }
 
 fn rust_binary<'a>(
@@ -267,7 +378,9 @@ pub(super) fn apply_declarations(
         .into_iter()
         .map(|(alias, id)| (alias, id.to_owned()))
         .collect::<BTreeMap<_, _>>();
-    for app in &config.applications {
+    let mut declarations: Vec<_> = config.applications.iter().collect();
+    declarations.sort_by_key(|app| app.root.len());
+    for app in declarations {
         let id = format!("app:{}", app.root);
         let mut node = ArchitectureNode::new(
             id.clone(),
@@ -313,20 +426,31 @@ pub(super) fn apply_declarations(
     apps
 }
 
-/// A project-relative declaration can name one inferred executable by its scope.
+/// Resolve former IDs and project-relative paths when they identify one executable.
 pub(super) fn scope_aliases(apps: &[Application]) -> BTreeMap<String, &str> {
     let mut aliases = BTreeMap::new();
     let ids: BTreeSet<_> = apps.iter().map(|app| app.node.id.as_str()).collect();
     for app in apps {
-        if let Some(scope) = app.split_scope() {
-            let alias = format!("app:{scope}");
-            if ids.contains(alias.as_str()) {
-                continue;
+        if let Some(legacy) = app.legacy_id() {
+            let mut paths = BTreeSet::from([legacy.to_owned()]);
+            if let Some(path) = &app.node.path {
+                paths.insert(format!("app:{path}"));
             }
-            aliases
-                .entry(alias)
-                .and_modify(|value| *value = None)
-                .or_insert(Some(app.node.id.as_str()));
+            for entry in &app.entries {
+                paths.insert(format!("app:{entry}"));
+                if app.node.id.starts_with(&format!("{legacy}::Node.js:")) {
+                    paths.insert(format!("{legacy}::Node.js:{entry}"));
+                }
+            }
+            for alias in paths {
+                if ids.contains(alias.as_str()) {
+                    continue;
+                }
+                aliases
+                    .entry(alias)
+                    .and_modify(|value| *value = None)
+                    .or_insert(Some(app.node.id.as_str()));
+            }
         }
     }
     aliases
@@ -350,9 +474,10 @@ pub(super) fn membership<'a>(
         for site in &symbol.origins {
             files.entry(site.file.as_str()).or_insert_with(|| {
                 let unit = unit_for(input, &site.file);
-                let covered = apps
-                    .iter()
-                    .filter(|app| within(&site.file, &app.scope) && same_unit(unit, app));
+                let covered = apps.iter().filter(|app| {
+                    (within(&site.file, &app.scope) || app.entries.contains(&site.file))
+                        && same_unit(unit, app)
+                });
                 let entries: BTreeSet<_> = covered
                     .clone()
                     .filter(|a| a.entries.contains(&site.file))
@@ -412,6 +537,13 @@ fn same_unit(unit: Option<&BuildUnit>, app: &Application) -> bool {
 pub(super) fn exact_file_dependencies<'a>(
     index: &Index<'a>,
 ) -> impl Iterator<Item = (&'a str, &'a str)> {
+    exact_file_dependencies_of(index, static_relation)
+}
+
+fn exact_file_dependencies_of<'a>(
+    index: &Index<'a>,
+    kind: impl Fn(StructEdgeKind) -> bool,
+) -> impl Iterator<Item = (&'a str, &'a str)> {
     let file = move |id: &str| {
         let symbol = index.get(id)?;
         if symbol.external || index.is_test(id) {
@@ -426,17 +558,17 @@ pub(super) fn exact_file_dependencies<'a>(
     };
     index
         .relations()
-        .filter(|edge| {
-            static_relation(edge.kind)
-                && edge.confidence.unwrap_or(Confidence::Exact) == Confidence::Exact
+        .filter(move |edge| {
+            kind(edge.kind) && edge.confidence.unwrap_or(Confidence::Exact) == Confidence::Exact
         })
-        .filter_map(move |edge| {
-            let from = edge
-                .site
-                .as_ref()
-                .map(|s| s.file.as_str())
-                .or_else(|| file(&edge.from))?;
-            let to = file(&edge.to)?;
-            (from != to && !index.is_test(&edge.from)).then_some((from, to))
+        .flat_map(move |edge| {
+            let target = (!index.is_test(&edge.from))
+                .then(|| file(&edge.to))
+                .flatten();
+            let unlocated = edge.site.is_none().then(|| file(&edge.from)).flatten();
+            edge.sites()
+                .map(|site| site.file.as_str())
+                .chain(unlocated)
+                .filter_map(move |from| target.filter(|to| from != *to).map(|to| (from, to)))
         })
 }

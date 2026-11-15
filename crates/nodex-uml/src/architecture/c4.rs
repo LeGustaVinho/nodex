@@ -317,20 +317,44 @@ pub(super) fn build(
         .filter(|n| n.kind == ArchitectureKind::Store)
         .cloned()
         .collect();
+    let mut store_aliases = BTreeMap::new();
+    for store in &result.stores {
+        for (alias, app) in &aliases {
+            if store.id.strip_prefix("browser-store:") == Some(app) {
+                store_aliases.insert(format!("browser-store:{alias}"), store.id.as_str());
+            }
+            if let Some(connection) = store
+                .id
+                .strip_prefix(&format!("database:{}:{app}:", app.len()))
+            {
+                store_aliases.insert(
+                    format!("database:{}:{alias}:{connection}", alias.len()),
+                    store.id.as_str(),
+                );
+            }
+        }
+    }
+    result.aliases = aliases
+        .iter()
+        .chain(&store_aliases)
+        .map(|(from, to)| (from.clone(), (*to).into()))
+        .collect();
+    let excluded_stores: BTreeSet<_> = config
+        .excluded_stores
+        .iter()
+        .map(|id| store_aliases.get(id).copied().unwrap_or(id))
+        .collect();
     elements.retain(|id, node| {
-        node.kind != ArchitectureKind::Store || !config.excluded_stores.contains(id)
+        node.kind != ArchitectureKind::Store || !excluded_stores.contains(id.as_str())
     });
     links.retain(|link| elements.contains_key(&link.from) && elements.contains_key(&link.to));
     for relation in &config.relations {
-        let from = aliases
-            .get(&relation.from)
-            .copied()
-            .unwrap_or(&relation.from);
-        let to = aliases.get(&relation.to).copied().unwrap_or(&relation.to);
+        let from = result.aliases.get(&relation.from).unwrap_or(&relation.from);
+        let to = result.aliases.get(&relation.to).unwrap_or(&relation.to);
         if elements.contains_key(from) && elements.contains_key(to) {
             links.push(Link {
-                from: from.into(),
-                to: to.into(),
+                from: from.clone(),
+                to: to.clone(),
                 from_symbol: None,
                 to_symbol: None,
                 kind: "Declared",

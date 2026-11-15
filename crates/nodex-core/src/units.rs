@@ -25,6 +25,9 @@ pub struct BuildUnit {
     /// Cargo binary targets keyed by project-relative entry file.
     #[serde(skip)]
     pub rust_binaries: BTreeMap<String, String>,
+    /// Project-relative scripts passed directly to a Node-compatible launcher.
+    #[serde(skip)]
+    pub node_entries: BTreeSet<String>,
 }
 
 /// Reads the build units of `manifests` (absolute paths under `root`).
@@ -51,10 +54,13 @@ pub fn read_units(root: &Path, manifests: &[(Language, std::path::PathBuf, Vec<P
         let text = std::fs::read_to_string(manifest).unwrap_or_default();
         let folder = dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
         let mut rust_binaries = BTreeMap::new();
+        let mut node_entries = BTreeSet::new();
         let (name, refs) = if file.ends_with(".csproj") {
             (file.trim_end_matches(".csproj").to_owned(), csproj_refs(&text, &dir, &rel))
         } else if file == "package.json" {
-            package_json(&text, &dir, &rel)
+            let json = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_default();
+            node_entries = node_launch_paths(&json, &dir, &rel);
+            package_json(&json, &dir, &rel)
         } else {
             let table = text.parse::<toml::Table>().unwrap_or_default();
             let (name, refs) = cargo(&table, &dir, &rel);
@@ -62,7 +68,7 @@ pub fn read_units(root: &Path, manifests: &[(Language, std::path::PathBuf, Vec<P
             (name, refs)
         };
         let name = if name.is_empty() { folder } else { name };
-        units.push(BuildUnit { name, language: *language, root: root_rel, manifest: manifest_rel, refs: Vec::new(), packages: packages.clone(), rust_binaries });
+        units.push(BuildUnit { name, language: *language, root: root_rel, manifest: manifest_rel, refs: Vec::new(), packages: packages.clone(), rust_binaries, node_entries });
         raw.push(refs);
     }
     // A Cargo workspace root without a package of its own is not a unit.
@@ -107,8 +113,7 @@ fn csproj_refs(text: &str, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) ->
 }
 
 /// The package name and its `workspace:`/`file:`/`link:` dependencies.
-fn package_json(text: &str, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -> (String, Vec<String>) {
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else { return (String::new(), Vec::new()) };
+fn package_json(json: &serde_json::Value, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -> (String, Vec<String>) {
     let name = json.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_owned();
     let mut refs = Vec::new();
     for section in ["dependencies", "devDependencies", "peerDependencies"] {
@@ -125,6 +130,24 @@ fn package_json(text: &str, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -
         }
     }
     (name, refs)
+}
+
+fn node_launch_paths(json: &serde_json::Value, dir: &Path, rel: &dyn Fn(&Path) -> Option<String>) -> BTreeSet<String> {
+    json.get("scripts").and_then(serde_json::Value::as_object).into_iter()
+        .flat_map(|scripts| scripts.values()).filter_map(|script| {
+            let mut words = script.as_str()?.split_whitespace();
+            if !matches!(words.next()?, "node" | "tsx" | "ts-node") {
+                return None;
+            }
+            let entry = words.next()?.trim_matches(['\'', '"']);
+            let path = Path::new(entry);
+            if entry.starts_with('-') || entry.contains(['$', '%'])
+                || !matches!(path.extension()?.to_str()?, "js" | "mjs" | "cjs" | "ts" | "mts" | "cts" | "tsx")
+            {
+                return None;
+            }
+            rel(&normalize(&dir.join(path)))
+        }).collect()
 }
 
 /// The crate name and its `path = "..."` dependencies.

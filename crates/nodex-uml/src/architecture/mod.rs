@@ -212,6 +212,8 @@ pub struct ArchitectureDiagram {
     pub stores: Vec<ArchitectureNode>,
     /// Logical modules are selectable when a band is collapsed or trimmed.
     pub modules: Vec<ArchitectureNode>,
+    /// Older IDs and paths that resolve to a single current application or store.
+    pub aliases: BTreeMap<String, String>,
 }
 
 impl ArchitectureDiagram {
@@ -228,6 +230,7 @@ impl ArchitectureDiagram {
             applications: Vec::new(),
             stores: Vec::new(),
             modules: Vec::new(),
+            aliases: BTreeMap::new(),
         }
     }
 
