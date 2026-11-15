@@ -830,7 +830,9 @@ fn rename_uml(diagram: &mut UmlDiagram, id: &str, name: &str) {
                 trimmed
                     .strip_prefix(start)
                     .and_then(|part| part.strip_prefix(id))
-                    .is_some_and(|part| part.starts_with(['[', '(']) || part.starts_with(" ["))
+                    .is_some_and(|part| {
+                        part.starts_with(['[', '(', '{', '>']) || part.starts_with(" [")
+                    })
             });
             let state = trimmed.starts_with("state \"")
                 && trimmed.trim_end().ends_with(&format!("\" as {id}"));
@@ -853,5 +855,24 @@ fn rename_uml(diagram: &mut UmlDiagram, id: &str, name: &str) {
         .collect();
     if changed && let Some(n) = diagram.elements.iter_mut().find(|n| n.mermaid_id == id) {
         n.label = name.into();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activity_aliases_preserve_decision_and_signal_shapes() {
+        let mut diagram = crate::empty(UmlKind::Activity);
+        diagram.mermaid =
+            "flowchart TD\n  n0{\"Condition\"}\n  n1>\"Notification\"]\n  n0 -->|\"yes\"| n1\n"
+                .into();
+        rename_uml(&mut diagram, "n0", "Check policy");
+        rename_uml(&mut diagram, "n1", "Notify reviewer");
+        assert_eq!(
+            diagram.mermaid,
+            "flowchart TD\n  n0{\"Check policy\"}\n  n1>\"Notify reviewer\"]\n  n0 -->|\"yes\"| n1\n"
+        );
     }
 }
