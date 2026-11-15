@@ -100,6 +100,16 @@ mod tuple_field_access_explanation;
 mod single_tuple_value_explanation;
 mod f32_literal_explanation;
 mod f64_literal_explanation;
+mod unicode_char_escape_explanation;
+mod char_hex_escape_explanation;
+mod string_unicode_escape_explanation;
+mod raw_c_string_explanation;
+mod outer_block_doc_explanation;
+mod inner_block_doc_explanation;
+mod raw_c_string_hash_explanation;
+mod inner_line_doc_explanation;
+mod outer_line_doc_explanation;
+mod c_string_literal_explanation;
 mod one_hash_raw_string_explanation;
 mod raw_string_no_hash_explanation;
 mod octal_literal_explanation;
@@ -323,7 +333,7 @@ pub fn parse(text: &str) -> Option<tree_sitter::Tree> {
     }
     let mut best = (error_count(&tree), tree);
     let mut current = text.to_owned();
-    for rule in [blank_safe_keyword as fn(&str) -> Option<String>, rename_try_macro] {
+    for rule in [blank_safe_keyword as fn(&str) -> Option<String>, rename_try_macro, unicode_char_escape_explanation::repair_unicode_char_underscores] {
         let Some(next) = rule(&current) else { continue };
         debug_assert_eq!(next.len(), current.len());
         let Some(t) = parser.parse(&next, None) else { continue };

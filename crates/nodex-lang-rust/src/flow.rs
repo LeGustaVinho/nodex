@@ -512,12 +512,41 @@ fn literal_type(src: Src, value: Node) -> Option<String> {
                 }
             }
             "boolean_literal" => "bool".into(),
+            "char_literal" if src.text(v).starts_with('b') => "u8".into(),
             "char_literal" => "char".into(),
+            "string_literal" | "raw_string_literal" if src.text(v).starts_with('c') => "&CStr".into(),
+            // The array length is needed for an exact byte-string type.
+            "string_literal" | "raw_string_literal" if src.text(v).starts_with('b') => return None,
             "string_literal" | "raw_string_literal" => "&str".into(),
             "negative_literal" => "{integer}".into(),
             _ => return None,
         },
     )
+}
+
+#[cfg(test)]
+mod literal_type_tests {
+    use super::*;
+    use nodex_lang_api::kit::LineIndex;
+
+    #[test]
+    fn distinguishes_c_and_byte_literals_from_rust_text() {
+        let text = "fn f() { let a = c\"hi\"; let b = cr\"hi\"; let c = b\"hi\"; let d = b'A'; let e = \"hi\"; }";
+        let tree = crate::parse(text).unwrap();
+        let index = LineIndex::new(text);
+        let src = Src { text, file: "src/lib.rs", index: &index };
+        let mut pending = vec![tree.root_node()];
+        let mut types = Vec::new();
+        while let Some(node) = pending.pop() {
+            if node.kind() == "let_declaration" {
+                let value = node.child_by_field_name("value").unwrap();
+                types.push((src.text(value).to_owned(), literal_type(src, value)));
+            }
+            pending.extend(named_children(node));
+        }
+        types.sort();
+        assert_eq!(types, vec![("\"hi\"".into(), Some("&str".into())), ("b\"hi\"".into(), None), ("b'A'".into(), Some("u8".into())), ("c\"hi\"".into(), Some("&CStr".into())), ("cr\"hi\"".into(), Some("&CStr".into()))]);
+    }
 }
 
 /// True if `node` uses `?` outside nested closures and blocks of its own.

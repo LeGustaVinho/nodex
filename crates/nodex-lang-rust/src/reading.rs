@@ -53,6 +53,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::named_struct_explanation::explain(src, node));
     items.extend(crate::tuple_struct_explanation::explain(src, node));
     items.extend(crate::newtype_explanation::explain(src, node));
+    items.extend(crate::c_string_literal_explanation::contract(src, node));
+    items.extend(crate::outer_line_doc_explanation::contract(src, node));
+    items.extend(crate::inner_line_doc_explanation::contract(src, node));
+    items.extend(crate::raw_c_string_hash_explanation::contract(src, node));
+    items.extend(crate::inner_block_doc_explanation::contract(src, node));
+    items.extend(crate::outer_block_doc_explanation::contract(src, node));
+    items.extend(crate::raw_c_string_explanation::contract(src, node));
     items.extend(crate::byte_literal_explanation::contract(src, node));
     items.extend(crate::byte_string_literal_explanation::contract(src, node));
     items.extend(crate::hex_integer_literal_explanation::contract(src, node));
@@ -1263,6 +1270,12 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((span, content)) = crate::c_string_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::raw_c_string_hash_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        for (span, content) in crate::string_unicode_escape_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::raw_c_string_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((span, content)) = crate::char_hex_escape_explanation::explain(self.src, node) { self.push(self.src.span(node), span, false, content); }
+        if let Some((site, content)) = crate::unicode_char_escape_explanation::explain(self.src, node) { self.push(self.src.span(node), site, false, content); }
         if let Some((span, content)) = crate::byte_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::raw_byte_string_hash_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((span, content)) = crate::byte_string_literal_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
