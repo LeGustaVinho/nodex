@@ -67,6 +67,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::repr_packed_explanation::contract(src, node));
+    items.extend(crate::repr_packed_two_explanation::contract(src, node));
+    items.extend(crate::link_static_library_explanation::contract(src, node));
+    items.extend(crate::no_link_explanation::contract(src, node));
+    items.extend(crate::link_ordinal_explanation::contract(src, node));
+    items.extend(crate::repr_c_explanation::contract(src, node));
+    items.extend(crate::repr_u8_enum_explanation::contract(src, node));
+    items.extend(crate::link_name_symbol_explanation::contract(src, node));
+    items.extend(crate::repr_align_sixteen_explanation::contract(src, node));
+    items.extend(crate::repr_transparent_explanation::contract(src, node));
     items.extend(crate::doc_alias_explanation::contract(src, node));
     items.extend(crate::must_use_attribute_explanation::contract(src, node));
     items.extend(crate::clippy_tool_attribute_explanation::contract(src, node));
