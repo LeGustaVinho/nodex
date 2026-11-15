@@ -57,6 +57,16 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::custom_outer_attribute_explanation::contract(src, node));
     items.extend(crate::proc_macro_derive_explanation::contract(src, node));
     items.extend(crate::macro_dollar_crate_explanation::contract(src, node));
+    items.extend(crate::cfg_feature_explanation::contract(src, node));
+    items.extend(crate::cfg_all_explanation::contract(src, node));
+    items.extend(crate::cfg_target_os_explanation::contract(src, node));
+    items.extend(crate::attribute_nested_value_explanation::contract(src, node));
+    items.extend(crate::inner_generic_attribute_explanation::contract(src, node));
+    items.extend(crate::cfg_target_arch_explanation::contract(src, node));
+    items.extend(crate::attribute_name_value_explanation::contract(src, node));
+    items.extend(crate::unsafe_no_mangle_explanation::contract(src, node));
+    items.extend(crate::generic_outer_attribute_explanation::contract(src, node));
+    items.extend(crate::unreachable_macro_conditional_explanation::contract(src, node));
     items.extend(crate::compile_error_macro_explanation::contract(src, node));
     items.extend(crate::include_bytes_macro_explanation::contract(src, node));
     items.extend(crate::include_str_macro_explanation::contract(src, node));
@@ -1307,6 +1317,8 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (anchor, site, content) in crate::inner_generic_attribute_explanation::reading(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((span, content)) = crate::unreachable_macro_conditional_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::compile_error_macro_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::include_bytes_macro_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::panic_message_macro_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
