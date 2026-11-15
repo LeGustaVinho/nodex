@@ -67,6 +67,8 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::expect_unused_variables_explanation::contract(src, node));
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
+    items.extend(crate::global_asm_explanation::contract(src, node));
+    items.extend(crate::c_variadic_definition_explanation::contract(src, node));
     items.extend(crate::extern_sysv64_fn_explanation::contract(src, node));
     items.extend(crate::foreign_c_variadic_explanation::contract(src, node));
     items.extend(crate::extern_c_fn_pointer_explanation::contract(src, node));
@@ -1407,6 +1409,14 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (site, content) in crate::asm_inout_split_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::asm_in_reg_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::asm_out_reg_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::asm_inlateout_reg_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::asm_inout_reg_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::asm_lateout_reg_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::asm_nop_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::naked_asm_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (anchor, site, content) in crate::inner_generic_attribute_explanation::reading(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         if let Some((span, content)) = crate::unreachable_macro_conditional_explanation::reading(self.src, node) { self.push(self.src.span(node), span, false, content); }
         if let Some((site, content)) = crate::compile_error_macro_explanation::reading(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
