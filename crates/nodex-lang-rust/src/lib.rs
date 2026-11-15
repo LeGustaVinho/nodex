@@ -7,6 +7,16 @@
 //! ([`instrument`]).
 
 mod borrow;
+mod empty_match_detail;
+mod macro_pattern_position_detail;
+mod match_arm_cfg_detail;
+mod closure_explicit_return_detail;
+mod closure_tuple_parameter_detail;
+mod match_expression_comma_detail;
+mod closure_mut_trailing_comma_detail;
+mod local_fn_scope_detail;
+mod let_else_grouped_if_detail;
+mod empty_statement_detail;
 mod public_safe_foreign_fn_detail;
 mod invalid_unsafe_module_detail;
 mod grouped_binding_pattern_detail;

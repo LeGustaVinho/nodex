@@ -24,6 +24,9 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     let member_owner = node.parent().and_then(|body| body.parent());
     let owner = member_owner.filter(|owner| owner.kind() == "impl_item");
     let mut items = Vec::new();
+    items.extend(crate::local_fn_scope_detail::contract(src, node));
+    items.extend(crate::empty_statement_detail::contract(src, node));
+    items.extend(crate::closure_mut_trailing_comma_detail::contract(src, node));
     items.extend(crate::public_safe_foreign_fn_detail::contract(src, node));
     items.extend(crate::invalid_unsafe_module_detail::contract(src, node));
     items.extend(crate::mixed_self_glob_import_detail::contract(src, node));
@@ -1502,6 +1505,14 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::closure_mut_trailing_comma_detail::explain(self.src, node) { self.push(self.src.span(node.child_by_field_name("value").unwrap_or(node)), self.src.span(site), false, content); }
+        if let Some((site, content)) = crate::let_else_grouped_if_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        if let Some((site, text)) = crate::closure_explicit_return_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, detail("Explicit closure result requires a block", text)); }
+        for (site, content) in crate::closure_tuple_parameter_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (anchor, site, content) in crate::match_expression_comma_detail::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::macro_pattern_position_detail::explain(self.src, node) { self.push(anchor, self.src.span(site), false, content); }
+        for (anchor, site, content) in crate::match_arm_cfg_detail::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
+        if let Some((anchor, site, content)) = crate::empty_match_detail::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         for (anchor, site, content) in crate::match_block_comma_detail::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         if let Some((anchor, site, content)) = crate::const_range_pattern_detail::explain(self.src, node) { self.push(self.src.span(anchor), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::slice_ignore_all_pattern_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
@@ -4370,6 +4381,7 @@ impl Reader<'_, '_> {
     }
 
     fn closure(&mut self, node: Node<'_>) {
+        if let Some((site, content)) = crate::closure_mut_trailing_comma_detail::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::async_move_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         if let Some((site, content)) = crate::move_closure_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::typed_closure_parameter_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
