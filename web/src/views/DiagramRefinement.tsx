@@ -90,7 +90,7 @@ function Controls({ controller: c }: { controller: Controller }) {
           {v.basis === c.history.data?.current ? "Refined" : "Historical"} · {new Date(v.created * 1000).toLocaleString()}
         </option>)}
       </select>}
-      {c.version && c.history.data && c.version.id !== c.history.data.active && <button disabled={busy} onClick={() => void run(async () => {
+      {c.version && !c.historical && c.history.data && c.version.id !== c.history.data.active && <button disabled={busy} onClick={() => void run(async () => {
         const data = await api.saveRefinement({ action: "activate", target: c.target, version: c.version!.id, revision: c.history.data!.revision });
         if (sameProject()) c.update(data);
       })}>Make active</button>}
@@ -122,7 +122,7 @@ function Controls({ controller: c }: { controller: Controller }) {
               {preview.snippets.map((s) => <div key={s.id} className="settings-row">
                 <span>{s.path}:{s.line}</span>
                 <button disabled={busy} onClick={() => {
-                  const next = [...excluded, { path: s.path, line: s.line }];
+                  const next = [...excluded, { path: s.path, line: s.line, revision: s.revision }];
                   setExcluded(next);
                   void prepare(next, focus);
                 }}>Remove excerpt</button>
@@ -137,7 +137,7 @@ function Controls({ controller: c }: { controller: Controller }) {
             </div>}
             {progress.data?.phase === "failed" && <p role="alert">{progress.data.message}</p>}
             {progress.data?.phase === "cancelled" && <p role="status">Generation cancelled.</p>}
-            {c.canGenerate && ((job && (progress.data?.phase === "failed" || progress.data?.phase === "cancelled" || progress.error)) || (!preview && !job && failure)) &&
+            {c.canGenerate && ((job && (progress.data?.phase === "failed" || progress.data?.phase === "cancelled" || progress.error)) || (!job && failure)) &&
               <button disabled={busy} onClick={() => void prepare(excluded, focus)}>Prepare a new preview</button>}
             {suggestions && <>
               <p>Choose the suggestions to apply. Review the cited evidence for each change.</p>

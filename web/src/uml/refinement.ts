@@ -11,14 +11,14 @@ export type RefinementTarget =
   | { kind: "packages"; scope: UmlScope }
   | { kind: "uml"; diagram: UmlKind; scope: UmlScope; options: Partial<UmlOptions> };
 
-export type RefinementExcerpt = { path: string; line: number };
+export type RefinementExcerpt = { path: string; line: number; revision: string };
 
 export interface RefinementPreview {
   id: string;
   digest: string;
   input: string;
   omitted: number;
-  snippets: { id: string; path: string; line: number; text: string }[];
+  snippets: (RefinementExcerpt & { id: string; text: string })[];
   covered_files: string[];
   focus_nodes: [string, string][];
 }

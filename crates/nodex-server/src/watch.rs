@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 /// alive for as long as watching should continue.
 pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher> {
     let root = state.project.lock().map(|p| p.root().to_path_buf()).unwrap_or_default();
+    let generation = state.generation.load(Ordering::Acquire);
     let (tx, rx) = mpsc::channel::<PathBuf>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res
@@ -56,7 +58,7 @@ pub fn spawn(state: Arc<AppState>) -> notify::Result<notify::RecommendedWatcher>
                 if architecture_changed {
                     let _ = state.events.send(ServerEvent::ArchitectureChanged);
                 }
-                if evidence_changed {
+                if crate::refinements::refresh_documents(&state, &root, generation) || evidence_changed {
                     let _ = state.events.send(ServerEvent::DiagramEvidenceChanged);
                 }
                 semantic_worker::notify(&state, revision, &changed_paths);

@@ -45,13 +45,22 @@ pub(super) struct Snippet {
     pub path: String,
     pub line: usize,
     pub text: String,
+    pub revision: String,
 }
 
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub(super) enum ExcludedExcerpt {
-    Region { path: String, line: usize },
+    Region(ExcerptRegion),
     EvidenceId(String),
+}
+
+#[derive(Deserialize)]
+pub(super) struct ExcerptRegion {
+    pub path: String,
+    pub line: usize,
+    #[serde(default)]
+    pub revision: Option<String>,
 }
 
 pub(super) fn path_allowed(path: &str) -> bool {
@@ -155,12 +164,110 @@ fn snippet_start(evidence: &Evidence) -> usize {
         .map_or(1, |s| (s.start_line as usize).saturating_sub(3).max(1))
 }
 
+pub(super) fn evidence_path(evidence: &Evidence) -> Option<&str> {
+    evidence
+        .site
+        .as_ref()
+        .map(|span| span.file.as_str())
+        .or(evidence.path.as_deref())
+}
+
+#[derive(Default)]
+struct ExcludedFile {
+    source: Option<String>,
+    revision: Option<String>,
+    hide_all: bool,
+    starts: BTreeSet<usize>,
+}
+
+impl ExcludedFile {
+    fn overlaps(&self, first: usize, last: usize) -> bool {
+        self.hide_all
+            || self
+                .starts
+                .iter()
+                .any(|start| first < start.saturating_add(SNIPPET_LINES) && *start <= last)
+    }
+}
+
+fn excluded_files(
+    root: &Path,
+    excluded: &[ExcerptRegion],
+) -> (BTreeMap<PathBuf, ExcludedFile>, BTreeSet<String>) {
+    let mut files = BTreeMap::new();
+    let mut missing = BTreeSet::new();
+    for ExcerptRegion {
+        path,
+        line,
+        revision,
+    } in excluded
+    {
+        let Some(path_on_disk) = source_path(root, path) else {
+            missing.insert(path.to_owned());
+            continue;
+        };
+        let file = files.entry(path_on_disk.clone()).or_insert_with(|| {
+            let source = std::fs::read_to_string(&path_on_disk).ok();
+            let revision = source.as_ref().map(super::hash);
+            ExcludedFile {
+                source,
+                revision,
+                ..Default::default()
+            }
+        });
+        if revision.is_some() && revision == &file.revision {
+            file.starts.insert(*line);
+        } else {
+            file.hide_all = true;
+        }
+    }
+    (files, missing)
+}
+
 pub(super) fn pack(
     base: &Inventory,
     root: &Path,
-    excluded: &[ExcludedExcerpt],
+    excluded: &[ExcerptRegion],
     focus: Option<&str>,
 ) -> Context {
+    let (excluded_files, unavailable_paths) = excluded_files(root, excluded);
+    let mut paths = BTreeMap::new();
+    let mut withheld = BTreeSet::new();
+    if !excluded.is_empty() {
+        for e in &base.evidence {
+            let Some(path) = evidence_path(e) else {
+                continue;
+            };
+            let file = paths.entry(path).or_insert_with(|| source_path(root, path));
+            if unavailable_paths.contains(path)
+                || file
+                    .as_ref()
+                    .and_then(|path| excluded_files.get(path))
+                    .is_some_and(|file| match &e.site {
+                        Some(span) => {
+                            file.overlaps(span.start_line as usize, span.end_line as usize)
+                        }
+                        None => file.hide_all || !file.starts.is_empty(),
+                    })
+            {
+                withheld.insert(e.id.as_str());
+            }
+        }
+    }
+    let includes_withheld = |ids: &[String]| ids.iter().any(|id| withheld.contains(id.as_str()));
+    let visible_evidence = |ids: &[String]| -> Vec<String> {
+        ids.iter()
+            .filter(|id| !withheld.contains(id.as_str()))
+            .cloned()
+            .collect()
+    };
+    let context_label = |label: &str, ids: &[String]| {
+        if includes_withheld(ids) {
+            "[excluded]".into()
+        } else {
+            scrub(label)
+        }
+    };
     let mut remaining = BUDGET - 1024;
     let mut omitted = 0;
     let mut insert = |items: &mut Vec<Value>, item: Value, reserve: usize| {
@@ -221,9 +328,9 @@ pub(super) fn pack(
         let alias = &node_aliases[n.id.as_str()];
         if insert(
             &mut node_items,
-            json!({"id":alias,"label":scrub(&n.label),"kind":n.kind,
+            json!({"id":alias,"label":context_label(&n.label,&n.evidence),"kind":n.kind,
             "parent":n.parent.as_deref().and_then(|id| node_aliases.get(id)),
-            "layer":n.layer,"declared":n.declared,"evidence":n.evidence}),
+            "layer":n.layer,"declared":n.declared,"evidence":visible_evidence(&n.evidence)}),
             55 * 1024,
         ) {
             aliases.insert(alias.clone(), n.id.clone());
@@ -236,7 +343,7 @@ pub(super) fn pack(
             && insert(
                 &mut candidate_items,
                 json!({"id":c.id,"from":node_aliases[c.edge.from.as_str()],"to":node_aliases[c.edge.to.as_str()],
-                "label":scrub(&c.edge.label),"confidence":c.edge.confidence,"evidence":c.edge.evidence}),
+                "label":context_label(&c.edge.label,&c.edge.evidence),"confidence":c.edge.confidence,"evidence":visible_evidence(&c.edge.evidence)}),
                 44 * 1024,
             )
         {
@@ -250,7 +357,7 @@ pub(super) fn pack(
             && insert(
                 &mut edge_items,
                 json!({"id":alias,"from":node_aliases[e.from.as_str()],"to":node_aliases[e.to.as_str()],
-                "label":scrub(&e.label),"kind":e.kind,"confidence":e.confidence,"count":e.count,"evidence":e.evidence}),
+                "label":context_label(&e.label,&e.evidence),"kind":e.kind,"confidence":e.confidence,"count":e.count,"evidence":visible_evidence(&e.evidence)}),
                 36 * 1024,
             )
         {
@@ -284,34 +391,17 @@ pub(super) fn pack(
         }
     });
     for e in &sorted {
-        if e.path.as_deref().is_some_and(|p| !path_allowed(p)) {
+        if withheld.contains(e.id.as_str()) || evidence_path(e).is_some_and(|p| !path_allowed(p)) {
             continue;
         }
         if insert(
             &mut evidence_items,
-            json!({"id":e.id,"text":scrub(&e.text),"file":e.path,"line":e.site.as_ref().map(|s|s.start_line)}),
+            json!({"id":e.id,"text":scrub(&e.text),"file":evidence_path(e),"line":e.site.as_ref().map(|s|s.start_line)}),
             14 * 1024,
         ) {
             evidence.insert(e.id.clone());
         }
     }
-    let mut excluded_regions = BTreeMap::<PathBuf, BTreeSet<usize>>::new();
-    for exclusion in excluded {
-        let region = match exclusion {
-            ExcludedExcerpt::Region { path, line } => Some((path.as_str(), *line)),
-            ExcludedExcerpt::EvidenceId(id) => base
-                .evidence
-                .iter()
-                .find(|e| &e.id == id)
-                .and_then(|e| Some((e.path.as_deref()?, snippet_start(e)))),
-        };
-        if let Some((path, line)) = region
-            && let Some(file) = source_path(root, path)
-        {
-            excluded_regions.entry(file).or_default().insert(line);
-        }
-    }
-    let mut paths = BTreeMap::new();
     let mut snippet_files = BTreeSet::new();
     for e in sorted {
         if snippets.len() >= 16 {
@@ -320,7 +410,9 @@ pub(super) fn pack(
         if !evidence.contains(&e.id) {
             continue;
         }
-        let Some(path) = &e.path else { continue };
+        let Some(path) = evidence_path(e) else {
+            continue;
+        };
         let Some(file) = paths
             .entry(path)
             .or_insert_with(|| source_path(root, path))
@@ -330,17 +422,21 @@ pub(super) fn pack(
         };
         let line = snippet_start(e);
         if snippet_files.contains(file)
-            || excluded_regions.get(file).is_some_and(|starts| {
-                starts
-                    .iter()
-                    .any(|start| start.abs_diff(line) < SNIPPET_LINES)
+            || excluded_files.get(file).is_some_and(|excluded| {
+                excluded.overlaps(line, line.saturating_add(SNIPPET_LINES - 1))
             })
         {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(file) else {
-            continue;
+        let buffer;
+        let source = match excluded_files.get(file) {
+            Some(excluded) => excluded.source.as_deref(),
+            None => {
+                buffer = std::fs::read_to_string(file).ok();
+                buffer.as_deref()
+            }
         };
+        let Some(source) = source else { continue };
         let text = scrub(
             &source
                 .lines()
@@ -352,16 +448,30 @@ pub(super) fn pack(
         let text: String = text.chars().take(2400).collect();
         let snippet = Snippet {
             id: e.id.clone(),
-            path: path.clone(),
+            path: path.to_owned(),
             line,
             text,
+            revision: super::hash(&source),
         };
-        if !snippet.text.is_empty() && insert(&mut snippet_items, json!(snippet), 0) {
+        if !snippet.text.is_empty()
+            && insert(
+                &mut snippet_items,
+                json!({
+                    "id":snippet.id, "path":snippet.path, "line":snippet.line, "text":snippet.text,
+                }),
+                0,
+            )
+        {
             snippet_files.insert(file.clone());
             snippets.push(snippet);
         }
     }
-    let input = json!({"title":scrub(&base.title),"focus":focus.and_then(|id| node_aliases.get(id)),"recursive":base.recursive,"layers":base.layers,
+    let title = if withheld.is_empty() {
+        scrub(&base.title)
+    } else {
+        "Diagram".into()
+    };
+    let input = json!({"title":title,"focus":focus.and_then(|id| node_aliases.get(id)),"recursive":base.recursive,"layers":base.layers,
         "nodes":node_items,"relationships":edge_items,"candidates":candidate_items,"evidence":evidence_items,
         "pending":base.pending.iter().filter(|id| evidence.contains(*id)).collect::<Vec<_>>(),"excerpts":snippet_items}).to_string();
     Context {

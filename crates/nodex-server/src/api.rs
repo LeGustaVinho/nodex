@@ -191,7 +191,7 @@ pub async fn get_settings() -> ApiResult {
 
 pub async fn put_settings(State(state): State<Arc<AppState>>, Json(settings): Json<crate::settings::Settings>) -> ApiResult {
     crate::settings::save(&settings).map_err(internal)?;
-    if !settings.diagram_ai { state.refinements.reset(); }
+    if !settings.diagram_ai { state.refinements.cancel_jobs(); }
     Ok(Json(settings).into_response())
 }
 

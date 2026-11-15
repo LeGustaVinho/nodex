@@ -65,17 +65,56 @@ struct Job {
 struct StateData {
     previews: BTreeMap<String, Prepared>,
     jobs: BTreeMap<String, Job>,
+    watched_documents: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Default)]
 pub(crate) struct Manager(Mutex<StateData>, #[cfg(test)] Mutex<Option<PathBuf>>);
 
 impl Manager {
+    pub(crate) fn cancel_jobs(&self) {
+        if let Ok(mut data) = self.0.lock() {
+            data.previews.clear();
+            data.jobs.clear();
+        }
+    }
+
     pub(crate) fn reset(&self) {
         if let Ok(mut data) = self.0.lock() {
             *data = StateData::default();
         }
     }
+}
+
+pub(crate) fn refresh_documents(state: &AppState, root: &Path, generation: u64) -> bool {
+    if state.generation.load(Ordering::Acquire) != generation {
+        return false;
+    }
+    let Ok(data) = state.refinements.0.lock() else {
+        return false;
+    };
+    let tracked = data.watched_documents.clone();
+    drop(data);
+
+    // The watcher may report a symlink target or another hard link to a document.
+    let changes: Vec<_> = tracked
+        .into_iter()
+        .filter_map(|(path, old)| {
+            let revision = context::source(root, &path).map(hash);
+            (old != revision).then_some((path, revision))
+        })
+        .collect();
+    if changes.is_empty() {
+        return false;
+    }
+    let Ok(mut data) = state.refinements.0.lock() else {
+        return false;
+    };
+    if state.generation.load(Ordering::Acquire) != generation {
+        return false;
+    }
+    data.watched_documents.extend(changes);
+    true
 }
 
 fn configured_provider(_state: &AppState) -> Result<PathBuf> {
@@ -251,6 +290,17 @@ async fn capture(state: &Arc<AppState>, mut target: Target) -> Result<Basis> {
             inventory,
         };
         check_basis(&state, &basis)?;
+        if !basis.documents.is_empty() {
+            let mut data = state.refinements.0.lock().map_err(internal)?;
+            if state.generation.load(Ordering::Acquire) != basis.generation {
+                return Err(conflict());
+            }
+            for (path, revision) in &basis.documents {
+                data.watched_documents
+                    .entry(path.clone())
+                    .or_insert_with(|| revision.clone());
+            }
+        }
         Ok(basis)
     })
     .await
@@ -300,6 +350,42 @@ pub(crate) struct Preview {
     focus_nodes: Vec<(String, String)>,
 }
 
+fn excerpt_regions(
+    state: &AppState,
+    basis: &Basis,
+    requested: Vec<context::ExcludedExcerpt>,
+) -> Result<Vec<context::ExcerptRegion>> {
+    let data = state.refinements.0.lock().map_err(internal)?;
+    requested
+        .into_iter()
+        .map(|exclusion| match exclusion {
+            context::ExcludedExcerpt::Region(region) => Ok(region),
+            context::ExcludedExcerpt::EvidenceId(id) => {
+                let paths: BTreeSet<_> = data
+                    .previews
+                    .values()
+                    .filter(|p| {
+                        p.basis.generation == basis.generation
+                            && p.basis.key == basis.key
+                            && p.created.elapsed().as_secs() < 900
+                    })
+                    .flat_map(|p| &p.context.snippets)
+                    .filter(|s| s.id == id)
+                    .map(|s| s.path.as_str())
+                    .collect();
+                if paths.len() != 1 {
+                    return Err(conflict());
+                }
+                Ok(context::ExcerptRegion {
+                    path: (*paths.first().unwrap()).to_owned(),
+                    line: 1,
+                    revision: None,
+                })
+            }
+        })
+        .collect()
+}
+
 pub(crate) async fn context(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ContextRequest>,
@@ -313,12 +399,13 @@ pub(crate) async fn context(
     {
         return Err(bad("The selected focus is outside this diagram."));
     }
+    let excluded = excerpt_regions(&state, &basis, request.exclude)?;
     let snapshot = basis.clone();
     let context = tokio::task::spawn_blocking(move || {
         context::pack(
             &snapshot.inventory,
             &snapshot.root,
-            &request.exclude,
+            &excluded,
             request.focus.as_deref(),
         )
     })
@@ -335,7 +422,7 @@ pub(crate) async fn context(
         .evidence
         .iter()
         .filter(|e| context.evidence.contains(&e.id))
-        .filter_map(|e| e.path.clone())
+        .filter_map(|e| context::evidence_path(e).map(str::to_owned))
         .collect();
     let focus_nodes = basis
         .inventory
@@ -505,6 +592,62 @@ pub(crate) struct Version {
     diagram: Refined,
 }
 
+impl Version {
+    fn contains_legacy_association(&self) -> bool {
+        self.diagram
+            .suggestions
+            .iter()
+            .any(|r| r.suggestion.kind == "association")
+    }
+
+    fn restore_unresolved_routes(&mut self) {
+        if !self.contains_legacy_association() {
+            return;
+        }
+        let mut associations = BTreeSet::new();
+        self.diagram.suggestions.retain(|r| {
+            if r.suggestion.kind == "association" {
+                associations.insert(r.suggestion.target.clone());
+                false
+            } else {
+                true
+            }
+        });
+        let diagram = &mut self.diagram;
+        let labels: BTreeMap<_, _> = diagram
+            .nodes
+            .iter()
+            .map(|n| (n.id.as_str(), n.label.as_str()))
+            .collect();
+        diagram.edges.retain(|edge| {
+            if !associations.contains(&edge.id) {
+                return true;
+            }
+            let source = diagram
+                .evidence
+                .iter()
+                .find(|e| edge.evidence.first() == Some(&e.id));
+            let id = format!("legacy-association:{}", edge.id);
+            diagram.evidence.push(refinement::Evidence {
+                id: id.clone(),
+                text: format!(
+                    "Ambiguous HTTP destination {} → {} ({})",
+                    labels
+                        .get(edge.from.as_str())
+                        .copied()
+                        .unwrap_or(&edge.from),
+                    labels.get(edge.to.as_str()).copied().unwrap_or(&edge.to),
+                    edge.label,
+                ),
+                site: source.and_then(|e| e.site.clone()),
+                path: source.and_then(|e| e.path.clone()),
+            });
+            diagram.pending.push(id);
+            false
+        });
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Stored {
     schema: u32,
@@ -568,7 +711,10 @@ fn index(path: &Path) -> Result<(Stored, String)> {
 }
 
 impl History {
-    fn from(stored: Stored, revision: String, current: Option<String>) -> Self {
+    fn from(mut stored: Stored, revision: String, current: Option<String>) -> Self {
+        for version in &mut stored.versions {
+            version.restore_unresolved_routes();
+        }
         Self {
             revision,
             current,
@@ -632,7 +778,7 @@ pub(crate) async fn save(
     State(state): State<Arc<AppState>>,
     Json(request): Json<Save>,
 ) -> Result<Json<History>> {
-    let (basis, root, key, generation, current, version, revision, new) = match request {
+    let (basis, version, revision, new) = match request {
         Save::Approve {
             job,
             selected,
@@ -665,50 +811,17 @@ pub(crate) async fn save(
                 basis: current.digest.clone(),
                 diagram,
             };
-            let (root, key, generation, digest) = (
-                current.root.clone(),
-                current.key.clone(),
-                current.generation,
-                current.digest.clone(),
-            );
-            (
-                Some(current),
-                root,
-                key,
-                generation,
-                Some(digest),
-                version,
-                revision,
-                Some(new),
-            )
+            (current, version, revision, Some(new))
         }
         Save::Activate {
-            mut target,
+            target,
             version,
             revision,
-        } => {
-            target.normalize();
-            let key = hash(serde_json::to_vec(&target).map_err(internal)?);
-            let (root, generation) = {
-                let p = state.project.lock().map_err(internal)?;
-                (
-                    p.root().to_path_buf(),
-                    state.generation.load(Ordering::Acquire),
-                )
-            };
-            let current = capture(&state, target)
-                .await
-                .ok()
-                .filter(|b| b.generation == generation)
-                .map(|b| b.digest);
-            (
-                None, root, key, generation, current, version, revision, None,
-            )
-        }
+        } => (capture(&state, target).await?, version, revision, None),
     };
     let history = tokio::task::spawn_blocking(move || {
-        let dir = folder(&root, true)?;
-        let lock_path = dir.join(format!("{key}.lock"));
+        let dir = folder(&basis.root, true)?;
+        let lock_path = dir.join(format!("{}.lock", basis.key));
         if lock_path.is_symlink() {
             return Err(bad("Invalid refinement lock."));
         }
@@ -720,24 +833,30 @@ pub(crate) async fn save(
             .open(lock_path)
             .map_err(internal)?;
         lock.lock().map_err(internal)?;
-        let path = dir.join(format!("{key}.json"));
+        let path = dir.join(format!("{}.json", basis.key));
         let (mut store, existing) = index(&path)?;
-        if existing != revision || state.generation.load(Ordering::Acquire) != generation {
+        if existing != revision {
             return Err(conflict());
         }
-        if let Some(basis) = &basis {
-            check_basis(&state, basis)?;
-        }
+        check_basis(&state, &basis)?;
         if let Some(new) = new {
             store.versions.push(new);
         }
-        if !store.versions.iter().any(|v| v.id == version) {
-            return Err(missing());
+        let selected = store
+            .versions
+            .iter()
+            .find(|v| v.id == version)
+            .ok_or_else(missing)?;
+        if selected.basis != basis.digest || selected.contains_legacy_association() {
+            return Err((
+                StatusCode::CONFLICT,
+                "This historical version is available for viewing only.".into(),
+            ));
         }
         store.active = Some(version);
         let bytes = serde_json::to_vec_pretty(&store).map_err(internal)?;
         crate::architecture::write_atomic(&path, &bytes).map_err(internal)?;
-        Ok(History::from(store, hash(bytes), current))
+        Ok(History::from(store, hash(bytes), Some(basis.digest)))
     })
     .await
     .map_err(internal)??;

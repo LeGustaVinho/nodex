@@ -21,11 +21,11 @@ Represent changes as typed operations with references to the inventory. Validate
 
 ## 3. Approve, run, and save
 
-Prepare a preview showing covered files, omissions, and the exact payload. Filter credential files, redact recognized sensitive values, and let the user remove excerpts or choose a narrower focus. Bind the job to the preview digest and the open project. A new payload requires approval before sending.
+Prepare a preview showing covered files, omissions, and the exact payload. Filter credential files and redact recognized sensitive values. Removing an excerpt also removes labels and evidence derived from its lines. If the file changes, keep its content out of the preview until the user restores the excerpt selection. Bind the job to the preview digest and the open project. A new payload requires approval before sending.
 
 Use the installed Codex CLI with its existing authentication, discovered on PATH or configured by the user. Check support for the isolated invocation. Run from a temporary directory in a read-only ephemeral session with execution tools, connectors and search disabled. Send approved context on stdin and parse a schema-constrained JSON response. Allow one active job per project, with cancellation and a timeout. Expose authenticated preview, job, save and history endpoints.
 
-Save only the selected, validated changes and their renderable snapshot in the project's ignored `.nodex/diagram-refinements/` directory. Use atomic writes, a file lock and revision checks. Load compatible versions offline. When the source or declarations change, retain the previous snapshot as a historical view and prepare fresh evidence for a new refinement.
+Save only the selected, validated changes and their renderable snapshot in the project's ignored `.nodex/diagram-refinements/` directory. Use atomic writes, a file lock and revision checks. Load and activate compatible versions offline. When evidence or declarations change, retain the previous snapshot for historical viewing and prepare fresh evidence for a new refinement. Show legacy AI-selected HTTP associations under **Needs confirmation** in the historical view and its Mermaid export.
 
 ## 4. Verify the outcome
 

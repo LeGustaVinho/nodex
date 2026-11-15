@@ -160,6 +160,27 @@ async fn consent_is_bound_to_the_preview_and_versions_are_local_and_revision_che
             .contains("Handles orders.")
     );
 
+    let doc = preview["snippets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["path"] == "README.md")
+        .unwrap();
+    let (status, legacy_exclusion) = request(
+        &state,
+        "POST",
+        &format!("{URI}/context"),
+        Some(json!({ "target": target, "exclude": [doc["id"]] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{legacy_exclusion}");
+    assert!(
+        !legacy_exclusion["input"]
+            .as_str()
+            .unwrap()
+            .contains("Handles orders.")
+    );
+
     let start = |digest: &Value, confirmed: bool| json!({"preview":preview["id"],"digest":digest,"confirmed":confirmed});
     let jobs = format!("{URI}/jobs");
     assert_eq!(
@@ -215,12 +236,14 @@ async fn consent_is_bound_to_the_preview_and_versions_are_local_and_revision_che
     assert_eq!(offline["active"], saved_id);
     assert_eq!(offline["current"], saved["current"]);
 
+    let alias = root.join("internal-guide.md");
+    fs::hard_link(root.join("README.md"), &alias).unwrap();
     let mut events = reopened.events.subscribe();
     let watcher = crate::watch::spawn(reopened.clone()).unwrap();
     let before_document_edit = capture(&reopened, serde_json::from_value(target.clone()).unwrap())
         .await
         .unwrap();
-    fs::write(root.join("README.md"), "# Workshop\nManages receipts.").unwrap();
+    fs::write(&alias, "# Workshop\nManages receipts.").unwrap();
     assert!(matches!(
         check_basis(&reopened, &before_document_edit),
         Err((StatusCode::CONFLICT, _))
@@ -307,9 +330,9 @@ fn excluding_an_excerpt_rejects_overlapping_replacements() {
         .map(|i| format!("line-{i:03}"))
         .collect::<Vec<_>>();
     fs::write(temp.path().join("example.cs"), lines.join("\n")).unwrap();
-    let evidence = |id: &str, line| refinement::Evidence {
+    let evidence = |id: &str, line, text: &str| refinement::Evidence {
         id: id.into(),
-        text: "Source reference".into(),
+        text: text.into(),
         path: Some("example.cs".into()),
         site: Some(nodex_ir::Span {
             file: "example.cs".into(),
@@ -321,11 +344,33 @@ fn excluding_an_excerpt_rejects_overlapping_replacements() {
             end_col: 1,
         }),
     };
-    let base = Inventory {
+    let mut base = Inventory {
         title: "Demo".into(),
-        nodes: Vec::new(),
-        edges: Vec::new(),
-        evidence: vec![evidence("e0", 4), evidence("e1", 20), evidence("e2", 60)],
+        nodes: vec![refinement::Node {
+            id: "n0".into(),
+            label: "line-020".into(),
+            kind: "action".into(),
+            parent: None,
+            layer: None,
+            declared: false,
+            evidence: vec!["e1".into()],
+            code: None,
+        }],
+        edges: vec![refinement::Edge {
+            id: "loop".into(),
+            from: "n0".into(),
+            to: "n0".into(),
+            label: "line-020".into(),
+            kind: "condition".into(),
+            confidence: "Exact".into(),
+            count: 1,
+            evidence: vec!["e1".into()],
+        }],
+        evidence: vec![
+            evidence("e0", 4, "Source reference"),
+            evidence("e1", 20, "line-020"),
+            evidence("e2", 60, "Source reference"),
+        ],
         candidates: Vec::new(),
         pending: Vec::new(),
         recursive: false,
@@ -333,18 +378,125 @@ fn excluding_an_excerpt_rejects_overlapping_replacements() {
         uml: None,
     };
     let original = context::pack(&base, temp.path(), &[], None);
-    assert_eq!(original.snippets[0].id, "e0");
+    assert_eq!(original.snippets[0].id, "e1");
     assert!(original.input.contains("line-020"));
-    for exclusion in [
-        context::ExcludedExcerpt::EvidenceId("e0".into()),
-        context::ExcludedExcerpt::Region {
-            path: "example.cs".into(),
-            line: 1,
-        },
-    ] {
-        let updated = context::pack(&base, temp.path(), &[exclusion], None);
-        assert_eq!(updated.snippets[0].id, "e2");
-        assert!(!updated.input.contains("line-020"));
-        assert!(updated.input.contains("line-060"));
+    let exclusion = [context::ExcerptRegion {
+        path: original.snippets[0].path.clone(),
+        line: original.snippets[0].line,
+        revision: Some(original.snippets[0].revision.clone()),
+    }];
+    let updated = context::pack(&base, temp.path(), &exclusion, None);
+    assert_eq!(updated.snippets[0].id, "e2");
+    assert!(!updated.input.contains("line-020"));
+    assert!(updated.input.contains("line-060"));
+    assert!(updated.input.contains("[excluded]"));
+    assert!(!updated.evidence.contains("e1"));
+
+    fs::write(
+        temp.path().join("example.cs"),
+        "\n".repeat(65) + &lines.join("\n"),
+    )
+    .unwrap();
+    for evidence in &mut base.evidence {
+        let span = evidence.site.as_mut().unwrap();
+        span.start_line += 65;
+        span.end_line += 65;
     }
+    let edited = context::pack(&base, temp.path(), &exclusion, None);
+    assert!(edited.snippets.is_empty());
+    assert!(!edited.input.contains("line-020"));
+    assert!(edited.evidence.is_empty());
+}
+
+#[tokio::test]
+async fn legacy_associations_are_pending_and_historical_versions_cannot_be_activated() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::write(root.join("Program.cs"), "public class Sample {}").unwrap();
+    let state = AppState::new(project(root), "session".into(), 7420, vec![]);
+    let target = json!({
+        "kind":"architecture","view":"containers","scope":{"kind":"Project"},"container":null
+    });
+    let basis = capture(&state, serde_json::from_value(target.clone()).unwrap())
+        .await
+        .unwrap();
+    let diagram = refinement::apply(&basis.inventory, &[], &BTreeSet::new()).unwrap();
+    let current = Version {
+        id: "current".into(),
+        created: 1,
+        basis: basis.digest.clone(),
+        diagram,
+    };
+    let mut legacy = current.clone();
+    legacy.id = "legacy".into();
+    legacy.basis = "old-snapshot".into();
+    legacy.diagram.edges.push(refinement::Edge {
+        id: "candidate:0".into(),
+        from: "web".into(),
+        to: "replica".into(),
+        label: "GET /api/orders".into(),
+        kind: "HTTP".into(),
+        confidence: "Inferred".into(),
+        count: 1,
+        evidence: Vec::new(),
+    });
+    legacy.diagram.suggestions.push(Reviewed {
+        id: 0,
+        error: None,
+        suggestion: refinement::Suggestion {
+            kind: "association".into(),
+            target: "candidate:0".into(),
+            text: "Uses replica".into(),
+            members: Vec::new(),
+            evidence: Vec::new(),
+        },
+    });
+    let stored = Stored {
+        schema: SCHEMA,
+        active: Some(current.id.clone()),
+        versions: vec![current, legacy],
+    };
+    let bytes = serde_json::to_vec(&stored).unwrap();
+    let path = folder(root, true)
+        .unwrap()
+        .join(format!("{}.json", basis.key));
+    fs::write(&path, &bytes).unwrap();
+    let uri = format!(
+        "{URI}?{}",
+        form_urlencoded::Serializer::new(String::new())
+            .append_pair("target", &target.to_string())
+            .finish()
+    );
+    let (status, history) = request(&state, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let legacy = &history["versions"][1]["diagram"];
+    assert!(
+        legacy["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["id"] != "candidate:0")
+    );
+    assert_eq!(legacy["pending"], json!(["legacy-association:candidate:0"]));
+    assert!(
+        legacy["evidence"].as_array().unwrap().iter().any(|e| {
+            e["text"] == "Ambiguous HTTP destination web → replica (GET /api/orders)"
+        })
+    );
+    let (status, _) = request(
+        &state,
+        "PUT",
+        URI,
+        Some(json!({
+            "action":"activate", "target":target, "version":"legacy", "revision":history["revision"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(fs::read(path).unwrap(), bytes);
+    let (status, activated) = request(&state, "PUT", URI, Some(json!({
+        "action":"activate", "target":target, "version":"current", "revision":history["revision"]
+    }))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(activated["active"], "current");
 }
