@@ -68,6 +68,13 @@ pub(crate) fn contract(src: Src, node: Node) -> Option<Vec<ContractItem>> {
     items.extend(crate::macro_export_attribute_explanation::contract(src, node));
     items.extend(crate::allow_dead_code_explanation::contract(src, node));
     items.extend(crate::global_asm_explanation::contract(src, node));
+    items.extend(crate::gat_self_outlives_explanation::contract(src, node));
+    items.extend(crate::gat_lifetime_declaration_explanation::contract(src, node));
+    items.extend(crate::mutable_parameter_explanation::contract(src, node));
+    items.extend(crate::ref_parameter_explanation::contract(src, node));
+    items.extend(crate::async_trait_requirement_explanation::explain(src, node));
+    items.extend(crate::wildcard_parameter_explanation::contract(src, node));
+    items.extend(crate::tuple_parameter_explanation::contract(src, node));
     items.extend(crate::c_variadic_definition_explanation::contract(src, node));
     items.extend(crate::extern_sysv64_fn_explanation::contract(src, node));
     items.extend(crate::foreign_c_variadic_explanation::contract(src, node));
@@ -1409,6 +1416,8 @@ impl Reader<'_, '_> {
     }
 
     fn visit(&mut self, node: Node<'_>) {
+        for (site, content) in crate::asm_pure_nomem_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
+        for (site, content) in crate::asm_raw_option_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::asm_label_operand_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::asm_att_syntax_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }
         for (site, content) in crate::asm_nostack_explanation::explain(self.src, node) { self.push(self.src.span(node), self.src.span(site), false, content); }

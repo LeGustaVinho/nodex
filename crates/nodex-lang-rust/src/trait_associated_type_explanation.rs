@@ -7,6 +7,8 @@ pub(crate) fn explain(src: Src<'_>, node: Node<'_>) -> Option<ContractItem> {
     if node.kind() != "associated_type" { return None; }
     let owner = node.parent()?.parent()?;
     if owner.kind() != "trait_item" { return None; }
+    // Generic associated types need their parameters and bounds explained separately.
+    if node.child_by_field_name("type_parameters").is_some() { return None; }
     let name = src.norm(node.child_by_field_name("name")?);
     let trait_name = src.norm(owner.child_by_field_name("name")?);
     Some(ContractItem {

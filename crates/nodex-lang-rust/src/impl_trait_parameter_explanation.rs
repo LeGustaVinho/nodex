@@ -13,7 +13,7 @@ pub(crate) fn contract(src: Src<'_>, function: Node<'_>) -> Vec<ContractItem> {
         let mut stack = vec![ty];
         while let Some(node) = stack.pop() {
             if node.kind() == "abstract_type" {
-                let text = format!("In this parameter, `{}` means the caller supplies a concrete type that satisfies the listed trait requirements. This is shorthand for an anonymous generic type parameter, not a trait object: the concrete type is selected for the call and does not need to be written in the function declaration. Separate `impl Trait` parameters are independent; use a named generic parameter if they must have the same type. The exact traits depend on name resolution.", src.norm(node));
+                let text = format!("In this parameter, `{}` means the caller supplies a concrete type that satisfies the listed trait requirements. This is shorthand for an anonymous generic type parameter, not a trait object: the concrete type is selected for the call and does not need to be written in the function declaration. For example, `fn f(x: impl Trait)` is similar to `fn f<T: Trait>(x: T)`; the anonymous type parameter cannot be explicitly named as a generic argument at the call site, unlike `T`. Separate `impl Trait` parameters are independent; use a named generic parameter if they must have the same type. The exact traits depend on name resolution, and the compiler checks that the supplied concrete type meets those bounds.", src.norm(node));
                 items.push(ContractItem { group: "Generic parameter type".into(), text, span: src.span(node), type_info: None });
             }
             stack.extend(named_children(node).into_iter().rev());
